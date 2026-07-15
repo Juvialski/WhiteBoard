@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
-import { db } from './firebase';
+import { db, auth, googleProvider } from './firebase';
+import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
 import { UserProfile } from './types';
 import Dashboard from './components/Dashboard';
 import WhiteboardCanvas from './components/WhiteboardCanvas';
@@ -24,38 +25,90 @@ export default function App() {
   const [colorInput, setColorInput] = useState(COLLABORATOR_COLORS[Math.floor(Math.random() * COLLABORATOR_COLORS.length)]);
 
   useEffect(() => {
-    // 1. Check if joining via shareable link parameter
+    // Check if joining via shareable link parameter
     const params = new URLSearchParams(window.location.search);
     const urlBoardId = params.get('board');
 
-    // 2. Check if user profile already exists in localStorage
-    const savedId = localStorage.getItem('lucid_spark_user_id') || 'u-' + Math.floor(Math.random() * 1000000);
-    const savedName = localStorage.getItem('lucid_spark_user_name');
-    const savedColor = localStorage.getItem('lucid_spark_user_color') || colorInput;
+    // Subscribe to Firebase Auth State Changes
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      let activeProfile: UserProfile | null = null;
 
-    if (!localStorage.getItem('lucid_spark_user_id')) {
-      localStorage.setItem('lucid_spark_user_id', savedId);
-    }
+      if (user) {
+        // Logged in with Google
+        const googleName = user.displayName || user.email?.split('@')[0] || 'Google User';
+        const savedColor = localStorage.getItem('lucid_spark_user_color') || colorInput;
+        const savedRole = (localStorage.getItem('lucid_spark_user_role') || 'student') as 'student' | 'teacher';
 
-    if (savedName) {
-      const activeProfile: UserProfile = {
-        id: savedId,
-        name: savedName,
-        color: savedColor
-      };
-      setProfile(activeProfile);
+        localStorage.setItem('lucid_spark_user_id', user.uid);
+        localStorage.setItem('lucid_spark_user_name', googleName);
 
-      // If they also have a board ID in URL, join it immediately
-      if (urlBoardId) {
-        joinBoardDirectly(urlBoardId, activeProfile);
+        activeProfile = {
+          id: user.uid,
+          name: googleName,
+          color: savedColor,
+          role: savedRole,
+          photoURL: user.photoURL || undefined
+        };
+        setProfile(activeProfile);
+
+        if (urlBoardId) {
+          joinBoardDirectly(urlBoardId, activeProfile);
+        }
+      } else {
+        // Not logged in (guest / anonymous mode)
+        const savedName = localStorage.getItem('lucid_spark_user_name');
+        
+        if (savedName) {
+          const savedId = localStorage.getItem('lucid_spark_user_id') || 'u-' + Math.floor(Math.random() * 1000000);
+          const savedColor = localStorage.getItem('lucid_spark_user_color') || colorInput;
+          const savedRole = (localStorage.getItem('lucid_spark_user_role') || 'student') as 'student' | 'teacher';
+
+          if (!localStorage.getItem('lucid_spark_user_id')) {
+            localStorage.setItem('lucid_spark_user_id', savedId);
+          }
+
+          activeProfile = {
+            id: savedId,
+            name: savedName,
+            color: savedColor,
+            role: savedRole
+          };
+          setProfile(activeProfile);
+
+          if (urlBoardId) {
+            joinBoardDirectly(urlBoardId, activeProfile);
+          }
+        } else if (urlBoardId) {
+          // Direct link join but guest needs to enter their nickname
+          setLinkBoardId(urlBoardId);
+        }
       }
-    } else if (urlBoardId) {
-      // Direct link join but needs nickname
-      setLinkBoardId(urlBoardId);
-    }
 
-    setIsLoading(false);
+      setIsLoading(false);
+    });
+
+    return () => unsubscribe();
   }, []);
+
+  const handleSignInGoogle = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (err) {
+      console.error('Google Sign-In Error:', err);
+      alert('Failed to sign in with Google: ' + (err instanceof Error ? err.message : String(err)));
+    }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await signOut(auth);
+      localStorage.removeItem('lucid_spark_user_name');
+      localStorage.removeItem('lucid_spark_user_id');
+      setProfile(null);
+    } catch (err) {
+      console.error('Sign-Out Error:', err);
+    }
+  };
 
   const joinBoardDirectly = async (targetId: string, userProfile: UserProfile) => {
     setBoardId(targetId);
@@ -101,13 +154,16 @@ export default function App() {
     if (!nicknameInput.trim() || !linkBoardId) return;
 
     const savedId = localStorage.getItem('lucid_spark_user_id') || 'u-' + Math.floor(Math.random() * 1000000);
+    const savedRole = (localStorage.getItem('lucid_spark_user_role') || 'student') as 'student' | 'teacher';
     localStorage.setItem('lucid_spark_user_name', nicknameInput.trim());
     localStorage.setItem('lucid_spark_user_color', colorInput);
+    localStorage.setItem('lucid_spark_user_role', savedRole); // preserve role or default to student
 
     const userProfile: UserProfile = {
       id: savedId,
       name: nicknameInput.trim(),
-      color: colorInput
+      color: colorInput,
+      role: savedRole
     };
 
     setProfile(userProfile);
@@ -144,10 +200,32 @@ export default function App() {
             <p className="text-xs text-slate-500 mt-1">Set your nickname and color to join this shared whiteboard room.</p>
           </div>
 
+          <div className="bg-slate-50 border border-slate-100 p-4 rounded-2xl flex flex-col items-center justify-center space-y-3">
+            <p className="text-[11px] text-slate-500 text-center">Want to bypass this setup and log in securely with your Google profile?</p>
+            <button
+              onClick={handleSignInGoogle}
+              className="flex items-center space-x-2 bg-white hover:bg-slate-50 active:bg-slate-100 border border-slate-200 shadow-sm text-slate-700 hover:text-slate-900 px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer transition-colors"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24">
+                <path fill="#EA4335" d="M12 5.04c1.7 0 3.2.6 4.4 1.7l3.3-3.3C17.7 1.6 15 0 12 0 7.3 0 3.3 2.7 1.4 6.6l3.9 3C6.2 6.8 8.9 5.04 12 5.04z"/>
+                <path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.6h6.5c-.3 1.5-1.1 2.8-2.4 3.7l3.7 2.9c2.2-2 3.7-5 3.7-8.9z"/>
+                <path fill="#FBBC05" d="M5.3 14.4c-.2-.7-.4-1.5-.4-2.4s.2-1.7.4-2.4l-3.9-3C.5 8.2 0 10 0 12s.5 3.8 1.4 5.4l3.9-3z"/>
+                <path fill="#34A853" d="M12 24c3.2 0 6-1 8-2.9l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3.1 0-5.8-1.8-6.7-4.6l-3.9 3C3.3 21.3 7.3 24 12 24z"/>
+              </svg>
+              <span>Sign in with Google</span>
+            </button>
+          </div>
+
+          <div className="relative flex py-2 items-center">
+            <div className="flex-grow border-t border-slate-100"></div>
+            <span className="flex-shrink mx-4 text-slate-400 text-[10px] font-bold uppercase tracking-wider">or join as guest</span>
+            <div className="flex-grow border-t border-slate-100"></div>
+          </div>
+
           <form onSubmit={handleLinkJoinSubmit} className="space-y-5 text-left">
             <div>
               <label className="block text-xs font-bold text-slate-400 mb-1.5 uppercase tracking-wider">
-                Your Collaborator Name
+                Your Guest Nickname
               </label>
               <input
                 type="text"
@@ -205,8 +283,14 @@ export default function App() {
           onBackToDashboard={handleBackToDashboard}
         />
       ) : (
-        <Dashboard onSelectBoard={handleSelectBoard} />
+        <Dashboard
+          onSelectBoard={handleSelectBoard}
+          currentUserProfile={profile}
+          onSignInGoogle={handleSignInGoogle}
+          onSignOut={handleSignOut}
+        />
       )}
     </div>
   );
 }
+

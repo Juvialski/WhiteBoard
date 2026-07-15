@@ -11,6 +11,8 @@ interface TextComponentProps {
   onUpdate: (updates: Partial<TextElement>) => void;
   onDelete: () => void;
   isDraggingOrResizing: boolean;
+  activeTool?: string;
+  canWrite?: boolean;
 }
 
 const EMOJIS = ['👍', '❤️', '🔥', '💡', '❓', '🎉'];
@@ -23,7 +25,9 @@ export default function TextComponent({
   onSelect,
   onUpdate,
   onDelete,
-  isDraggingOrResizing
+  isDraggingOrResizing,
+  activeTool = 'select',
+  canWrite = true
 }: TextComponentProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [text, setText] = useState(element.text);
@@ -75,10 +79,16 @@ export default function TextComponent({
     setShowEmojiPicker(false);
   };
 
+  const cursorClass = activeTool === 'select' 
+    ? 'cursor-grab active:cursor-grabbing' 
+    : activeTool === 'eraser' 
+      ? 'cursor-pointer hover:bg-rose-50 hover:ring-2 hover:ring-rose-500 hover:ring-offset-1 transition-all' 
+      : 'cursor-default';
+
   return (
     <div
       onMouseDown={onSelect}
-      className={`absolute select-none flex flex-col justify-between transition-shadow duration-150 rounded-lg group p-2 cursor-grab active:cursor-grabbing ${
+      className={`absolute select-none flex flex-col justify-between transition-shadow duration-150 rounded-lg group p-2 ${cursorClass} ${
         isSelected ? 'ring-2 ring-blue-600 bg-blue-50/30 z-20 shadow-xs' : 'hover:bg-slate-50/30'
       }`}
       style={{
@@ -110,12 +120,13 @@ export default function TextComponent({
           <div
             onDoubleClick={(e) => {
               e.stopPropagation();
+              if (!canWrite) return;
               setIsEditing(true);
             }}
             className="w-full h-full text-center flex items-center justify-center font-bold break-words overflow-auto select-text cursor-text"
             style={{ fontSize: `${element.fontSize || 16}px`, color: element.color }}
           >
-            {element.text || <span className="opacity-30 italic text-xs font-normal">Double click to type text</span>}
+            {element.text || (canWrite ? <span className="opacity-30 italic text-xs font-normal">Double click to type text</span> : '')}
           </div>
         )}
       </div>
@@ -127,7 +138,7 @@ export default function TextComponent({
           className="absolute -top-12 left-1/2 -translate-x-1/2 bg-white border border-slate-200 rounded-full shadow-lg px-2.5 py-1.5 flex items-center space-x-2 z-30 animate-fade-in whitespace-nowrap"
         >
           {/* Reaction picker */}
-          <div className="flex items-center space-x-1 border-r border-slate-100 pr-2">
+          <div className="flex items-center space-x-1 pr-2">
             {EMOJIS.map((emoji) => (
               <button
                 key={emoji}
@@ -140,40 +151,44 @@ export default function TextComponent({
           </div>
 
           {/* FontSize adjustments */}
-          <div className="flex items-center space-x-1 border-r border-slate-100 pr-2">
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onUpdate({ fontSize: Math.max(12, (element.fontSize || 16) - 2) });
-              }}
-              className="p-1 hover:bg-slate-100 rounded text-[10px] font-bold text-slate-600"
-              title="Smaller font"
-            >
-              A-
-            </button>
-            <span className="text-[10px] text-slate-500 font-mono w-6 text-center">{element.fontSize || 16}px</span>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onUpdate({ fontSize: Math.min(48, (element.fontSize || 16) + 2) });
-              }}
-              className="p-1 hover:bg-slate-100 rounded text-[10px] font-bold text-slate-600"
-              title="Larger font"
-            >
-              A+
-            </button>
-          </div>
+          {canWrite && (
+            <div className="flex items-center space-x-1 border-l border-slate-100 pl-2 pr-2">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onUpdate({ fontSize: Math.max(12, (element.fontSize || 16) - 2) });
+                }}
+                className="p-1 hover:bg-slate-100 rounded text-[10px] font-bold text-slate-600"
+                title="Smaller font"
+              >
+                A-
+              </button>
+              <span className="text-[10px] text-slate-500 font-mono w-6 text-center">{element.fontSize || 16}px</span>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onUpdate({ fontSize: Math.min(48, (element.fontSize || 16) + 2) });
+                }}
+                className="p-1 hover:bg-slate-100 rounded text-[10px] font-bold text-slate-600"
+                title="Larger font"
+              >
+                A+
+              </button>
+            </div>
+          )}
 
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-            }}
-            className="p-1.5 rounded hover:bg-rose-50 text-rose-500 hover:text-rose-600 transition-colors flex items-center"
-            title="Delete text box"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
+          {canWrite && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+              className="p-1.5 rounded hover:bg-rose-50 text-rose-500 hover:text-rose-600 transition-colors flex items-center border-l border-slate-100 pl-2"
+              title="Delete text box"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
         </div>
       )}
 
@@ -195,7 +210,7 @@ export default function TextComponent({
       </div>
 
       {/* Resize handles */}
-      {isSelected && (
+      {isSelected && canWrite && (
         <div
           className="absolute bottom-0 right-0 w-3 h-3 cursor-se-resize flex items-end justify-end pointer-events-auto"
           onMouseDown={(e) => {

@@ -1,6 +1,6 @@
 export type ElementType = 'sticky' | 'shape' | 'text' | 'drawing' | 'connector' | 'image';
 
-export type ShapeType = 'rect' | 'circle' | 'diamond' | 'triangle' | 'star' | 'hexagon' | 'pentagon' | 'parallelogram' | 'right-triangle' | 'line';
+export type ShapeType = 'rect' | 'circle' | 'diamond' | 'triangle' | 'star' | 'hexagon' | 'pentagon' | 'parallelogram' | 'right-triangle' | 'line' | 'cartesian' | 'numberline' | 'advanced-cartesian';
 
 export interface Point {
   x: number;
@@ -50,6 +50,13 @@ export interface ShapeElement {
   reactions?: Record<string, string[]>; // emoji -> array of userNames
   zIndex: number;
   updatedAt?: number;
+  
+  // Cartesian plane specific advanced properties
+  equation?: string;         // e.g. "y = 2x + 1" or "x^2 - 2"
+  equation2?: string;        // second equation, e.g. "y = -x"
+  equation3?: string;        // third equation, e.g. "y = sin(x)"
+  plottedPoints?: string;    // comma-separated points, e.g., "(1,2), (-2,3)"
+  cartesianRange?: number;   // axis maximum scale (e.g., 5 or 10)
 }
 
 export interface TextElement {
@@ -118,10 +125,13 @@ export interface Whiteboard {
   createdBy: string;
   studentId?: string; // If assigned to a specific student
   studentName?: string;
+  studentsCanWrite?: boolean;
 }
 
 export interface UserProfile {
   id: string;
   name: string;
   color: string;
+  role?: 'student' | 'teacher';
+  photoURL?: string;
 }

@@ -11,6 +11,8 @@ interface ImageComponentProps {
   onUpdate: (updates: Partial<ImageElement>) => void;
   onDelete: () => void;
   isDraggingOrResizing: boolean;
+  activeTool?: string;
+  canWrite?: boolean;
 }
 
 const EMOJIS = ['👍', '❤️', '🔥', '💡', '❓', '🎉'];
@@ -23,7 +25,9 @@ export default function ImageComponent({
   onSelect,
   onUpdate,
   onDelete,
-  isDraggingOrResizing
+  isDraggingOrResizing,
+  activeTool = 'select',
+  canWrite = true
 }: ImageComponentProps) {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -51,12 +55,18 @@ export default function ImageComponent({
     setShowEmojiPicker(false);
   };
 
+  const cursorClass = activeTool === 'select' 
+    ? 'cursor-grab active:cursor-grabbing hover:shadow-md' 
+    : activeTool === 'eraser' 
+      ? 'cursor-pointer hover:brightness-95 hover:ring-2 hover:ring-rose-500 hover:ring-offset-1 transition-all' 
+      : 'cursor-default';
+
   return (
     <>
       <div
         onMouseDown={onSelect}
-        className={`absolute select-none rounded-xl bg-white p-2 flex flex-col justify-between transition-shadow duration-150 group cursor-grab active:cursor-grabbing ${
-          isSelected ? 'ring-2 ring-blue-600 shadow-xl z-20' : 'shadow-md shadow-slate-200/50 hover:shadow-lg'
+        className={`absolute select-none flex flex-col justify-between transition-shadow duration-150 group ${cursorClass} ${
+          isSelected ? 'ring-2 ring-blue-600 shadow-xl z-20' : 'z-10'
         }`}
         style={{
           left: element.x,
@@ -67,11 +77,11 @@ export default function ImageComponent({
         id={`image-${element.id}`}
       >
         {/* Image Content Frame */}
-        <div className="flex-1 overflow-hidden w-full h-full relative rounded-lg bg-slate-50 flex items-center justify-center group/img">
+        <div className="w-full h-full relative rounded-xs overflow-hidden flex items-center justify-center group/img">
           <img
             src={element.src}
             alt="Pasted canvas content"
-            className="w-full h-full object-contain select-none pointer-events-none"
+            className="w-full h-full object-cover select-none pointer-events-none"
             referrerPolicy="no-referrer"
           />
           
@@ -88,80 +98,86 @@ export default function ImageComponent({
           </button>
         </div>
 
-        {/* Footer (Reactions & Actions) */}
-        <div 
-          onMouseDown={(e) => e.stopPropagation()}
-          className="flex items-center justify-between mt-1.5 pt-1.5 border-t border-slate-100 min-h-[24px]"
-        >
-          {/* Render Reactions */}
-          <div className="flex flex-wrap gap-1">
-            {Object.entries(element.reactions || {}).map(([emoji, users]) => (
-              <button
-                key={emoji}
-                onClick={(e) => handleEmojiClick(emoji, e)}
-                className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold transition-transform hover:scale-115 ${
-                  users.includes(currentUser.name) 
-                    ? 'bg-blue-500/10 text-blue-950 border border-blue-400/20' 
-                    : 'bg-slate-100 border border-transparent'
-                }`}
-                title={users.join(', ')}
-              >
-                <span>{emoji}</span>
-                <span className="text-[10px] ml-0.5 opacity-80">{users.length}</span>
-              </button>
-            ))}
-          </div>
-
-          {/* Controls */}
-          {isSelected && !isDraggingOrResizing && (
-            <div className="flex items-center space-x-1 ml-auto">
-              {/* Emoji Trigger */}
-              <div className="relative">
+        {/* Floating Controls Overlay (Visible when selected, or when reactions exist) */}
+        {(isSelected || Object.keys(element.reactions || {}).length > 0) && (
+          <div 
+            onMouseDown={(e) => e.stopPropagation()}
+            className="absolute -bottom-12 left-1/2 -translate-x-1/2 flex items-center bg-white/95 border border-slate-200/80 rounded-full px-2.5 py-1 shadow-md gap-2 z-30 min-h-[34px] whitespace-nowrap"
+          >
+            {/* Render Reactions */}
+            <div className="flex flex-wrap gap-1">
+              {Object.entries(element.reactions || {}).map(([emoji, users]) => (
                 <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowEmojiPicker(!showEmojiPicker);
-                  }}
-                  className="p-1 rounded text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
-                  title="Add reaction"
+                  key={emoji}
+                  onClick={(e) => handleEmojiClick(emoji, e)}
+                  className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold transition-transform hover:scale-110 cursor-pointer ${
+                    users.includes(currentUser.name) 
+                      ? 'bg-blue-500/10 text-blue-950 border border-blue-400/20' 
+                      : 'bg-slate-100 border border-transparent'
+                  }`}
+                  title={users.join(', ')}
                 >
-                  <Smile className="w-4 h-4" />
+                  <span>{emoji}</span>
+                  <span className="text-[10px] ml-0.5 opacity-80">{users.length}</span>
                 </button>
-                
-                {showEmojiPicker && (
-                  <div className="absolute bottom-7 right-0 bg-white border border-slate-200 rounded-full shadow-lg p-1.5 flex items-center space-x-1 z-30 animate-scale-up">
-                    {EMOJIS.map((emoji) => (
-                      <button
-                        key={emoji}
-                        onClick={(e) => handleEmojiClick(emoji, e)}
-                        className="w-7 h-7 rounded-full hover:bg-slate-100 flex items-center justify-center text-sm transition-transform hover:scale-120 cursor-pointer"
-                      >
-                        {emoji}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Delete Trigger */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDelete();
-                }}
-                className="p-1 rounded text-slate-500 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
-                title="Delete Image"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
+              ))}
             </div>
-          )}
-        </div>
+
+            {isSelected && !isDraggingOrResizing && (
+              <>
+                {Object.keys(element.reactions || {}).length > 0 && (
+                  <div className="w-[1px] h-3 bg-slate-200" />
+                )}
+                {/* Emoji Trigger */}
+                <div className="relative">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowEmojiPicker(!showEmojiPicker);
+                    }}
+                    className="p-1 rounded text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
+                    title="Add reaction"
+                  >
+                    <Smile className="w-4 h-4" />
+                  </button>
+                  
+                  {showEmojiPicker && (
+                    <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-white border border-slate-200 rounded-full shadow-lg p-1.5 flex items-center space-x-1 z-40 animate-scale-up">
+                      {EMOJIS.map((emoji) => (
+                        <button
+                          key={emoji}
+                          onClick={(e) => handleEmojiClick(emoji, e)}
+                          className="w-7 h-7 rounded-full hover:bg-slate-100 flex items-center justify-center text-sm transition-transform hover:scale-120 cursor-pointer"
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Delete Trigger */}
+                {canWrite && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDelete();
+                    }}
+                    className="p-1 rounded text-slate-500 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                    title="Delete Image"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        )}
 
         {/* Resize corner handle */}
-        {isSelected && (
+        {isSelected && canWrite && (
           <div
-            className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize flex items-end justify-end p-0.5 pointer-events-auto"
+            className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize flex items-end justify-end p-0.5 pointer-events-auto z-30"
             onMouseDown={(e) => {
               e.stopPropagation();
               const canvasEvent = new CustomEvent('init-resize', {

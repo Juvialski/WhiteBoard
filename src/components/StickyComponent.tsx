@@ -11,6 +11,8 @@ interface StickyComponentProps {
   onUpdate: (updates: Partial<StickyElement>) => void;
   onDelete: () => void;
   isDraggingOrResizing: boolean;
+  activeTool?: string;
+  canWrite?: boolean;
 }
 
 const EMOJIS = ['👍', '❤️', '🔥', '💡', '❓', '🎉'];
@@ -23,7 +25,9 @@ export default function StickyComponent({
   onSelect,
   onUpdate,
   onDelete,
-  isDraggingOrResizing
+  isDraggingOrResizing,
+  activeTool = 'select',
+  canWrite = true
 }: StickyComponentProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [text, setText] = useState(element.text);
@@ -80,10 +84,16 @@ export default function StickyComponent({
   const isDarkColor = element.color === '#4b5563';
   const textColorClass = isDarkColor ? 'text-white' : 'text-slate-800';
 
+  const cursorClass = activeTool === 'select' 
+    ? 'cursor-grab active:cursor-grabbing' 
+    : activeTool === 'eraser' 
+      ? 'cursor-pointer hover:brightness-95 hover:ring-2 hover:ring-rose-500 hover:ring-offset-1 transition-all' 
+      : 'cursor-default';
+
   return (
     <div
       onMouseDown={onSelect}
-      className={`absolute select-none rounded-xl p-4 flex flex-col justify-between transition-shadow duration-150 group cursor-grab active:cursor-grabbing ${
+      className={`absolute select-none rounded-xl p-4 flex flex-col justify-between transition-shadow duration-150 group ${cursorClass} ${
         isSelected ? 'ring-2 ring-blue-600 shadow-xl z-20' : 'shadow-md shadow-slate-200/50 hover:shadow-lg'
       }`}
       style={{
@@ -116,11 +126,12 @@ export default function StickyComponent({
           <div
             onDoubleClick={(e) => {
               e.stopPropagation();
+              if (!canWrite) return;
               setIsEditing(true);
             }}
             className={`w-full h-full text-center flex items-center justify-center font-semibold text-sm overflow-auto select-text break-words cursor-text p-1 ${textColorClass}`}
           >
-            {element.text || <span className="opacity-30 italic text-xs">Double click to type</span>}
+            {element.text || (canWrite ? <span className="opacity-30 italic text-xs">Double click to type</span> : '')}
           </div>
         )}
       </div>
@@ -181,22 +192,24 @@ export default function StickyComponent({
             </div>
 
             {/* Delete Trigger */}
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete();
-              }}
-              className={`p-1 rounded hover:bg-rose-500/10 text-rose-600 transition-colors`}
-              title="Delete Element"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
+            {canWrite && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete();
+                }}
+                className={`p-1 rounded hover:bg-rose-500/10 text-rose-600 transition-colors`}
+                title="Delete Element"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            )}
           </div>
         )}
       </div>
 
       {/* Resize corner handle */}
-      {isSelected && (
+      {isSelected && canWrite && (
         <div
           className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize flex items-end justify-end p-0.5 pointer-events-auto"
           onMouseDown={(e) => {

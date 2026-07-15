@@ -6,6 +6,9 @@ import { Plus, Trash2, ArrowRight, User, BookOpen, GraduationCap, Users, Sparkle
 
 interface DashboardProps {
   onSelectBoard: (boardId: string, profile: UserProfile) => void;
+  currentUserProfile: UserProfile | null;
+  onSignInGoogle: () => void;
+  onSignOut: () => void;
 }
 
 const COLLABORATOR_COLORS = [
@@ -14,7 +17,12 @@ const COLLABORATOR_COLORS = [
   '#ec4899', '#f43f5e'
 ];
 
-export default function Dashboard({ onSelectBoard }: DashboardProps) {
+export default function Dashboard({ 
+  onSelectBoard, 
+  currentUserProfile, 
+  onSignInGoogle, 
+  onSignOut 
+}: DashboardProps) {
   const [boards, setBoards] = useState<Whiteboard[]>([]);
   const [userName, setUserName] = useState('');
   const [userColor, setUserColor] = useState(COLLABORATOR_COLORS[Math.floor(Math.random() * COLLABORATOR_COLORS.length)]);
@@ -27,15 +35,34 @@ export default function Dashboard({ onSelectBoard }: DashboardProps) {
   
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Load username from localStorage if exists
+  // Sync state with Google User Profile when it changes
   useEffect(() => {
-    const savedName = localStorage.getItem('lucid_spark_user_name');
-    const savedColor = localStorage.getItem('lucid_spark_user_color');
-    const savedRole = localStorage.getItem('lucid_spark_user_role');
-    
-    if (savedName) setUserName(savedName);
-    if (savedColor) setUserColor(savedColor);
-    if (savedRole === 'teacher' || savedRole === 'student') setRole(savedRole);
+    if (currentUserProfile) {
+      setUserName(currentUserProfile.name);
+      if (currentUserProfile.color) setUserColor(currentUserProfile.color);
+      if (currentUserProfile.role) setRole(currentUserProfile.role);
+    } else {
+      // Restore guest values if any
+      const savedName = localStorage.getItem('lucid_spark_user_name') || '';
+      const savedColor = localStorage.getItem('lucid_spark_user_color') || COLLABORATOR_COLORS[Math.floor(Math.random() * COLLABORATOR_COLORS.length)];
+      const savedRole = (localStorage.getItem('lucid_spark_user_role') || 'student') as 'student' | 'teacher';
+      setUserName(savedName);
+      setUserColor(savedColor);
+      setRole(savedRole);
+    }
+  }, [currentUserProfile]);
+
+  // Load username from localStorage if exists initially
+  useEffect(() => {
+    if (!currentUserProfile) {
+      const savedName = localStorage.getItem('lucid_spark_user_name');
+      const savedColor = localStorage.getItem('lucid_spark_user_color');
+      const savedRole = localStorage.getItem('lucid_spark_user_role');
+      
+      if (savedName) setUserName(savedName);
+      if (savedColor) setUserColor(savedColor);
+      if (savedRole === 'teacher' || savedRole === 'student') setRole(savedRole);
+    }
   }, []);
 
   // Fetch whiteboards in real time
@@ -77,6 +104,7 @@ export default function Dashboard({ onSelectBoard }: DashboardProps) {
         createdBy: finalUserName,
         studentId: assignedStudent ? assignedStudent.toLowerCase().replace(/\s+/g, '-') : '',
         studentName: assignedStudent.trim() || 'All Collaborative',
+        studentsCanWrite: true,
       });
 
       setNewBoardName('');
@@ -106,9 +134,11 @@ export default function Dashboard({ onSelectBoard }: DashboardProps) {
     localStorage.setItem('lucid_spark_user_role', role);
 
     const profile: UserProfile = {
-      id: localStorage.getItem('lucid_spark_user_id') || 'u-' + Math.floor(Math.random() * 1000000),
+      id: currentUserProfile?.id || localStorage.getItem('lucid_spark_user_id') || 'u-' + Math.floor(Math.random() * 1000000),
       name: finalName,
       color: userColor,
+      role: role,
+      photoURL: currentUserProfile?.photoURL
     };
     if (!localStorage.getItem('lucid_spark_user_id')) {
       localStorage.setItem('lucid_spark_user_id', profile.id);
@@ -175,15 +205,71 @@ export default function Dashboard({ onSelectBoard }: DashboardProps) {
             </h2>
             
             <div className="space-y-4">
+              {/* Google Auth Status / Actions */}
+              {currentUserProfile ? (
+                <div className="bg-emerald-50/45 border border-emerald-100 rounded-xl p-3.5 flex items-center justify-between shadow-sm">
+                  <div className="flex items-center space-x-2.5">
+                    {currentUserProfile.photoURL ? (
+                      <img 
+                        src={currentUserProfile.photoURL} 
+                        alt={currentUserProfile.name} 
+                        className="w-8 h-8 rounded-full border border-emerald-200 shadow-xs"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-xs">
+                        {currentUserProfile.name.charAt(0).toUpperCase()}
+                      </div>
+                    )}
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-xs font-semibold text-slate-800 line-clamp-1 leading-snug">{currentUserProfile.name}</span>
+                      <span className="text-[9px] text-emerald-600 font-bold flex items-center uppercase tracking-wider">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1 inline-block animate-pulse"></span>
+                        Google Connected
+                      </span>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={onSignOut}
+                    className="text-[10px] text-rose-500 hover:text-rose-600 hover:underline font-bold cursor-pointer shrink-0 ml-2"
+                  >
+                    Disconnect
+                  </button>
+                </div>
+              ) : (
+                <div className="bg-gradient-to-br from-slate-50 to-slate-100 border border-slate-200/80 rounded-xl p-4 flex flex-col items-center justify-center space-y-2.5 text-center shadow-xs">
+                  <span className="text-[11px] text-slate-500 font-medium leading-relaxed">
+                    Log in securely with Google to verify your identity and unlock instant profile sync.
+                  </span>
+                  <button
+                    onClick={onSignInGoogle}
+                    className="w-full flex items-center justify-center space-x-2 bg-white hover:bg-slate-50 active:bg-slate-100 border border-slate-200/80 shadow-xs text-slate-700 hover:text-slate-900 px-3.5 py-2 rounded-lg text-xs font-semibold cursor-pointer transition-all duration-150 transform active:scale-98"
+                  >
+                    <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                      <path fill="#EA4335" d="M12 5.04c1.7 0 3.2.6 4.4 1.7l3.3-3.3C17.7 1.6 15 0 12 0 7.3 0 3.3 2.7 1.4 6.6l3.9 3C6.2 6.8 8.9 5.04 12 5.04z"/>
+                      <path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.6h6.5c-.3 1.5-1.1 2.8-2.4 3.7l3.7 2.9c2.2-2 3.7-5 3.7-8.9z"/>
+                      <path fill="#FBBC05" d="M5.3 14.4c-.2-.7-.4-1.5-.4-2.4s.2-1.7.4-2.4l-3.9-3C.5 8.2 0 10 0 12s.5 3.8 1.4 5.4l3.9-3z"/>
+                      <path fill="#34A853" d="M12 24c3.2 0 6-1 8-2.9l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3.1 0-5.8-1.8-6.7-4.6l-3.9 3C3.3 21.3 7.3 24 12 24z"/>
+                    </svg>
+                    <span>Sign in with Google</span>
+                  </button>
+                </div>
+              )}
+
               <div>
                 <label className="block text-[10px] font-bold text-slate-400 mb-1.5 uppercase tracking-wider">
-                  Your Nickname
+                  {currentUserProfile ? "Your Profile Nickname" : "Your Guest Nickname"}
                 </label>
                 <input
                   type="text"
                   placeholder={role === 'teacher' ? 'e.g. Mrs. Smith' : 'e.g. Leo Parker'}
                   value={userName}
-                  onChange={(e) => setUserName(e.target.value)}
+                  onChange={(e) => {
+                    setUserName(e.target.value);
+                    if (!currentUserProfile) {
+                      localStorage.setItem('lucid_spark_user_name', e.target.value);
+                    }
+                  }}
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600 transition-colors"
                 />
               </div>
@@ -196,7 +282,10 @@ export default function Dashboard({ onSelectBoard }: DashboardProps) {
                   {COLLABORATOR_COLORS.map((c) => (
                     <button
                       key={c}
-                      onClick={() => setUserColor(c)}
+                      onClick={() => {
+                        setUserColor(c);
+                        localStorage.setItem('lucid_spark_user_color', c);
+                      }}
                       className={`w-7 h-7 rounded-full border transition-all transform hover:scale-110 flex items-center justify-center ${
                         userColor === c ? 'ring-2 ring-blue-600 border-white scale-105' : 'border-transparent'
                       }`}

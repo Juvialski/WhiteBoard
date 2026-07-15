@@ -1,5 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { getAuth, GoogleAuthProvider } from "firebase/auth";
 
 const firebaseConfig = {
   projectId: "whiteboard-ee02a",
@@ -16,4 +17,9 @@ const app = initializeApp(firebaseConfig);
 // Initialize Firestore with specific database ID as 2nd parameter
 const db = getFirestore(app, "ai-studio-lucidsparkwhiteb-b0a1d487-a913-4112-b5dd-7cf4c33b5adf");
 
-export { app, db };
+// Initialize Firebase Auth
+const auth = getAuth(app);
+const googleProvider = new GoogleAuthProvider();
+
+export { app, db, auth, googleProvider };
+

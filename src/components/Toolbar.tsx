@@ -19,11 +19,12 @@ import {
   Sparkles,
   ArrowRight,
   Grid,
-  Hexagon
+  Hexagon,
+  TrendingUp
 } from 'lucide-react';
 import { ShapeType } from '../types';
 
-export type Tool = 'select' | 'pan' | 'pencil' | 'highlighter' | 'sticky' | 'shape' | 'text' | 'connector' | 'eraser';
+export type Tool = 'select' | 'pan' | 'pencil' | 'highlighter' | 'sticky' | 'shape' | 'cartesian' | 'numberline' | 'advanced-cartesian' | 'text' | 'connector' | 'eraser';
 
 interface ToolbarProps {
   activeTool: Tool;
@@ -39,8 +40,9 @@ interface ToolbarProps {
   onZoomReset: () => void;
   strokeWidth: number;
   onChangeStrokeWidth: (width: number) => void;
-  gridMode: 'dots' | 'math';
-  onChangeGridMode: (mode: 'dots' | 'math') => void;
+  gridMode: 'dots' | 'math' | 'none';
+  onChangeGridMode: (mode: 'dots' | 'math' | 'none') => void;
+  hasSelection?: boolean;
 }
 
 const STICKY_COLORS = [
@@ -114,7 +116,8 @@ export default function Toolbar({
   strokeWidth,
   onChangeStrokeWidth,
   gridMode,
-  onChangeGridMode
+  onChangeGridMode,
+  hasSelection = false
 }: ToolbarProps) {
   const [showShapeMenu, setShowShapeMenu] = useState(false);
   const [showColorMenu, setShowColorMenu] = useState(false);
@@ -126,6 +129,18 @@ export default function Toolbar({
     { id: 'highlighter', icon: <Highlighter className="w-5 h-5" />, label: 'Highlighter' },
     { id: 'sticky', icon: <StickyNote className="w-5 h-5" />, label: 'Sticky Note (N)' },
     { id: 'shape', icon: <Square className="w-5 h-5" />, label: 'Shapes (S)' },
+    { id: 'cartesian', icon: <Grid className="w-5 h-5" />, label: 'Cartesian Plane (G)' },
+    { id: 'advanced-cartesian', icon: <TrendingUp className="w-5 h-5" />, label: 'Advanced Cartesian Plane' },
+    { id: 'numberline', icon: (
+        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M 3 12 L 21 12" strokeWidth="2.5" />
+          <path d="M 6 9 L 3 12 L 6 15" strokeWidth="2.5" />
+          <path d="M 18 9 L 21 12 L 18 15" strokeWidth="2.5" />
+          <path d="M 12 9 L 12 15" strokeWidth="2.5" />
+          <path d="M 7 10 L 7 14" />
+          <path d="M 17 10 L 17 14" />
+        </svg>
+      ), label: 'Number Line' },
     { id: 'text', icon: <Type className="w-5 h-5" />, label: 'Text Box (T)' },
     { id: 'connector', icon: <CornerDownRight className="w-5 h-5" />, label: 'Connector Line (L)' },
     { id: 'eraser', icon: <Eraser className="w-5 h-5" />, label: 'Eraser (E)' }
@@ -147,7 +162,7 @@ export default function Toolbar({
                   } else {
                     setShowShapeMenu(false);
                   }
-                  if (t.id === 'sticky' || t.id === 'shape' || t.id === 'pencil' || t.id === 'highlighter' || t.id === 'text' || t.id === 'connector') {
+                  if (['sticky', 'shape', 'pencil', 'highlighter', 'text', 'connector', 'cartesian', 'numberline', 'advanced-cartesian'].includes(t.id)) {
                     setShowColorMenu(true);
                   } else {
                     setShowColorMenu(false);
@@ -178,7 +193,7 @@ export default function Toolbar({
 
       {/* Floating Submenu Panels (Shapes Selector, Color Picker, Pen stroke) */}
       {(showShapeMenu && activeTool === 'shape') && (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-lg p-2 flex flex-col space-y-1 absolute left-18 top-44 w-44 max-h-[320px] overflow-y-auto animate-fade-in" style={{ scrollbarWidth: 'thin' }}>
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-lg p-2 flex flex-col space-y-1 absolute left-[272px] top-12 w-44 max-h-[320px] overflow-y-auto animate-fade-in" style={{ scrollbarWidth: 'thin' }}>
           <div className="text-[10px] font-bold text-slate-400 px-2 py-1 uppercase tracking-wider sticky top-0 bg-white z-10 border-b border-slate-50 mb-1">Select Shape</div>
           {SHAPES.map((s) => (
             <button
@@ -199,7 +214,7 @@ export default function Toolbar({
       )}
 
       {/* Color Picker Panel */}
-      {showColorMenu && (['sticky', 'shape', 'pencil', 'highlighter', 'text', 'connector'].includes(activeTool)) && (
+      {(showColorMenu || (activeTool === 'select' && hasSelection)) && (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-lg p-3 flex flex-col space-y-2.5 absolute left-18 top-12 w-48 animate-fade-in">
           <div className="flex items-center justify-between border-b border-slate-100 pb-1">
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Palette Color</span>
@@ -293,16 +308,51 @@ export default function Toolbar({
 
       {/* Grid Mode Selection */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-lg p-1.5 flex flex-col space-y-1">
+        <div className="text-[9px] font-bold text-slate-400 px-1 py-0.5 text-center uppercase tracking-wider">Canvas</div>
         <button
-          onClick={() => onChangeGridMode(gridMode === 'dots' ? 'math' : 'dots')}
-          className={`p-2.5 rounded-xl transition-all flex items-center justify-center ${
-            gridMode === 'math' 
-              ? 'bg-blue-50 text-blue-600 ring-2 ring-blue-600/20 font-bold' 
+          onClick={() => onChangeGridMode('dots')}
+          className={`p-2 rounded-xl transition-all flex items-center justify-center ${
+            gridMode === 'dots' 
+              ? 'bg-blue-50 text-blue-600 ring-1 ring-blue-600/20 font-bold shadow-xs' 
               : 'text-slate-500 hover:bg-slate-100'
           }`}
-          title={gridMode === 'math' ? 'Switch to Dotted Canvas' : 'Switch to Math Grid (Graph Paper)'}
+          title="Dotted Canvas"
+        >
+          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <circle cx="6" cy="6" r="1" fill="currentColor" />
+            <circle cx="12" cy="6" r="1" fill="currentColor" />
+            <circle cx="18" cy="6" r="1" fill="currentColor" />
+            <circle cx="6" cy="12" r="1" fill="currentColor" />
+            <circle cx="12" cy="12" r="1" fill="currentColor" />
+            <circle cx="18" cy="12" r="1" fill="currentColor" />
+            <circle cx="6" cy="18" r="1" fill="currentColor" />
+            <circle cx="12" cy="18" r="1" fill="currentColor" />
+            <circle cx="18" cy="18" r="1" fill="currentColor" />
+          </svg>
+        </button>
+        <button
+          onClick={() => onChangeGridMode('math')}
+          className={`p-2 rounded-xl transition-all flex items-center justify-center ${
+            gridMode === 'math' 
+              ? 'bg-blue-50 text-blue-600 ring-1 ring-blue-600/20 font-bold shadow-xs' 
+              : 'text-slate-500 hover:bg-slate-100'
+          }`}
+          title="Math Grid (Graph Paper)"
         >
           <Grid className="w-4 h-4" />
+        </button>
+        <button
+          onClick={() => onChangeGridMode('none')}
+          className={`p-2 rounded-xl transition-all flex items-center justify-center ${
+            gridMode === 'none' 
+              ? 'bg-blue-50 text-blue-600 ring-1 ring-blue-600/20 font-bold shadow-xs' 
+              : 'text-slate-500 hover:bg-slate-100'
+          }`}
+          title="Plain White Background"
+        >
+          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+          </svg>
         </button>
       </div>
     </div>
