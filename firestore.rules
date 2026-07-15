@@ -1,0 +1,66 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions for validating types and lengths
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isStringWithLimit(val, maxLen) {
+      return val is string && val.size() <= maxLen;
+    }
+
+    function isNumber(val) {
+      return val is int || val is float;
+    }
+
+    // Default deny catch-all to prevent unwanted access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Whiteboards collection rules
+    match /whiteboards/{boardId} {
+      allow read: if true;
+      allow create: if isValidId(boardId)
+                    && isStringWithLimit(request.resource.data.name, 100)
+                    && (request.resource.data.get('description', '') is string && request.resource.data.get('description', '').size() <= 500)
+                    && isNumber(request.resource.data.createdAt)
+                    && isStringWithLimit(request.resource.data.createdBy, 100)
+                    && (request.resource.data.get('studentId', '') is string && request.resource.data.get('studentId', '').size() <= 100)
+                    && (request.resource.data.get('studentName', '') is string && request.resource.data.get('studentName', '').size() <= 100);
+      
+      allow update: if isStringWithLimit(request.resource.data.name, 100)
+                    && (request.resource.data.get('description', '') is string && request.resource.data.get('description', '').size() <= 500)
+                    && isNumber(request.resource.data.createdAt)
+                    && isStringWithLimit(request.resource.data.createdBy, 100)
+                    && (request.resource.data.get('studentId', '') is string && request.resource.data.get('studentId', '').size() <= 100)
+                    && (request.resource.data.get('studentName', '') is string && request.resource.data.get('studentName', '').size() <= 100);
+
+      allow delete: if true;
+
+      // Subcollection: elements on a whiteboard
+      match /elements/{elementId} {
+        allow read: if true;
+        allow create, update: if isValidId(elementId)
+                              && request.resource.data.get('id', '') == elementId
+                              && request.resource.data.type in ['sticky', 'shape', 'text', 'drawing', 'connector', 'image']
+                              && isNumber(request.resource.data.zIndex);
+        allow delete: if true;
+      }
+
+      // Subcollection: live collaborator cursors
+      match /cursors/{cursorId} {
+        allow read: if true;
+        allow create, update: if isValidId(cursorId)
+                              && isStringWithLimit(request.resource.data.name, 100)
+                              && isStringWithLimit(request.resource.data.color, 20)
+                              && isNumber(request.resource.data.x)
+                              && isNumber(request.resource.data.y)
+                              && isNumber(request.resource.data.lastActive);
+        allow delete: if true;
+      }
+    }
+  }
+}

@@ -1,0 +1,113 @@
+{
+  "entities": {
+    "Whiteboard": {
+      "title": "Whiteboard",
+      "description": "A whiteboard canvas document containing metadata",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "integer"
+        },
+        "createdBy": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "studentId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "studentName": {
+          "type": "string",
+          "maxLength": 100
+        }
+      },
+      "required": ["name", "createdAt", "createdBy"]
+    },
+    "BoardElement": {
+      "title": "BoardElement",
+      "description": "A dynamic whiteboard element such as stickies, shapes, lines, drawings, and texts",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "type": {
+          "type": "string",
+          "enum": ["sticky", "shape", "text", "drawing", "connector", "image"]
+        },
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "width": {
+          "type": "number"
+        },
+        "height": {
+          "type": "number"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 5000
+        },
+        "color": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "zIndex": {
+          "type": "integer"
+        }
+      },
+      "required": ["id", "type", "zIndex"]
+    },
+    "Cursor": {
+      "title": "Cursor",
+      "description": "Collaborator cursor coordinate and styling profile",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "color": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "lastActive": {
+          "type": "integer"
+        }
+      },
+      "required": ["name", "color", "x", "y", "lastActive"]
+    }
+  },
+  "firestore": {
+    "/whiteboards/{boardId}": {
+      "schema": "Whiteboard",
+      "description": "Primary whiteboards document metadata"
+    },
+    "/whiteboards/{boardId}/elements/{elementId}": {
+      "schema": "BoardElement",
+      "description": "Canvas elements collection inside a specific whiteboard"
+    },
+    "/whiteboards/{boardId}/cursors/{cursorId}": {
+      "schema": "Cursor",
+      "description": "Live transient user cursors inside a specific whiteboard"
+    }
+  }
+}
