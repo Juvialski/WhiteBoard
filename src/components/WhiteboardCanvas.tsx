@@ -679,6 +679,58 @@ export default function WhiteboardCanvas({
   const isPdfBoard = boardName.startsWith("PDF: ");
   const [hasCentered, setHasCentered] = useState(false);
 
+  // Mirror refs for multi-touch and touch gesture synchronization
+  const activeToolRef = useRef(activeTool);
+  const selectedIdRef = useRef(selectedId);
+  const selectedIdsRef = useRef(selectedIds);
+  const isPanningRef = useRef(isPanning);
+  const isDraggingRef = useRef(isDragging);
+  const isResizingRef = useRef(isResizing);
+  const activeColorRef = useRef(activeColor);
+  const strokeWidthRef = useRef(strokeWidth);
+  const dragStartRef = useRef(dragStart);
+  const canWriteRef = useRef(canWrite);
+
+  useEffect(() => {
+    activeToolRef.current = activeTool;
+  }, [activeTool]);
+
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
+
+  useEffect(() => {
+    selectedIdsRef.current = selectedIds;
+  }, [selectedIds]);
+
+  useEffect(() => {
+    isPanningRef.current = isPanning;
+  }, [isPanning]);
+
+  useEffect(() => {
+    isDraggingRef.current = isDragging;
+  }, [isDragging]);
+
+  useEffect(() => {
+    isResizingRef.current = isResizing;
+  }, [isResizing]);
+
+  useEffect(() => {
+    activeColorRef.current = activeColor;
+  }, [activeColor]);
+
+  useEffect(() => {
+    strokeWidthRef.current = strokeWidth;
+  }, [strokeWidth]);
+
+  useEffect(() => {
+    dragStartRef.current = dragStart;
+  }, [dragStart]);
+
+  useEffect(() => {
+    canWriteRef.current = canWrite;
+  }, [canWrite]);
+
   useEffect(() => {
     if (isPdfBoard && elements.length > 0 && !hasCentered && containerRef.current) {
       const pdfPages = elements.filter((el) => el.id.startsWith("pdf-page-"));
@@ -863,6 +915,404 @@ export default function WhiteboardCanvas({
     container.addEventListener("wheel", handleNativeWheel, { passive: false });
     return () => {
       container.removeEventListener("wheel", handleNativeWheel);
+    };
+  }, []);
+
+  // Native non-passive Touch event listeners for seamless single/multi-finger mobile support (pinch-to-zoom, pan, draw, drag, resize)
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const touchStartData = {
+      dist: 0,
+      midX: 0,
+      midY: 0,
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+    };
+
+    const findElementAtCoords = (coords: { x: number; y: number }) => {
+      const curElements = elementsRef.current;
+      for (let i = curElements.length - 1; i >= 0; i--) {
+        const el = curElements[i];
+        if (el.type === "drawing") continue;
+        const bounded = el as any;
+        const w = bounded.width || 150;
+        const h = bounded.height || 150;
+        if (
+          coords.x >= bounded.x &&
+          coords.x <= bounded.x + w &&
+          coords.y >= bounded.y &&
+          coords.y <= bounded.y + h
+        ) {
+          return el;
+        }
+      }
+      return null;
+    };
+
+    const isNearResizeHandle = (el: BoardElement, coords: { x: number; y: number }) => {
+      const bounded = el as any;
+      const w = bounded.width || 150;
+      const h = bounded.height || 150;
+      const handleSize = 32 / zoomRef.current;
+      return (
+        coords.x >= bounded.x + w - handleSize &&
+        coords.x <= bounded.x + w + 12 &&
+        coords.y >= bounded.y + h - handleSize &&
+        coords.y <= bounded.y + h + 12
+      );
+    };
+
+    const handleNativeTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        // Pinch-to-zoom multi-touch trigger
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+        const midX = (t1.clientX + t2.clientX) / 2;
+        const midY = (t1.clientY + t2.clientY) / 2;
+
+        touchStartData.dist = dist;
+        touchStartData.midX = midX;
+        touchStartData.midY = midY;
+        touchStartData.zoom = zoomRef.current;
+        touchStartData.panX = panXRef.current;
+        touchStartData.panY = panYRef.current;
+
+        setIsPanning(false);
+        setIsDragging(false);
+        setIsResizing(false);
+        isDrawingRef.current = false;
+        return;
+      }
+
+      if (e.touches.length === 1) {
+        const t = e.touches[0];
+        const clientX = t.clientX;
+        const clientY = t.clientY;
+        const coords = screenToCanvasCoords(clientX, clientY);
+
+        if (!canWriteRef.current && activeToolRef.current !== "select" && activeToolRef.current !== "pan") {
+          triggerReadOnlyAlert();
+          return;
+        }
+
+        if (container) {
+          containerRectRef.current = container.getBoundingClientRect();
+        }
+
+        // 1. Draw mode
+        if (activeToolRef.current === "pencil" || activeToolRef.current === "highlighter") {
+          isDrawingRef.current = true;
+          drawingPointsRef.current = [coords];
+          setLocalDrawingPoints([coords]);
+          return;
+        }
+
+        // 2. Eraser mode
+        if (activeToolRef.current === "eraser") {
+          const el = findElementAtCoords(coords);
+          if (el) {
+            handleDeleteElement(el.id);
+          }
+          return;
+        }
+
+        // 3. Selection tool interactions
+        if (activeToolRef.current === "select") {
+          const currentSelectedId = selectedIdRef.current;
+          const currentSelectedEl = currentSelectedId ? elementsRef.current.find(el => el.id === currentSelectedId) : null;
+
+          if (currentSelectedEl && isNearResizeHandle(currentSelectedEl, coords)) {
+            setIsResizing(true);
+            const startPos = { x: clientX, y: clientY };
+            dragStartRef.current = startPos;
+            setDragStart(startPos);
+            setElementStartSize({ w: (currentSelectedEl as any).width, h: (currentSelectedEl as any).height });
+            setElementStartPos({ x: (currentSelectedEl as any).x, y: (currentSelectedEl as any).y });
+            return;
+          }
+
+          const el = findElementAtCoords(coords);
+          if (el) {
+            setSelectedId(el.id);
+            setSelectedIds([el.id]);
+
+            if (canWriteRef.current && !(el as any).locked) {
+              setIsDragging(true);
+              const startPos = { x: clientX, y: clientY };
+              dragStartRef.current = startPos;
+              setDragStart(startPos);
+
+              const positions: Record<string, any> = {};
+              const targetIds = [el.id];
+              elementsRef.current.forEach((item) => {
+                if (targetIds.includes(item.id)) {
+                  if ((item as any).locked) return;
+                  if (item.type !== "drawing") {
+                    positions[item.id] = { x: (item as any).x, y: (item as any).y };
+                  } else {
+                    positions[item.id] = { points: [...item.points] };
+                  }
+                }
+              });
+              setElementStartPositions(positions);
+            }
+            return;
+          } else {
+            // Touch empty canvas under Select tool: auto-pan! (Super premium UX for mobile viewports)
+            setSelectedId(null);
+            setSelectedIds([]);
+
+            setIsPanning(true);
+            const startPos = { x: clientX, y: clientY };
+            dragStartRef.current = startPos;
+            setDragStart(startPos);
+            return;
+          }
+        }
+
+        // 4. Pan mode
+        if (activeToolRef.current === "pan") {
+          setIsPanning(true);
+          const startPos = { x: clientX, y: clientY };
+          dragStartRef.current = startPos;
+          setDragStart(startPos);
+          return;
+        }
+
+        // 5. Spawn elements instantly on touch start
+        if (activeToolRef.current === "sticky") {
+          const id = "sticky-" + Date.now() + Math.floor(Math.random() * 100);
+          const newSticky: StickyElement = {
+            id,
+            type: "sticky",
+            x: coords.x - 75,
+            y: coords.y - 75,
+            width: 150,
+            height: 150,
+            text: "",
+            color: activeColorRef.current,
+            zIndex: elementsRef.current.length + 1,
+            reactions: {},
+          };
+          saveElementLocallyAndSync(id, newSticky);
+          pushToUndo({ type: "add", elementId: id, afterData: newSticky });
+          setActiveTool("select");
+          setSelectedId(id);
+          return;
+        }
+
+        if (activeToolRef.current === "shape") {
+          const id = "shape-" + Date.now() + Math.floor(Math.random() * 100);
+          const newShape: ShapeElement = {
+            id,
+            type: "shape",
+            shapeType: activeShape,
+            x: coords.x - 75,
+            y: coords.y - 75,
+            width: 150,
+            height: 150,
+            text: "",
+            color: activeColorRef.current,
+            borderColor: "#1e293b",
+            zIndex: elementsRef.current.length + 1,
+            reactions: {},
+          };
+          saveElementLocallyAndSync(id, newShape);
+          pushToUndo({ type: "add", elementId: id, afterData: newShape });
+          setActiveTool("select");
+          setSelectedId(id);
+          return;
+        }
+
+        if (activeToolRef.current === "text") {
+          const id = "text-" + Date.now() + Math.floor(Math.random() * 100);
+          const newText: TextElement = {
+            id,
+            type: "text",
+            x: coords.x - 100,
+            y: coords.y - 25,
+            width: 200,
+            height: 50,
+            text: "",
+            color: activeColorRef.current === "#4b5563" ? "#4b5563" : "#1e293b",
+            fontSize: 18,
+            zIndex: elementsRef.current.length + 1,
+            reactions: {},
+          };
+          saveElementLocallyAndSync(id, newText);
+          pushToUndo({ type: "add", elementId: id, afterData: newText });
+          setActiveTool("select");
+          setSelectedId(id);
+          return;
+        }
+      }
+    };
+
+    const handleNativeTouchMove = (e: TouchEvent) => {
+      // 1. Two-finger pinch-to-zoom
+      if (e.touches.length === 2 && touchStartData.dist > 0) {
+        e.preventDefault();
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+        const midX = (t1.clientX + t2.clientX) / 2;
+        const midY = (t1.clientY + t2.clientY) / 2;
+
+        const factor = dist / touchStartData.dist;
+        const newZoom = Math.min(3, Math.max(0.15, touchStartData.zoom * factor));
+
+        const canvasMidX = (touchStartData.midX - touchStartData.panX) / touchStartData.zoom;
+        const canvasMidY = (touchStartData.midY - touchStartData.panY) / touchStartData.zoom;
+
+        const newPanX = midX - canvasMidX * newZoom;
+        const newPanY = midY - canvasMidY * newZoom;
+
+        setZoom(newZoom);
+        setPanX(newPanX);
+        setPanY(newPanY);
+        return;
+      }
+
+      // 2. Single touch move
+      if (e.touches.length === 1) {
+        const t = e.touches[0];
+        const clientX = t.clientX;
+        const clientY = t.clientY;
+
+        updateCursorPosition(clientX, clientY);
+
+        if (isPanningRef.current || isDrawingRef.current || isDraggingRef.current || isResizingRef.current) {
+          e.preventDefault(); // lock page scrolling
+        }
+
+        // Panning background
+        if (isPanningRef.current) {
+          const dx = clientX - dragStartRef.current.x;
+          const dy = clientY - dragStartRef.current.y;
+          setPanX((prev) => prev + dx);
+          setPanY((prev) => prev + dy);
+
+          const newStart = { x: clientX, y: clientY };
+          dragStartRef.current = newStart;
+          setDragStart(newStart);
+          return;
+        }
+
+        // Drawing freehand
+        if (isDrawingRef.current && (activeToolRef.current === "pencil" || activeToolRef.current === "highlighter")) {
+          const coords = screenToCanvasCoords(clientX, clientY);
+          const lastPoint = drawingPointsRef.current[drawingPointsRef.current.length - 1];
+          let addPoint = true;
+          if (lastPoint) {
+            const dist = Math.sqrt(Math.pow(coords.x - lastPoint.x, 2) + Math.pow(coords.y - lastPoint.y, 2));
+            if (dist < 2) addPoint = false;
+          }
+
+          if (addPoint) {
+            const updated = [...drawingPointsRef.current, coords];
+            drawingPointsRef.current = updated;
+            setLocalDrawingPoints(updated);
+
+            if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+              wsRef.current.send(JSON.stringify({
+                type: "drawing_stream",
+                boardId,
+                userId: currentUser.id,
+                userName: currentUser.name,
+                color: activeToolRef.current === "highlighter" ? `${activeColorRef.current}80` : activeColorRef.current,
+                width: activeToolRef.current === "highlighter" ? strokeWidthRef.current * 2.5 : strokeWidthRef.current,
+                points: updated,
+                isHighlighter: activeToolRef.current === "highlighter"
+              }));
+            }
+          }
+          return;
+        }
+
+        // Moving elements
+        if (isDraggingRef.current && selectedIdsRef.current.length > 0) {
+          const dx = (clientX - dragStartRef.current.x) / zoomRef.current;
+          const dy = (clientY - dragStartRef.current.y) / zoomRef.current;
+
+          setElements((prev) =>
+            prev.map((el) => {
+              if (selectedIdsRef.current.includes(el.id)) {
+                const startPos = elementStartPositions[el.id];
+                if (startPos) {
+                  if (el.type !== "drawing") {
+                    return {
+                      ...el,
+                      x: startPos.x + dx,
+                      y: startPos.y + dy,
+                    };
+                  } else {
+                    return {
+                      ...el,
+                      points: startPos.points.map((p: any) => ({
+                        x: p.x + dx,
+                        y: p.y + dy,
+                      })),
+                    };
+                  }
+                }
+              }
+              return el;
+            })
+          );
+          return;
+        }
+
+        // Resizing elements
+        if (isResizingRef.current && selectedIdRef.current) {
+          const dx = (clientX - dragStartRef.current.x) / zoomRef.current;
+          const dy = (clientY - dragStartRef.current.y) / zoomRef.current;
+
+          setElements((prev) =>
+            prev.map((el) => {
+              if (el.id === selectedIdRef.current && el.type !== "drawing") {
+                if (el.type === "image") {
+                  const startW = elementStartSize.w;
+                  const startH = elementStartSize.h;
+                  const ratio = startW > 0 ? startH / startW : 1;
+                  const newW = Math.max(40, startW + dx);
+                  const newH = Math.max(40, newW * ratio);
+                  return { ...el, width: newW, height: newH };
+                }
+                return {
+                  ...el,
+                  width: Math.max(60, elementStartSize.w + dx),
+                  height: Math.max(60, elementStartSize.h + dy),
+                };
+              }
+              return el;
+            })
+          );
+          return;
+        }
+      }
+    };
+
+    const handleNativeTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length === 0) {
+        touchStartData.dist = 0;
+        handleMouseUp(null as any);
+      } else if (e.touches.length === 1) {
+        touchStartData.dist = 0;
+      }
+    };
+
+    container.addEventListener("touchstart", handleNativeTouchStart, { passive: false });
+    container.addEventListener("touchmove", handleNativeTouchMove, { passive: false });
+    container.addEventListener("touchend", handleNativeTouchEnd, { passive: false });
+
+    return () => {
+      container.removeEventListener("touchstart", handleNativeTouchStart);
+      container.removeEventListener("touchmove", handleNativeTouchMove);
+      container.removeEventListener("touchend", handleNativeTouchEnd);
     };
   }, []);
 
