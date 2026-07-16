@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+import { initializeFirestore } from "firebase/firestore";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
 
 const firebaseConfig = {
@@ -14,8 +14,10 @@ const firebaseConfig = {
 // Initialize Firebase app
 const app = initializeApp(firebaseConfig);
 
-// Initialize Firestore with specific database ID as 2nd parameter
-const db = getFirestore(app, "ai-studio-lucidsparkwhiteb-b0a1d487-a913-4112-b5dd-7cf4c33b5adf");
+// Initialize Firestore with specific database ID as 3rd parameter and enable experimentalForceLongPolling
+const db = initializeFirestore(app, {
+  experimentalForceLongPolling: true,
+}, "ai-studio-lucidsparkwhiteb-b0a1d487-a913-4112-b5dd-7cf4c33b5adf");
 
 // Initialize Firebase Auth
 const auth = getAuth(app);

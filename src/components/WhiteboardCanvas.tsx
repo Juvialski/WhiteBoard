@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { get as idbGet, set as idbSet } from "idb-keyval";
 import {
   collection,
   query,
@@ -20,7 +21,9 @@ import {
   ShapeType,
   ImageElement,
   Whiteboard,
+  Collaborator,
 } from "../types";
+
 import Toolbar, { Tool } from "./Toolbar";
 import StickyComponent from "./StickyComponent";
 import ShapeComponent from "./ShapeComponent";
@@ -50,6 +53,8 @@ import {
   Key,
   Eye,
   EyeOff,
+  Zap,
+  ZapOff,
 } from "lucide-react";
 import Markdown from "react-markdown";
 import { secureEncrypt, secureDecrypt } from "../utils/crypto";
@@ -122,6 +127,27 @@ function getSvgPathFromPoints(points: Point[]): string {
   return d;
 }
 
+// High-performance point simplification/downsampling to shrink stroke coordinate sizes
+function simplifyPoints(points: Point[], tolerance: number = 1.0): Point[] {
+  if (points.length <= 2) return points;
+  
+  const result: Point[] = [points[0]];
+  let lastPoint = points[0];
+  
+  for (let i = 1; i < points.length - 1; i++) {
+    const p = points[i];
+    const dx = p.x - lastPoint.x;
+    const dy = p.y - lastPoint.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > tolerance) {
+      result.push(p);
+      lastPoint = p;
+    }
+  }
+  result.push(points[points.length - 1]);
+  return result;
+}
+
 interface WhiteboardCanvasProps {
   boardId: string;
   boardName: string;
@@ -142,15 +168,258 @@ export default function WhiteboardCanvas({
   const [panY, setPanY] = useState(window.innerHeight / 2 - 300);
   const [zoom, setZoom] = useState(1);
 
-  // Whiteboard Elements State
-  const [elements, setElements] = useState<BoardElement[]>([]);
+  // Whiteboard Elements State (loads instantly from LocalStorage cache as recovery fallback)
+  const [elements, setElements] = useState<BoardElement[]>(() => {
+    try {
+      const cached = localStorage.getItem(`whiteboard_elements_${boardId}`);
+      if (cached) {
+        return JSON.parse(cached);
+      }
+    } catch (e) {
+      console.error("Error loading cached elements:", e);
+    }
+    return [];
+  });
   const [clipboardElements, setClipboardElements] = useState<BoardElement[]>([]);
   const [boardData, setBoardData] = useState<Whiteboard | null>(null);
+
+  // Real-Time WebSockets Sync & Caching States
+  const wsRef = useRef<WebSocket | null>(null);
+  const [wsConnected, setWsConnected] = useState(false);
+  const [socketCollaborators, setSocketCollaborators] = useState<Collaborator[]>([]);
+  const socketCollaboratorsRef = useRef<Record<string, Collaborator>>({});
+  const [remoteDrawingStreams, setRemoteDrawingStreams] = useState<Record<string, {
+    points: Point[];
+    color: string;
+    width: number;
+    isHighlighter: boolean;
+  }>>({});
+  const [remoteSelections, setRemoteSelections] = useState<Record<string, {
+    userName: string;
+    color: string;
+    selectedIds: string[];
+  }>>({});
+  const [wsLatency, setWsLatency] = useState<number | null>(null);
+
+  // Load heavy drawings from local IndexedDB cache instantly upon mounting (resilience)
+  useEffect(() => {
+    const loadFromIDB = async () => {
+      try {
+        const cachedDrawings = await idbGet<DrawingElement[]>(`drawings_${boardId}`);
+        if (cachedDrawings && cachedDrawings.length > 0) {
+          setElements((prev) => {
+            const nonDrawings = prev.filter(el => el.type !== "drawing");
+            return [...nonDrawings, ...cachedDrawings];
+          });
+        }
+      } catch (err) {
+        console.error("IndexedDB cache loading error:", err);
+      }
+    };
+    loadFromIDB();
+  }, [boardId]);
+
+  // Connect to the HTTP-integrated local WebSocket server on the same origin
+  useEffect(() => {
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    
+    let socket: WebSocket;
+    let reconnectTimer: any;
+    let pingInterval: any;
+    
+    const connect = () => {
+      socket = new WebSocket(wsUrl);
+      wsRef.current = socket;
+      
+      socket.onopen = () => {
+        console.log("WebSocket connected to real-time relay");
+        setWsConnected(true);
+        // Register client to this specific board room
+        socket.send(JSON.stringify({
+          type: "join",
+          boardId,
+          userId: currentUser.id
+        }));
+
+        // Connection heartbeat (ping) to keep connection alive and compute latency
+        pingInterval = setInterval(() => {
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({
+              type: "ping",
+              id: Date.now()
+            }));
+          }
+        }, 15000);
+      };
+      
+      socket.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === "cursor") {
+            // Track cursor movement from remote collaborator
+            socketCollaboratorsRef.current[msg.userId] = {
+              id: msg.userId,
+              name: msg.name,
+              color: msg.color,
+              x: msg.x,
+              y: msg.y,
+              lastActive: msg.lastActive
+            };
+            setSocketCollaborators(Object.values(socketCollaboratorsRef.current));
+          } else if (msg.type === "drawing_stream") {
+            // Stream sketch points real-time
+            setRemoteDrawingStreams((prev) => ({
+              ...prev,
+              [msg.userId]: {
+                points: msg.points,
+                color: msg.color,
+                width: msg.width,
+                isHighlighter: msg.isHighlighter
+              }
+            }));
+          } else if (msg.type === "drawing_stream_end") {
+            // Clear stream when finished drawing
+            setRemoteDrawingStreams((prev) => {
+              const copy = { ...prev };
+              delete copy[msg.userId];
+              return copy;
+            });
+          } else if (msg.type === "element_update") {
+            const { elementId, elementData, actionType, isMerge } = msg;
+            setElements((prev) => {
+              let updated: BoardElement[] = [];
+              if (actionType === "delete") {
+                updated = prev.filter(el => el.id !== elementId);
+              } else {
+                const exists = prev.some(el => el.id === elementId);
+                if (exists) {
+                  updated = prev.map(el => el.id === elementId ? (isMerge ? { ...el, ...elementData } : { id: elementId, ...elementData }) : el);
+                } else {
+                  updated = [...prev, { id: elementId, ...elementData } as BoardElement];
+                }
+              }
+              try {
+                localStorage.setItem(`whiteboard_elements_${boardId}`, JSON.stringify(updated));
+              } catch (e) {
+                console.error("Local storage error:", e);
+              }
+              return updated;
+            });
+          } else if (msg.type === "element_focus") {
+            setRemoteSelections((prev) => ({
+              ...prev,
+              [msg.userId]: {
+                userName: msg.userName,
+                color: msg.color,
+                selectedIds: msg.selectedIds
+              }
+            }));
+          } else if (msg.type === "pong") {
+            setWsLatency(Date.now() - msg.id);
+          }
+        } catch (err) {
+          console.error("Client WebSocket message parsing error:", err);
+        }
+      };
+      
+      socket.onclose = () => {
+        console.log("WebSocket disconnected. Retrying in 3s...");
+        setWsConnected(false);
+        setWsLatency(null);
+        if (pingInterval) clearInterval(pingInterval);
+        reconnectTimer = setTimeout(connect, 3000);
+      };
+      
+      socket.onerror = (err) => {
+        console.error("WebSocket client connection error:", err);
+        socket.close();
+      };
+    };
+    
+    connect();
+    
+    return () => {
+      if (socket) {
+        socket.close();
+      }
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+      }
+      if (pingInterval) {
+        clearInterval(pingInterval);
+      }
+    };
+  }, [boardId, currentUser.id]);
+
+  // Keep socket cursors fresh by purging idle collaborators every 5 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now();
+      let changed = false;
+      const updated = { ...socketCollaboratorsRef.current };
+      Object.keys(updated).forEach((userId) => {
+        if (now - updated[userId].lastActive > 15000) {
+          delete updated[userId];
+          changed = true;
+        }
+      });
+      if (changed) {
+        socketCollaboratorsRef.current = updated;
+        setSocketCollaborators(Object.values(updated));
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [dragSelectStart, setDragSelectStart] = useState<Point | null>(null);
   const [dragSelectEnd, setDragSelectEnd] = useState<Point | null>(null);
   const [elementStartPositions, setElementStartPositions] = useState<Record<string, any>>({});
+
+  // Broadcast local selection changes to other users
+  useEffect(() => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: "element_focus",
+        boardId,
+        userId: currentUser.id,
+        userName: currentUser.name,
+        color: currentUser.color,
+        selectedIds
+      }));
+    }
+  }, [selectedIds, boardId, currentUser.id, currentUser.name, currentUser.color, wsConnected]);
+
+  // Keep remote selections in sync with active collaborators
+  useEffect(() => {
+    const activeUserIds = new Set(socketCollaborators.map(c => c.id));
+    setRemoteSelections((prev) => {
+      let changed = false;
+      const filtered = { ...prev };
+      Object.keys(filtered).forEach((uId) => {
+        if (!activeUserIds.has(uId)) {
+          delete filtered[uId];
+          changed = true;
+        }
+      });
+      return changed ? filtered : prev;
+    });
+  }, [socketCollaborators]);
+
+  // Elements Ref to always bypass stale closure contexts safely in async event handlers
+  const elementsRef = useRef<BoardElement[]>([]);
+  useEffect(() => {
+    elementsRef.current = elements;
+  }, [elements]);
+
+  // Write Minimization & Offline Persistence States & Refs
+  const [activeUsersCount, setActiveUsersCount] = useState<number>(1);
+  const [syncStatus, setSyncStatus] = useState<'synced' | 'saving-cloud' | 'saved-local' | 'offline'>('synced');
+  const hasUnsavedChanges = useRef<boolean>(false);
+  const pendingSyncElements = useRef<Record<string, { data: any; action: 'set' | 'delete' }>>({});
+  const debounceTimer = useRef<any>(null);
 
   // Undo History state
   interface UndoAction {
@@ -266,25 +535,301 @@ export default function WhiteboardCanvas({
     }
   }, [currentUser?.id]);
 
-  // Fetch board elements in real time
+  // Fetch board elements in real time with local caching and write-minimizer guards
   useEffect(() => {
-    const elementsRef = collection(db, "whiteboards", boardId, "elements");
-    const q = query(elementsRef);
+    const elementsRefColl = collection(db, "whiteboards", boardId, "elements");
+    const q = query(elementsRefColl);
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
+      // Guard: In Solo mode, do not let old/stale cloud states overwrite our fresh local buffer.
+      if (hasUnsavedChanges.current && activeUsersCount <= 1) {
+        return;
+      }
+
       const loaded: BoardElement[] = [];
       snapshot.forEach((docSnap) => {
+        const id = docSnap.id;
         const data = docSnap.data();
-        loaded.push({
-          id: docSnap.id,
-          ...data,
-        } as BoardElement);
+        if (id === "drawings_blob") {
+          if (data && Array.isArray(data.drawings)) {
+            loaded.push(...data.drawings);
+          }
+        } else {
+          loaded.push({
+            id,
+            ...data,
+          } as BoardElement);
+        }
       });
       setElements(loaded);
+
+      // Save latest cloud truth to localStorage as an offline/recovery fallback cache
+      try {
+        localStorage.setItem(`whiteboard_elements_${boardId}`, JSON.stringify(loaded));
+        
+        // Save latest drawings to IndexedDB for offline resilience and faster loading
+        const drawings = loaded.filter(el => el.type === "drawing") as DrawingElement[];
+        idbSet(`drawings_${boardId}`, drawings).catch(e => console.error("IDB save error:", e));
+      } catch (e) {
+        console.error("Local storage sync error:", e);
+      }
+    }, (error) => {
+      console.error("Snapshot connection error:", error);
+      setSyncStatus('offline');
     });
 
     return () => unsubscribe();
-  }, [boardId]);
+  }, [boardId, activeUsersCount]);
+
+  // Monitor active cursors to determine Solo User Mode (Solo) vs Collaborative Mode (Multiplayer)
+  useEffect(() => {
+    const cursorsRef = collection(db, "whiteboards", boardId, "cursors");
+    const unsubscribe = onSnapshot(cursorsRef, (snapshot) => {
+      const now = Date.now();
+      let otherUsers = 0;
+      snapshot.forEach((docSnap) => {
+        if (docSnap.id !== currentUser.id) {
+          const data = docSnap.data();
+          // Consider a user active if their last cursor ping was within the last 45 seconds
+          if (now - (data.lastActive || 0) < 45000) {
+            otherUsers++;
+          }
+        }
+      });
+      setActiveUsersCount(otherUsers + 1);
+    });
+
+    return () => unsubscribe();
+  }, [boardId, currentUser.id]);
+
+  // Flushes pending Solo changes to cloud
+  const flushPendingChanges = async () => {
+    const queue = { ...pendingSyncElements.current };
+    const keys = Object.keys(queue);
+    if (keys.length === 0) {
+      hasUnsavedChanges.current = false;
+      setSyncStatus('synced');
+      return;
+    }
+
+    setSyncStatus('saving-cloud');
+    pendingSyncElements.current = {};
+
+    try {
+      const batch = writeBatch(db);
+      keys.forEach((id) => {
+        const item = queue[id];
+        const docRef = doc(db, "whiteboards", boardId, "elements", id);
+        if (item.action === 'delete') {
+          batch.delete(docRef);
+        } else {
+          const { id: _, ...data } = item.data;
+          batch.set(docRef, data, { merge: true });
+        }
+      });
+      await batch.commit();
+      hasUnsavedChanges.current = false;
+      setSyncStatus('synced');
+    } catch (err) {
+      console.error("Flush pending changes to cloud failed:", err);
+      // Restore failed items back to the queue safely
+      Object.keys(queue).forEach(id => {
+        if (!pendingSyncElements.current[id]) {
+          pendingSyncElements.current[id] = queue[id];
+        }
+      });
+      hasUnsavedChanges.current = true;
+      setSyncStatus('offline');
+    }
+  };
+
+  // Centralized write-minimizer dispatcher handling local-first updates + debounced/immediate syncing
+  const saveElementLocallyAndSync = async (
+    elementId: string,
+    elementData: any,
+    isMerge: boolean = false,
+    actionType: 'set' | 'delete' = 'set'
+  ) => {
+    const currentElements = elementsRef.current;
+    let updatedElements: BoardElement[] = [];
+
+    // Check if we are updating or deleting a drawing element
+    const isDrawing = (elementData && elementData.type === 'drawing') || 
+                      (actionType === 'delete' && currentElements.find(el => el.id === elementId)?.type === 'drawing');
+
+    if (isDrawing) {
+      // 1. Process local state update instantly
+      let localDrawings: DrawingElement[] = currentElements.filter(el => el.type === 'drawing') as DrawingElement[];
+      
+      if (actionType === 'delete') {
+        localDrawings = localDrawings.filter(el => el.id !== elementId);
+        updatedElements = currentElements.filter(el => el.id !== elementId);
+      } else {
+        const simplifiedData = {
+          ...elementData,
+          points: simplifyPoints(elementData.points, 1.2) // Downscale point coordinate resolution to optimize Firestore sizes
+        };
+        const exists = localDrawings.some(el => el.id === elementId);
+        if (exists) {
+          localDrawings = localDrawings.map(el => el.id === elementId ? (isMerge ? { ...el, ...simplifiedData } : { id: elementId, ...simplifiedData }) : el);
+          updatedElements = currentElements.map(el => el.id === elementId ? (isMerge ? { ...el, ...elementData } : { id: elementId, ...elementData }) : el);
+        } else {
+          localDrawings = [...localDrawings, { id: elementId, ...simplifiedData } as DrawingElement];
+          updatedElements = [...currentElements, { id: elementId, ...elementData } as BoardElement];
+        }
+      }
+
+      setElements(updatedElements);
+
+      // Save high-fidelity vector drawings to IndexedDB & fallback cache
+      try {
+        const fullDrawings = updatedElements.filter(el => el.type === 'drawing') as DrawingElement[];
+        await idbSet(`drawings_${boardId}`, fullDrawings);
+        localStorage.setItem(`whiteboard_elements_${boardId}`, JSON.stringify(updatedElements));
+      } catch (e) {
+        console.error("IndexedDB / local storage write error:", e);
+      }
+
+      // Broadcast update instantly to connected WebSocket peers (saving Firestore reads)
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({
+          type: "element_update",
+          boardId,
+          elementId,
+          elementData,
+          actionType,
+          isMerge
+        }));
+      }
+
+      // 2. Sync consolidated drawings array as a unified JSON blob in Firestore 'drawings_blob'
+      const isSolo = activeUsersCount <= 1;
+      if (isSolo) {
+        hasUnsavedChanges.current = true;
+        setSyncStatus('saved-local');
+
+        pendingSyncElements.current["drawings_blob"] = {
+          action: 'set',
+          data: {
+            type: "drawings_blob",
+            drawings: localDrawings
+          }
+        };
+
+        if (debounceTimer.current) clearTimeout(debounceTimer.current);
+        debounceTimer.current = setTimeout(() => {
+          flushPendingChanges();
+        }, 3000);
+      } else {
+        setSyncStatus('saving-cloud');
+        try {
+          const docRef = doc(db, "whiteboards", boardId, "elements", "drawings_blob");
+          await setDoc(docRef, {
+            type: "drawings_blob",
+            drawings: localDrawings
+          }, { merge: false });
+          setSyncStatus('synced');
+        } catch (err) {
+          console.error("Consolidated drawings Firestore sync error:", err);
+          setSyncStatus('offline');
+        }
+      }
+      return;
+    }
+
+    // Standard elements handling (sticky notes, shapes, text box, images)
+    if (actionType === 'delete') {
+      updatedElements = currentElements.filter(el => el.id !== elementId);
+    } else {
+      const exists = currentElements.some(el => el.id === elementId);
+      if (exists) {
+        updatedElements = currentElements.map(el => {
+          if (el.id === elementId) {
+            return isMerge ? { ...el, ...elementData } : { id: elementId, ...elementData };
+          }
+          return el;
+        });
+      } else {
+        updatedElements = [...currentElements, { id: elementId, ...elementData } as BoardElement];
+      }
+    }
+
+    // Snappy UI update
+    setElements(updatedElements);
+
+    // Immediate Local persistence
+    try {
+      localStorage.setItem(`whiteboard_elements_${boardId}`, JSON.stringify(updatedElements));
+    } catch (e) {
+      console.error("Local storage save error:", e);
+    }
+
+    // Broadcast update instantly to connected WebSocket peers
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: "element_update",
+        boardId,
+        elementId,
+        elementData,
+        actionType,
+        isMerge
+      }));
+    }
+
+    const isSolo = activeUsersCount <= 1;
+
+    if (isSolo) {
+      hasUnsavedChanges.current = true;
+      setSyncStatus('saved-local');
+
+      if (actionType === 'delete') {
+        pendingSyncElements.current[elementId] = { data: null, action: 'delete' };
+      } else {
+        const currentFullEl = updatedElements.find(el => el.id === elementId);
+        if (currentFullEl) {
+          pendingSyncElements.current[elementId] = { data: currentFullEl, action: 'set' };
+        }
+      }
+
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+      debounceTimer.current = setTimeout(() => {
+        flushPendingChanges();
+      }, 3000);
+    } else {
+      setSyncStatus('saving-cloud');
+      try {
+        const docRef = doc(db, "whiteboards", boardId, "elements", elementId);
+        if (actionType === 'delete') {
+          await deleteDoc(docRef);
+        } else {
+          await setDoc(docRef, elementData, { merge: isMerge });
+        }
+        setSyncStatus('synced');
+      } catch (err) {
+        console.error("Direct sync error:", err);
+        setSyncStatus('offline');
+      }
+    }
+  };
+
+
+  // Synchronize unsaved changes on tab close or navigation away
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (hasUnsavedChanges.current) {
+        flushPendingChanges();
+      }
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      if (hasUnsavedChanges.current) {
+        flushPendingChanges();
+      }
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    };
+  }, []);
 
   // Fetch board metadata in real time
   useEffect(() => {
@@ -313,11 +858,14 @@ export default function WhiteboardCanvas({
 
   const updateCursorPosition = (clientX: number, clientY: number) => {
     const now = Date.now();
-    // Throttle to 1000ms (1s) to save Firestore quota
-    if (now - lastCursorUpdate.current < 1000) return;
+    const isSolo = activeUsersCount <= 1;
+
+    // Throttle: 30 seconds for presence heartbeat if alone (Solo), 1000ms (1s) if collaborating (Multiplayer)
+    const throttleLimit = isSolo ? 30000 : 1000;
+    if (now - lastCursorUpdate.current < throttleLimit) return;
 
     if (!containerRef.current) return;
-    const rect = containerRef.current.getBoundingClientRect();
+    const rect = containerRectRef.current || containerRef.current.getBoundingClientRect();
     const mouseX = clientX - rect.left;
     const mouseY = clientY - rect.top;
 
@@ -325,16 +873,34 @@ export default function WhiteboardCanvas({
     const canvasX = (mouseX - panX) / zoom;
     const canvasY = (mouseY - panY) / zoom;
 
-    // Only sync if moved at least 15 pixels to save quota
-    const dist = Math.sqrt(
-      Math.pow(canvasX - lastSyncedCursorPos.current.x, 2) +
-      Math.pow(canvasY - lastSyncedCursorPos.current.y, 2)
-    );
-    if (dist < 15) return;
+    // If collaborating, only sync if moved at least 15 pixels to save quota
+    if (!isSolo) {
+      const dist = Math.sqrt(
+        Math.pow(canvasX - lastSyncedCursorPos.current.x, 2) +
+        Math.pow(canvasY - lastSyncedCursorPos.current.y, 2)
+      );
+      if (dist < 15) return;
+    }
 
     lastCursorUpdate.current = now;
     lastSyncedCursorPos.current = { x: canvasX, y: canvasY };
 
+    // High performance: Use WebSocket if connected to bypass Firestore write limits!
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: "cursor",
+        boardId,
+        userId: currentUser.id,
+        name: currentUser.name,
+        color: currentUser.color,
+        x: canvasX,
+        y: canvasY,
+        lastActive: now
+      }));
+      return;
+    }
+
+    // Fallback: Sync cursor to Firestore if WebSocket is offline
     const cursorRef = doc(
       db,
       "whiteboards",
@@ -354,6 +920,7 @@ export default function WhiteboardCanvas({
       { merge: true },
     ).catch((err) => console.error("Cursor sync error:", err));
   };
+
 
   const containerRectRef = useRef<DOMRect | null>(null);
 
@@ -534,7 +1101,7 @@ export default function WhiteboardCanvas({
         zIndex: elements.length + 1,
         reactions: {},
       };
-      setDoc(doc(db, "whiteboards", boardId, "elements", id), newSticky);
+      saveElementLocallyAndSync(id, newSticky);
       pushToUndo({ type: "add", elementId: id, afterData: newSticky });
       setActiveTool("select");
       setSelectedId(id);
@@ -581,7 +1148,7 @@ export default function WhiteboardCanvas({
             }
           : {}),
       };
-      setDoc(doc(db, "whiteboards", boardId, "elements", id), newShape);
+      saveElementLocallyAndSync(id, newShape);
       pushToUndo({ type: "add", elementId: id, afterData: newShape });
       setActiveTool("select");
       setSelectedId(id);
@@ -608,7 +1175,7 @@ export default function WhiteboardCanvas({
         zIndex: elements.length + 1,
         reactions: {},
       };
-      setDoc(doc(db, "whiteboards", boardId, "elements", id), newShape);
+      saveElementLocallyAndSync(id, newShape);
       pushToUndo({ type: "add", elementId: id, afterData: newShape });
       setActiveTool("select");
       setSelectedId(id);
@@ -630,7 +1197,7 @@ export default function WhiteboardCanvas({
         zIndex: elements.length + 1,
         reactions: {},
       };
-      setDoc(doc(db, "whiteboards", boardId, "elements", id), newText);
+      saveElementLocallyAndSync(id, newText);
       pushToUndo({ type: "add", elementId: id, afterData: newText });
       setActiveTool("select");
       setSelectedId(id);
@@ -726,8 +1293,23 @@ export default function WhiteboardCanvas({
 
       drawingPointsRef.current = updated;
       setLocalDrawingPoints(updated);
+
+      // Broadcast active drawing path coordinates to other users over WebSocket for real-time collaboration
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({
+          type: "drawing_stream",
+          boardId,
+          userId: currentUser.id,
+          userName: currentUser.name,
+          color: activeTool === "highlighter" ? `${activeColor}80` : activeColor,
+          width: activeTool === "highlighter" ? strokeWidth * 2.5 : strokeWidth,
+          points: updated,
+          isHighlighter: activeTool === "highlighter"
+        }));
+      }
       return;
     }
+
 
     // 4. Moving selected elements
     if (isDragging && selectedIds.length > 0) {
@@ -814,7 +1396,18 @@ export default function WhiteboardCanvas({
     // 2. Finish local drawing and save stroke as a single document to Firebase
     if (activeTool === "pencil" || activeTool === "highlighter") {
       isDrawingRef.current = false;
+
+      // Notify remote peers that the active stream has finished and is now being committed
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({
+          type: "drawing_stream_end",
+          boardId,
+          userId: currentUser.id
+        }));
+      }
+
       const points = drawingPointsRef.current;
+
       if (points.length > 1) {
         const id = "draw-" + Date.now() + Math.floor(Math.random() * 100);
         const isHighlighter = activeTool === "highlighter";
@@ -829,17 +1422,14 @@ export default function WhiteboardCanvas({
         };
 
         try {
-          await setDoc(
-            doc(db, "whiteboards", boardId, "elements", id),
-            newStroke,
-          );
+          await saveElementLocallyAndSync(id, newStroke);
           pushToUndo({ type: "add", elementId: id, afterData: newStroke });
 
           if (autoCorrectHandwriting && !isHighlighter) {
             triggerAiBeautification(newStroke);
           }
         } catch (err) {
-          console.error("Error saving sketch to Firebase:", err);
+          console.error("Error saving sketch:", err);
         }
       }
       drawingPointsRef.current = [];
@@ -877,14 +1467,10 @@ export default function WhiteboardCanvas({
                   },
                 });
                 try {
-                  await setDoc(
-                    doc(db, "whiteboards", boardId, "elements", el.id),
-                    {
-                      x: boundedEl.x,
-                      y: boundedEl.y,
-                    },
-                    { merge: true },
-                  );
+                  await saveElementLocallyAndSync(el.id, {
+                    x: boundedEl.x,
+                    y: boundedEl.y,
+                  }, true);
                 } catch (err) {
                   console.error("Error updating moved element coordinates:", err);
                 }
@@ -906,13 +1492,9 @@ export default function WhiteboardCanvas({
                   },
                 });
                 try {
-                  await setDoc(
-                    doc(db, "whiteboards", boardId, "elements", el.id),
-                    {
-                      points: drawingEl.points,
-                    },
-                    { merge: true },
-                  );
+                  await saveElementLocallyAndSync(el.id, {
+                    points: drawingEl.points,
+                  }, true);
                 } catch (err) {
                   console.error("Error updating moved drawing coordinates:", err);
                 }
@@ -946,14 +1528,10 @@ export default function WhiteboardCanvas({
           });
         }
         try {
-          await setDoc(
-            doc(db, "whiteboards", boardId, "elements", selectedId),
-            {
-              width: el.width,
-              height: el.height,
-            },
-            { merge: true },
-          );
+          await saveElementLocallyAndSync(selectedId, {
+            width: el.width,
+            height: el.height,
+          }, true);
         } catch (err) {
           console.error("Error updating resized element:", err);
         }
@@ -969,7 +1547,7 @@ export default function WhiteboardCanvas({
       pushToUndo({ type: "delete", elementId: id, beforeData: target });
     }
 
-    deleteDoc(doc(db, "whiteboards", boardId, "elements", id))
+    saveElementLocallyAndSync(id, null, false, 'delete')
       .then(() => {
         if (selectedId === id) setSelectedId(null);
       })
@@ -986,26 +1564,17 @@ export default function WhiteboardCanvas({
 
     try {
       if (action.type === "add") {
-        await deleteDoc(
-          doc(db, "whiteboards", boardId, "elements", action.elementId),
-        );
+        await saveElementLocallyAndSync(action.elementId, null, false, 'delete');
         if (selectedId === action.elementId) {
           setSelectedId(null);
         }
       } else if (action.type === "delete") {
         if (action.beforeData) {
-          await setDoc(
-            doc(db, "whiteboards", boardId, "elements", action.elementId),
-            action.beforeData,
-          );
+          await saveElementLocallyAndSync(action.elementId, action.beforeData);
         }
       } else if (action.type === "update") {
         if (action.beforeData) {
-          await setDoc(
-            doc(db, "whiteboards", boardId, "elements", action.elementId),
-            action.beforeData,
-            { merge: true },
-          );
+          await saveElementLocallyAndSync(action.elementId, action.beforeData, true);
         }
       }
     } catch (err) {
@@ -1024,25 +1593,16 @@ export default function WhiteboardCanvas({
     try {
       if (action.type === "add") {
         if (action.afterData) {
-          await setDoc(
-            doc(db, "whiteboards", boardId, "elements", action.elementId),
-            action.afterData,
-          );
+          await saveElementLocallyAndSync(action.elementId, action.afterData);
         }
       } else if (action.type === "delete") {
-        await deleteDoc(
-          doc(db, "whiteboards", boardId, "elements", action.elementId),
-        );
+        await saveElementLocallyAndSync(action.elementId, null, false, 'delete');
         if (selectedId === action.elementId) {
           setSelectedId(null);
         }
       } else if (action.type === "update") {
         if (action.afterData) {
-          await setDoc(
-            doc(db, "whiteboards", boardId, "elements", action.elementId),
-            action.afterData,
-            { merge: true },
-          );
+          await saveElementLocallyAndSync(action.elementId, action.afterData, true);
         }
       }
     } catch (err) {
@@ -1055,47 +1615,100 @@ export default function WhiteboardCanvas({
     if (!canWrite || clipboardElements.length === 0) return;
     
     const offset = 40;
-    const batch = writeBatch(db);
     const maxZ = elements.length > 0 ? Math.max(...elements.map(e => e.zIndex || 0)) : 0;
     const newPasteIds: string[] = [];
     const pastedElements: BoardElement[] = [];
 
-    for (let i = 0; i < clipboardElements.length; i++) {
-      const el = clipboardElements[i];
-      const newId = `copy-${Math.random().toString(36).substring(2, 11)}`;
-      
-      const newEl = JSON.parse(JSON.stringify(el)) as BoardElement;
-      newEl.id = newId;
-      newEl.zIndex = maxZ + i + 1;
-      newEl.updatedAt = Date.now();
+    const isSolo = activeUsersCount <= 1;
 
-      // Apply offset to positional elements
-      if ('x' in newEl && 'y' in newEl) {
-        newEl.x += (offset / zoom);
-        newEl.y += (offset / zoom);
+    if (isSolo) {
+      const currentList = [...elementsRef.current];
+      const updatedList = [...currentList];
+
+      for (let i = 0; i < clipboardElements.length; i++) {
+        const el = clipboardElements[i];
+        const newId = `copy-${Math.random().toString(36).substring(2, 11)}`;
+        
+        const newEl = JSON.parse(JSON.stringify(el)) as BoardElement;
+        newEl.id = newId;
+        newEl.zIndex = maxZ + i + 1;
+        newEl.updatedAt = Date.now();
+
+        if ('x' in newEl && 'y' in newEl) {
+          newEl.x += (offset / zoom);
+          newEl.y += (offset / zoom);
+        }
+        
+        if (newEl.type === 'drawing' && 'points' in newEl) {
+          newEl.points = newEl.points.map((p: any) => ({ x: p.x + (offset / zoom), y: p.y + (offset / zoom) }));
+        }
+
+        updatedList.push(newEl);
+        newPasteIds.push(newId);
+        pastedElements.push(newEl);
+
+        pendingSyncElements.current[newId] = { data: newEl, action: 'set' };
+        pushToUndo({ type: "add", elementId: newId, afterData: newEl });
       }
-      
-      // Apply offset to drawing points
-      if (newEl.type === 'drawing' && 'points' in newEl) {
-        newEl.points = newEl.points.map((p: any) => ({ x: p.x + (offset / zoom), y: p.y + (offset / zoom) }));
+
+      setElements(updatedList);
+      try {
+        localStorage.setItem(`whiteboard_elements_${boardId}`, JSON.stringify(updatedList));
+      } catch (e) {
+        console.error("Local storage paste save error:", e);
       }
 
-      const { id, ...data } = newEl;
-      const elementRef = doc(db, "whiteboards", boardId, "elements", newId);
-      batch.set(elementRef, data);
-      newPasteIds.push(newId);
-      pastedElements.push(newEl);
-      
-      pushToUndo({ type: "add", elementId: newId, afterData: newEl });
-    }
+      hasUnsavedChanges.current = true;
+      setSyncStatus('saved-local');
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+      debounceTimer.current = setTimeout(() => {
+        flushPendingChanges();
+      }, 3000);
 
-    try {
-      await batch.commit();
       setSelectedIds(newPasteIds);
       setSelectedId(null);
       setClipboardElements(pastedElements);
-    } catch (err) {
-      console.error("Error pasting elements:", err);
+    } else {
+      setSyncStatus('saving-cloud');
+      const batch = writeBatch(db);
+
+      for (let i = 0; i < clipboardElements.length; i++) {
+        const el = clipboardElements[i];
+        const newId = `copy-${Math.random().toString(36).substring(2, 11)}`;
+        
+        const newEl = JSON.parse(JSON.stringify(el)) as BoardElement;
+        newEl.id = newId;
+        newEl.zIndex = maxZ + i + 1;
+        newEl.updatedAt = Date.now();
+
+        if ('x' in newEl && 'y' in newEl) {
+          newEl.x += (offset / zoom);
+          newEl.y += (offset / zoom);
+        }
+        
+        if (newEl.type === 'drawing' && 'points' in newEl) {
+          newEl.points = newEl.points.map((p: any) => ({ x: p.x + (offset / zoom), y: p.y + (offset / zoom) }));
+        }
+
+        const { id, ...data } = newEl;
+        const elementRef = doc(db, "whiteboards", boardId, "elements", newId);
+        batch.set(elementRef, data);
+        newPasteIds.push(newId);
+        pastedElements.push(newEl);
+        
+        pushToUndo({ type: "add", elementId: newId, afterData: newEl });
+      }
+
+      try {
+        await batch.commit();
+        setSyncStatus('synced');
+        setSelectedIds(newPasteIds);
+        setSelectedId(null);
+        setClipboardElements(pastedElements);
+      } catch (err) {
+        console.error("Error pasting elements:", err);
+        setSyncStatus('offline');
+      }
     }
   };
 
@@ -1265,9 +1878,9 @@ export default function WhiteboardCanvas({
       });
     }
 
-    setDoc(doc(db, "whiteboards", boardId, "elements", id), updates, {
-      merge: true,
-    }).catch((err) => console.error("Error updating element:", err));
+    saveElementLocallyAndSync(id, updates, true).catch((err) =>
+      console.error("Error updating element:", err)
+    );
   };
 
   // Color change handler that also updates selected element colors
@@ -1288,17 +1901,9 @@ export default function WhiteboardCanvas({
                 el.shapeType === "numberline" ||
                 el.shapeType === "line")
             ) {
-              await setDoc(
-                doc(db, "whiteboards", boardId, "elements", id),
-                { borderColor: color },
-                { merge: true },
-              );
+              await saveElementLocallyAndSync(id, { borderColor: color }, true);
             } else {
-              await setDoc(
-                doc(db, "whiteboards", boardId, "elements", id),
-                { color },
-                { merge: true },
-              );
+              await saveElementLocallyAndSync(id, { color }, true);
             }
           } catch (err) {
             console.error("Error updating selected element color:", err);
@@ -1310,19 +1915,45 @@ export default function WhiteboardCanvas({
 
   // Clear all items on the board
   const handleClearBoard = async () => {
+    // Immediate state and local storage clean
+    setElements([]);
     try {
-      const batch = writeBatch(db);
+      localStorage.removeItem(`whiteboard_elements_${boardId}`);
+    } catch (e) {
+      console.error(e);
+    }
+    setSelectedId(null);
+    setSelectedIds([]);
+    setUndoStack([]);
+    setRedoStack([]);
+
+    const isSolo = activeUsersCount <= 1;
+
+    if (isSolo) {
+      // Add all currently loaded elements to pendingSync as deletions
       elements.forEach((el) => {
-        const docRef = doc(db, "whiteboards", boardId, "elements", el.id);
-        batch.delete(docRef);
+        pendingSyncElements.current[el.id] = { data: null, action: 'delete' };
       });
-      await batch.commit();
-      setSelectedId(null);
-      setSelectedIds([]);
-      setUndoStack([]);
-      setRedoStack([]);
-    } catch (err) {
-      console.error("Error clearing whiteboard:", err);
+      hasUnsavedChanges.current = true;
+      setSyncStatus('saved-local');
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+      debounceTimer.current = setTimeout(() => {
+        flushPendingChanges();
+      }, 1000); // clear board is significant, trigger save faster
+    } else {
+      setSyncStatus('saving-cloud');
+      try {
+        const batch = writeBatch(db);
+        elements.forEach((el) => {
+          const docRef = doc(db, "whiteboards", boardId, "elements", el.id);
+          batch.delete(docRef);
+        });
+        await batch.commit();
+        setSyncStatus('synced');
+      } catch (err) {
+        console.error("Error clearing whiteboard:", err);
+        setSyncStatus('offline');
+      }
     }
   };
 
@@ -1365,7 +1996,7 @@ export default function WhiteboardCanvas({
 
       if (data.type === "shape" && data.shapeType) {
         // Delete original stroke
-        await deleteDoc(doc(db, "whiteboards", boardId, "elements", stroke.id));
+        await saveElementLocallyAndSync(stroke.id, null, false, 'delete');
 
         // Add new shape element
         const shapeId = "shape-" + Date.now() + Math.floor(Math.random() * 100);
@@ -1383,14 +2014,11 @@ export default function WhiteboardCanvas({
           zIndex: elements.length + 10,
           reactions: {},
         };
-        await setDoc(
-          doc(db, "whiteboards", boardId, "elements", shapeId),
-          newShape,
-        );
+        await saveElementLocallyAndSync(shapeId, newShape);
         pushToUndo({ type: "add", elementId: shapeId, afterData: newShape });
       } else if (data.type === "text" && data.text) {
         // Delete original stroke
-        await deleteDoc(doc(db, "whiteboards", boardId, "elements", stroke.id));
+        await saveElementLocallyAndSync(stroke.id, null, false, 'delete');
 
         // Add new text element
         const textId = "text-" + Date.now() + Math.floor(Math.random() * 100);
@@ -1407,10 +2035,7 @@ export default function WhiteboardCanvas({
           zIndex: elements.length + 10,
           reactions: {},
         };
-        await setDoc(
-          doc(db, "whiteboards", boardId, "elements", textId),
-          newText,
-        );
+        await saveElementLocallyAndSync(textId, newText);
         pushToUndo({ type: "add", elementId: textId, afterData: newText });
       }
     } catch (err) {
@@ -1462,7 +2087,7 @@ export default function WhiteboardCanvas({
       if (data.type === "shape" && data.shapeType) {
         await Promise.all(
           selectedDrawings.map((d) =>
-            deleteDoc(doc(db, "whiteboards", boardId, "elements", d.id)),
+            saveElementLocallyAndSync(d.id, null, false, 'delete'),
           ),
         );
 
@@ -1481,16 +2106,13 @@ export default function WhiteboardCanvas({
           zIndex: elements.length + 10,
           reactions: {},
         };
-        await setDoc(
-          doc(db, "whiteboards", boardId, "elements", shapeId),
-          newShape,
-        );
+        await saveElementLocallyAndSync(shapeId, newShape);
         setSelectedIds([shapeId]);
         setSelectedId(shapeId);
       } else if (data.type === "text" && data.text) {
         await Promise.all(
           selectedDrawings.map((d) =>
-            deleteDoc(doc(db, "whiteboards", boardId, "elements", d.id)),
+            saveElementLocallyAndSync(d.id, null, false, 'delete'),
           ),
         );
 
@@ -1508,10 +2130,7 @@ export default function WhiteboardCanvas({
           zIndex: elements.length + 10,
           reactions: {},
         };
-        await setDoc(
-          doc(db, "whiteboards", boardId, "elements", textId),
-          newText,
-        );
+        await saveElementLocallyAndSync(textId, newText);
         setSelectedIds([textId]);
         setSelectedId(textId);
       } else {
@@ -1615,10 +2234,7 @@ export default function WhiteboardCanvas({
               baseElement.color = el.color || "#1e293b";
               baseElement.fontSize = el.fontSize || 16;
             }
-            await setDoc(
-              doc(db, "whiteboards", boardId, "elements", id),
-              baseElement,
-            );
+            await saveElementLocallyAndSync(id, baseElement);
             createdIds.push(id);
           }),
         );
@@ -1690,11 +2306,55 @@ export default function WhiteboardCanvas({
           <div className="h-4 w-[1px] bg-slate-200 hidden sm:block"></div>
 
           <div>
-            <h2 className="text-sm font-semibold leading-tight text-slate-900 flex items-center space-x-1.5">
+            <h2 className="text-sm font-semibold leading-tight text-slate-900 flex items-center space-x-1.5 flex-wrap gap-y-1">
               <span>{boardName}</span>
               <span className="bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold">
                 Active
               </span>
+              {/* Write minimization & offline sync badges */}
+              {syncStatus === "synced" && (
+                <span className="bg-emerald-50 text-emerald-700 border border-emerald-100 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold flex items-center space-x-1">
+                  <span className="w-1 h-1 rounded-full bg-emerald-500"></span>
+                  <span>Synced</span>
+                </span>
+              )}
+              {syncStatus === "saving-cloud" && (
+                <span className="bg-blue-50 text-blue-700 border border-blue-100 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold flex items-center space-x-1">
+                  <Loader2 className="w-2.5 h-2.5 animate-spin text-blue-500" />
+                  <span>Syncing</span>
+                </span>
+              )}
+              {syncStatus === "saved-local" && (
+                <span className="bg-amber-50 text-amber-700 border border-amber-100 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold flex items-center space-x-1" title="Offline-ready local buffer active. Synced to cloud once you pause or others join.">
+                  <span className="w-1 h-1 rounded-full bg-amber-500 animate-pulse"></span>
+                  <span>Local Buffer ({activeUsersCount === 1 ? "Solo" : "Collaborating"})</span>
+                </span>
+              )}
+              {syncStatus === "offline" && (
+                <span className="bg-rose-50 text-rose-700 border border-rose-100 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold flex items-center space-x-1">
+                  <span className="w-1 h-1 rounded-full bg-rose-500"></span>
+                  <span>Offline</span>
+                </span>
+              )}
+
+              {/* WebSocket Status Indicator with Real-Time latency */}
+              {wsConnected ? (
+                <span
+                  className="bg-purple-50 text-purple-700 border border-purple-100 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold flex items-center space-x-1"
+                  title="Connected to low-latency real-time WebSockets. Cursors and active drawings stream at 60fps."
+                >
+                  <Zap className="w-2.5 h-2.5 text-purple-600 animate-pulse" />
+                  <span>Real-time WS {wsLatency !== null ? `(${wsLatency}ms)` : ""}</span>
+                </span>
+              ) : (
+                <span
+                  className="bg-slate-50 text-slate-500 border border-slate-100 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold flex items-center space-x-1"
+                  title="Disconnected from real-time WebSockets. Reverting to Firestore presence."
+                >
+                  <ZapOff className="w-2.5 h-2.5 text-slate-400" />
+                  <span>Standard Sync</span>
+                </span>
+              )}
             </h2>
             <p className="text-[10px] text-slate-500 font-mono">
               Workspace ID: {boardId.slice(0, 8)}...
@@ -2049,6 +2709,45 @@ export default function WhiteboardCanvas({
             })}
           </div>
 
+          {/* Render remote collaborator selection borders */}
+          {elements.map((el) => {
+            if (el.type === "drawing") return null;
+            
+            const focusedBy = Object.entries(remoteSelections).find(
+              ([uId, sel]) => sel.selectedIds && sel.selectedIds.includes(el.id)
+            );
+            
+            if (!focusedBy) return null;
+            
+            const [focusedUserId, focusInfo] = focusedBy;
+            if (focusedUserId === currentUser.id) return null;
+
+            return (
+              <div
+                key={`remote-focus-${el.id}`}
+                className="absolute pointer-events-none border transition-all duration-150 z-30"
+                style={{
+                  left: (el.x || 0) - 2,
+                  top: (el.y || 0) - 2,
+                  width: (el.width || 100) + 4,
+                  height: (el.height || 80) + 4,
+                  borderColor: focusInfo.color,
+                  borderStyle: "dashed",
+                  borderWidth: "2px",
+                  borderRadius: "8px",
+                  boxShadow: `0 0 0 1px ${focusInfo.color}33`,
+                }}
+              >
+                <div
+                  className="absolute left-[-2px] top-[-18px] text-[9px] font-mono font-bold px-1.5 py-0.5 rounded text-white whitespace-nowrap shadow-xs pointer-events-none"
+                  style={{ backgroundColor: focusInfo.color }}
+                >
+                  {focusInfo.userName}
+                </div>
+              </div>
+            );
+          })}
+
           {/* Drag Selection Box Overlay */}
           {dragSelectStart && dragSelectEnd && (
             <div
@@ -2138,10 +2837,36 @@ export default function WhiteboardCanvas({
                 }
               />
             )}
+            {/* Render remote active drawing streams */}
+            {Object.entries(remoteDrawingStreams).map(([userId, stream]) => {
+              if (!stream || stream.points.length === 0) return null;
+              return (
+                <path
+                  key={`stream-${userId}`}
+                  d={getSvgPathFromPoints(stream.points)}
+                  fill="none"
+                  stroke={stream.color}
+                  strokeWidth={stream.width}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className={
+                    stream.isHighlighter
+                      ? "mix-blend-multiply"
+                      : "drop-shadow-sm"
+                  }
+                />
+              );
+            })}
           </svg>
 
           {/* 3. Real-Time Collaborative Cursors Tracker Overlay */}
-          <LiveCursors boardId={boardId} currentUser={currentUser} />
+          <LiveCursors
+            boardId={boardId}
+            currentUser={currentUser}
+            zoom={zoom}
+            socketCollaborators={socketCollaborators.length > 0 || wsConnected ? socketCollaborators : undefined}
+          />
+
         </div>
       </div>
 

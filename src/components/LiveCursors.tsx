@@ -6,13 +6,20 @@ import { Collaborator, UserProfile } from '../types';
 interface LiveCursorsProps {
   boardId: string;
   currentUser: UserProfile;
+  zoom?: number;
+  socketCollaborators?: Collaborator[];
 }
 
-export default function LiveCursors({ boardId, currentUser }: LiveCursorsProps) {
+export default function LiveCursors({ boardId, currentUser, zoom = 1, socketCollaborators }: LiveCursorsProps) {
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
 
   useEffect(() => {
-    // Listen to all active cursors for this board
+    if (socketCollaborators) {
+      setCollaborators(socketCollaborators);
+      return;
+    }
+
+    // Listen to all active cursors for this board (Firestore fallback)
     const cursorsRef = collection(db, 'whiteboards', boardId, 'cursors');
     const q = query(cursorsRef);
 
@@ -42,7 +49,7 @@ export default function LiveCursors({ boardId, currentUser }: LiveCursorsProps) 
     });
 
     return () => unsubscribe();
-  }, [boardId, currentUser.id]);
+  }, [boardId, currentUser.id, socketCollaborators]);
 
   return (
     <div className="absolute inset-0 pointer-events-none z-40 overflow-hidden" id="live-cursors-layer">
@@ -53,7 +60,8 @@ export default function LiveCursors({ boardId, currentUser }: LiveCursorsProps) 
           style={{
             left: c.x,
             top: c.y,
-            transform: 'translate(-2px, -2px)', // Align pointer tip exactly with coordinates
+            transform: `translate(-2px, -2px) scale(${1 / zoom})`, // Align pointer tip exactly with coordinates at constant screen scale
+            transformOrigin: 'top left',
           }}
         >
           {/* Custom Cursor SVG */}

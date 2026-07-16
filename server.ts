@@ -3,11 +3,17 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import { GoogleGenAI, Type } from "@google/genai";
+import http from "http";
+import { WebSocketServer, WebSocket } from "ws";
 
 dotenv.config();
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
+const server = http.createServer(app);
+const wss = new WebSocketServer({ noServer: true });
+
+const rooms = new Map<string, Set<WebSocket>>();
 
 // Set up body parser with large limit for pasting images / elements
 app.use(express.json({ limit: "50mb" }));
@@ -237,7 +243,70 @@ const startServer = async () => {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  // Handle WebSocket Connection Upgrades on same port 3000
+  server.on("upgrade", (request, socket, head) => {
+    if (request.url?.startsWith("/ws")) {
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit("connection", ws, request);
+      });
+    } else {
+      socket.destroy();
+    }
+  });
+
+  // Handle room-based events
+  wss.on("connection", (ws: WebSocket) => {
+    let currentBoardId: string | null = null;
+    let currentUserId: string | null = null;
+
+    ws.on("message", (messageStr: string) => {
+      try {
+        const msg = JSON.parse(messageStr);
+        if (msg.type === "join") {
+          currentBoardId = msg.boardId;
+          currentUserId = msg.userId;
+          if (currentBoardId) {
+            if (!rooms.has(currentBoardId)) {
+              rooms.set(currentBoardId, new Set());
+            }
+            rooms.get(currentBoardId)!.add(ws);
+          }
+        } else if (msg.type === "ping") {
+          ws.send(JSON.stringify({ type: "pong", id: msg.id }));
+        } else if (
+          msg.type === "cursor" ||
+          msg.type === "drawing_stream" ||
+          msg.type === "drawing_stream_end" ||
+          msg.type === "element_update"
+        ) {
+          const boardId = msg.boardId || currentBoardId;
+          if (boardId && rooms.has(boardId)) {
+            const clients = rooms.get(boardId)!;
+            const payload = JSON.stringify(msg);
+            clients.forEach((client) => {
+              if (client !== ws && client.readyState === WebSocket.OPEN) {
+                client.send(payload);
+              }
+            });
+          }
+        }
+      } catch (err) {
+        console.error("WS message error:", err);
+      }
+    });
+
+    ws.on("close", () => {
+      if (currentBoardId && rooms.has(currentBoardId)) {
+        const clients = rooms.get(currentBoardId)!;
+        clients.delete(ws);
+        if (clients.size === 0) {
+          rooms.delete(currentBoardId);
+        }
+      }
+    });
+  });
+
+  server.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
 };
