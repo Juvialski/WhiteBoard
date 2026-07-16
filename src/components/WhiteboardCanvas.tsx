@@ -1038,6 +1038,55 @@ export default function WhiteboardCanvas({
     }
   };
 
+  // Paste elements from clipboard with a slight offset
+  const handlePaste = async () => {
+    if (!canWrite || clipboardElements.length === 0) return;
+    
+    const offset = 40;
+    const batch = writeBatch(db);
+    const maxZ = elements.length > 0 ? Math.max(...elements.map(e => e.zIndex || 0)) : 0;
+    const newPasteIds: string[] = [];
+    const pastedElements: BoardElement[] = [];
+
+    for (let i = 0; i < clipboardElements.length; i++) {
+      const el = clipboardElements[i];
+      const newId = `copy-${Math.random().toString(36).substring(2, 11)}`;
+      
+      const newEl = JSON.parse(JSON.stringify(el)) as BoardElement;
+      newEl.id = newId;
+      newEl.zIndex = maxZ + i + 1;
+      newEl.updatedAt = Date.now();
+
+      // Apply offset to positional elements
+      if ('x' in newEl && 'y' in newEl) {
+        newEl.x += (offset / zoom);
+        newEl.y += (offset / zoom);
+      }
+      
+      // Apply offset to drawing points
+      if (newEl.type === 'drawing' && 'points' in newEl) {
+        newEl.points = newEl.points.map((p: any) => ({ x: p.x + (offset / zoom), y: p.y + (offset / zoom) }));
+      }
+
+      const { id, ...data } = newEl;
+      const elementRef = doc(db, "whiteboards", boardId, "elements", newId);
+      batch.set(elementRef, data);
+      newPasteIds.push(newId);
+      pastedElements.push(newEl);
+      
+      pushToUndo({ type: "add", elementId: newId, afterData: newEl });
+    }
+
+    try {
+      await batch.commit();
+      setSelectedIds(newPasteIds);
+      setSelectedId(null);
+      setClipboardElements(pastedElements);
+    } catch (err) {
+      console.error("Error pasting elements:", err);
+    }
+  };
+
   // Keyboard shortcut listeners (standard whiteboards experience!)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1074,9 +1123,9 @@ export default function WhiteboardCanvas({
       }
 
       if ((e.ctrlKey || e.metaKey) && key === "c") {
-        if (selectedIds.length > 0) {
-          const selected = elements.filter(el => selectedIds.includes(el.id));
-          setClipboardElements(selected);
+        const toCopy = elements.filter(el => selectedIds.includes(el.id) || el.id === (selectedId || ''));
+        if (toCopy.length > 0) {
+          setClipboardElements(JSON.parse(JSON.stringify(toCopy)));
         }
         return;
       }
@@ -1087,27 +1136,9 @@ export default function WhiteboardCanvas({
             triggerReadOnlyAlert();
             return;
           }
-          
-          const newIds: string[] = [];
-          Promise.all(clipboardElements.map(async (el) => {
-             const newId = el.type + "-" + Date.now() + Math.floor(Math.random() * 1000);
-             newIds.push(newId);
-             
-             let newEl: BoardElement;
-             if (el.type === 'drawing') {
-                 newEl = { ...el, id: newId, points: el.points.map(p => ({ x: p.x + 40, y: p.y + 40 })), zIndex: elements.length + 10, updatedAt: Date.now() };
-             } else {
-                 newEl = { ...el, id: newId, x: el.x + 40, y: el.y + 40, zIndex: elements.length + 10, updatedAt: Date.now() };
-             }
-             
-             await setDoc(doc(db, "whiteboards", boardId, "elements", newId), newEl);
-          })).then(() => {
-             setSelectedIds(newIds);
-             setSelectedId(null);
-          });
-          // Do not return here, we might want to also allow OS paste, or actually we could prevent default
-          // e.preventDefault();
+          handlePaste();
         }
+        return;
       }
 
       if (key === "v" && !(e.ctrlKey || e.metaKey)) setActiveTool("select");
@@ -1128,12 +1159,12 @@ export default function WhiteboardCanvas({
           triggerReadOnlyAlert();
           return;
         }
-        if (selectedIds.length > 0) {
-          selectedIds.forEach((id) => handleDeleteElement(id));
+        const idsToDelete = selectedId ? [selectedId, ...selectedIds] : selectedIds;
+        const uniqueIds = Array.from(new Set(idsToDelete));
+        
+        if (uniqueIds.length > 0) {
+          uniqueIds.forEach((id) => handleDeleteElement(id));
           setSelectedIds([]);
-          setSelectedId(null);
-        } else if (selectedId) {
-          handleDeleteElement(selectedId);
           setSelectedId(null);
         }
       }
@@ -1141,7 +1172,7 @@ export default function WhiteboardCanvas({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedId, selectedIds, handleUndo, handleRedo, canWrite]);
+  }, [selectedId, selectedIds, elements, clipboardElements, canWrite, zoom, boardId, handleUndo, handleRedo]);
 
   // Click handler to select an element
   const handleSelectElement = (id: string, e: React.MouseEvent) => {
