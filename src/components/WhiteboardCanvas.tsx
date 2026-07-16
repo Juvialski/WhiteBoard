@@ -309,10 +309,12 @@ export default function WhiteboardCanvas({
 
   // Sync cursor movements to Firestore (throttled)
   const lastCursorUpdate = useRef<number>(0);
+  const lastSyncedCursorPos = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
   const updateCursorPosition = (clientX: number, clientY: number) => {
     const now = Date.now();
-    if (now - lastCursorUpdate.current < 120) return; // 120ms throttle is plenty smooth and saves Firebase quota
-    lastCursorUpdate.current = now;
+    // Throttle to 1000ms (1s) to save Firestore quota
+    if (now - lastCursorUpdate.current < 1000) return;
 
     if (!containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
@@ -322,6 +324,16 @@ export default function WhiteboardCanvas({
     // Convert mouse position to whiteboard panned coordinates so cursors align globally
     const canvasX = (mouseX - panX) / zoom;
     const canvasY = (mouseY - panY) / zoom;
+
+    // Only sync if moved at least 15 pixels to save quota
+    const dist = Math.sqrt(
+      Math.pow(canvasX - lastSyncedCursorPos.current.x, 2) +
+      Math.pow(canvasY - lastSyncedCursorPos.current.y, 2)
+    );
+    if (dist < 15) return;
+
+    lastCursorUpdate.current = now;
+    lastSyncedCursorPos.current = { x: canvasX, y: canvasY };
 
     const cursorRef = doc(
       db,
