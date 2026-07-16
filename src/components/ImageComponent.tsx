@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ImageElement, UserProfile } from '../types';
-import { Smile, Trash2, Maximize2, X } from 'lucide-react';
+import { Smile, Trash2, Maximize2, X, Crop, Check, Lock, Unlock } from 'lucide-react';
 
 interface ImageComponentProps {
   element: ImageElement;
@@ -31,6 +31,8 @@ export default function ImageComponent({
 }: ImageComponentProps) {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isCropping, setIsCropping] = useState(false);
+  const [crop, setCrop] = useState({ top: 0, left: 0, right: 0, bottom: 0 });
 
   const handleEmojiClick = (emoji: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -55,11 +57,81 @@ export default function ImageComponent({
     setShowEmojiPicker(false);
   };
 
-  const cursorClass = activeTool === 'select' 
-    ? 'cursor-grab active:cursor-grabbing hover:shadow-md' 
-    : activeTool === 'eraser' 
-      ? 'cursor-pointer hover:brightness-95 hover:ring-2 hover:ring-rose-500 hover:ring-offset-1 transition-all' 
-      : 'cursor-default';
+  const handleCropDrag = (e: React.MouseEvent, edge: 'top' | 'bottom' | 'left' | 'right') => {
+      e.stopPropagation();
+      e.preventDefault();
+      
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const startCrop = { ...crop };
+      
+      const onMouseMove = (moveEvent: MouseEvent) => {
+          const dx = (moveEvent.clientX - startX) / zoom;
+          const dy = (moveEvent.clientY - startY) / zoom;
+          
+          if (edge === 'left') {
+              setCrop({ ...startCrop, left: Math.max(0, Math.min(startCrop.left + dx, element.width - startCrop.right - 20)) });
+          } else if (edge === 'right') {
+              setCrop({ ...startCrop, right: Math.max(0, Math.min(startCrop.right - dx, element.width - startCrop.left - 20)) });
+          } else if (edge === 'top') {
+              setCrop({ ...startCrop, top: Math.max(0, Math.min(startCrop.top + dy, element.height - startCrop.bottom - 20)) });
+          } else if (edge === 'bottom') {
+              setCrop({ ...startCrop, bottom: Math.max(0, Math.min(startCrop.bottom - dy, element.height - startCrop.top - 20)) });
+          }
+      };
+      
+      const onMouseUp = () => {
+          window.removeEventListener('mousemove', onMouseMove);
+          window.removeEventListener('mouseup', onMouseUp);
+      };
+      
+      window.addEventListener('mousemove', onMouseMove);
+      window.addEventListener('mouseup', onMouseUp);
+  };
+
+  const handleConfirmCrop = (e: React.MouseEvent) => {
+     e.stopPropagation();
+     const img = new Image();
+     img.onload = () => {
+         const scaleX = img.naturalWidth / element.width;
+         const scaleY = img.naturalHeight / element.height;
+
+         const cropW = element.width - crop.left - crop.right;
+         const cropH = element.height - crop.top - crop.bottom;
+
+         const sourceX = crop.left * scaleX;
+         const sourceY = crop.top * scaleY;
+         const sourceW = cropW * scaleX;
+         const sourceH = cropH * scaleY;
+
+         const canvas = document.createElement("canvas");
+         canvas.width = sourceW; // use natural source width for better quality! Wait, no, we want the canvas width to match the visual size?
+         // Actually better to use sourceW / sourceH to retain quality
+         canvas.width = sourceW;
+         canvas.height = sourceH;
+         
+         const ctx = canvas.getContext("2d");
+         if (ctx) {
+             ctx.drawImage(img, sourceX, sourceY, sourceW, sourceH, 0, 0, sourceW, sourceH);
+             const newSrc = canvas.toDataURL("image/jpeg", 0.9);
+             // Shift x/y by crop left/top to maintain position visually!
+             onUpdate({ src: newSrc, width: cropW, height: cropH, x: element.x + crop.left, y: element.y + crop.top });
+         }
+         setIsCropping(false);
+         setCrop({ top: 0, left: 0, right: 0, bottom: 0 });
+     };
+     img.src = element.src;
+  };
+
+  const cursorClass = element.locked 
+    ? 'cursor-default' 
+    : activeTool === 'select' 
+      ? 'cursor-grab active:cursor-grabbing hover:shadow-md' 
+      : activeTool === 'eraser' 
+        ? 'cursor-pointer hover:brightness-95 hover:ring-2 hover:ring-rose-500 hover:ring-offset-1 transition-all' 
+        : 'cursor-default';
+
+  const isLocked = element.locked;
 
   return (
     <>
@@ -67,7 +139,7 @@ export default function ImageComponent({
         onMouseDown={onSelect}
         className={`absolute select-none flex flex-col justify-between transition-shadow duration-150 group ${cursorClass} ${
           isSelected ? 'ring-2 ring-blue-600 shadow-xl z-20' : 'z-10'
-        }`}
+        } ${element.id.startsWith('pdf-page-') ? 'shadow-lg bg-white border border-slate-200' : ''}`}
         style={{
           left: element.x,
           top: element.y,
@@ -85,17 +157,52 @@ export default function ImageComponent({
             referrerPolicy="no-referrer"
           />
           
+          {isCropping && (
+            <div className="absolute inset-0 pointer-events-none">
+               <div className="absolute top-0 left-0 right-0 bg-black/50" style={{ height: crop.top }} />
+               <div className="absolute bottom-0 left-0 right-0 bg-black/50" style={{ height: crop.bottom }} />
+               <div className="absolute left-0 bg-black/50" style={{ top: crop.top, bottom: crop.bottom, width: crop.left }} />
+               <div className="absolute right-0 bg-black/50" style={{ top: crop.top, bottom: crop.bottom, width: crop.right }} />
+               
+               <div className="absolute border border-white border-dashed pointer-events-auto" 
+                    style={{ top: crop.top, left: crop.left, right: crop.right, bottom: crop.bottom }} />
+
+               <div className="absolute left-1/2 -translate-x-1/2 w-8 h-4 cursor-n-resize pointer-events-auto flex items-start justify-center" 
+                    style={{ top: crop.top - 2 }}
+                    onMouseDown={(e) => handleCropDrag(e, 'top')}>
+                    <div className="w-4 h-1.5 bg-white rounded-full shadow" />
+               </div>
+               <div className="absolute left-1/2 -translate-x-1/2 w-8 h-4 cursor-s-resize pointer-events-auto flex items-end justify-center" 
+                    style={{ bottom: crop.bottom - 2 }}
+                    onMouseDown={(e) => handleCropDrag(e, 'bottom')}>
+                    <div className="w-4 h-1.5 bg-white rounded-full shadow" />
+               </div>
+               <div className="absolute top-1/2 -translate-y-1/2 w-4 h-8 cursor-w-resize pointer-events-auto flex items-center justify-start" 
+                    style={{ left: crop.left - 2 }}
+                    onMouseDown={(e) => handleCropDrag(e, 'left')}>
+                    <div className="w-1.5 h-4 bg-white rounded-full shadow" />
+               </div>
+               <div className="absolute top-1/2 -translate-y-1/2 w-4 h-8 cursor-e-resize pointer-events-auto flex items-center justify-end" 
+                    style={{ right: crop.right - 2 }}
+                    onMouseDown={(e) => handleCropDrag(e, 'right')}>
+                    <div className="w-1.5 h-4 bg-white rounded-full shadow" />
+               </div>
+            </div>
+          )}
+          
           {/* Quick full-screen preview button on hover */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setIsFullscreen(true);
-            }}
-            className="absolute top-2 right-2 p-1.5 bg-black/60 hover:bg-black/80 text-white rounded-lg opacity-0 group-hover/img:opacity-100 transition-opacity cursor-pointer shadow-xs"
-            title="View Full Image"
-          >
-            <Maximize2 className="w-3.5 h-3.5" />
-          </button>
+          {!isCropping && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsFullscreen(true);
+              }}
+              className="absolute top-2 right-2 p-1.5 bg-black/60 hover:bg-black/80 text-white rounded-lg opacity-0 group-hover/img:opacity-100 transition-opacity cursor-pointer shadow-xs"
+              title="View Full Image"
+            >
+              <Maximize2 className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
 
         {/* Floating Controls Overlay (Visible when selected, or when reactions exist) */}
@@ -128,6 +235,23 @@ export default function ImageComponent({
                 {Object.keys(element.reactions || {}).length > 0 && (
                   <div className="w-[1px] h-3 bg-slate-200" />
                 )}
+                
+                {/* Lock/Unlock Trigger (Teacher only or owner?) */}
+                {canWrite && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onUpdate({ locked: !element.locked });
+                    }}
+                    className={`p-1 rounded transition-colors cursor-pointer ${
+                      element.locked ? 'text-amber-600 bg-amber-50' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100'
+                    }`}
+                    title={element.locked ? 'Unlock element' : 'Lock element'}
+                  >
+                    {element.locked ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
+                  </button>
+                )}
+
                 {/* Emoji Trigger */}
                 <div className="relative">
                   <button
@@ -156,8 +280,48 @@ export default function ImageComponent({
                   )}
                 </div>
 
+                {/* Crop Trigger */}
+                {canWrite && !isCropping && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsCropping(true);
+                      setCrop({ top: 0, left: 0, right: 0, bottom: 0 });
+                    }}
+                    className="p-1 rounded text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors cursor-pointer"
+                    title="Crop Image"
+                  >
+                    <Crop className="w-4 h-4" />
+                  </button>
+                )}
+                
+                {/* Confirm Crop Trigger */}
+                {canWrite && isCropping && (
+                  <button
+                    onClick={handleConfirmCrop}
+                    className="p-1 rounded text-white bg-indigo-600 hover:bg-indigo-700 transition-colors cursor-pointer"
+                    title="Confirm Crop"
+                  >
+                    <Check className="w-4 h-4" />
+                  </button>
+                )}
+
+                {/* Cancel Crop Trigger */}
+                {canWrite && isCropping && (
+                  <button
+                    onClick={(e) => {
+                       e.stopPropagation();
+                       setIsCropping(false);
+                    }}
+                    className="p-1 rounded text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
+                    title="Cancel Crop"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+
                 {/* Delete Trigger */}
-                {canWrite && (
+                {canWrite && !isCropping && (
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -175,7 +339,7 @@ export default function ImageComponent({
         )}
 
         {/* Resize corner handle */}
-        {isSelected && canWrite && (
+        {isSelected && canWrite && !isLocked && (
           <div
             className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize flex items-end justify-end p-0.5 pointer-events-auto z-30"
             onMouseDown={(e) => {

@@ -100,6 +100,28 @@ const compressImage = (file: File): Promise<string | null> => {
   });
 };
 
+// Helper to convert drawing points into a smooth SVG path (Quadratic Bezier)
+function getSvgPathFromPoints(points: Point[]): string {
+  if (!points || points.length === 0) return "";
+  if (points.length === 1) {
+    return `M ${points[0].x} ${points[0].y} L ${points[0].x} ${points[0].y}`;
+  }
+  if (points.length === 2) {
+    return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`;
+  }
+
+  let d = `M ${points[0].x} ${points[0].y}`;
+  for (let i = 1; i < points.length - 1; i++) {
+    const cp = {
+      x: (points[i].x + points[i + 1].x) / 2,
+      y: (points[i].y + points[i + 1].y) / 2,
+    };
+    d += ` Q ${points[i].x} ${points[i].y} ${cp.x} ${cp.y}`;
+  }
+  d += ` L ${points[points.length - 1].x} ${points[points.length - 1].y}`;
+  return d;
+}
+
 interface WhiteboardCanvasProps {
   boardId: string;
   boardName: string;
@@ -122,6 +144,7 @@ export default function WhiteboardCanvas({
 
   // Whiteboard Elements State
   const [elements, setElements] = useState<BoardElement[]>([]);
+  const [clipboardElements, setClipboardElements] = useState<BoardElement[]>([]);
   const [boardData, setBoardData] = useState<Whiteboard | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -168,6 +191,35 @@ export default function WhiteboardCanvas({
   const isTeacher = currentUser.role === "teacher";
   const studentsCanWrite = boardData?.studentsCanWrite !== false;
   const canWrite = isTeacher || studentsCanWrite;
+
+  const isPdfBoard = boardName.startsWith("PDF: ");
+  const [hasCentered, setHasCentered] = useState(false);
+
+  useEffect(() => {
+    if (isPdfBoard && elements.length > 0 && !hasCentered && containerRef.current) {
+      const pdfPages = elements.filter((el) => el.id.startsWith("pdf-page-"));
+      if (pdfPages.length > 0) {
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        pdfPages.forEach((el) => {
+          const img = el as ImageElement;
+          minX = Math.min(minX, img.x);
+          minY = Math.min(minY, img.y);
+          maxX = Math.max(maxX, img.x + img.width);
+          maxY = Math.max(maxY, img.y + img.height);
+        });
+
+        const rect = containerRef.current.getBoundingClientRect();
+        const contentWidth = maxX - minX;
+        const targetZoom = Math.min(1.0, (rect.width * 0.9) / contentWidth);
+        const newZoom = Math.max(0.4, targetZoom);
+
+        setZoom(newZoom);
+        setPanX(rect.width / 2 - (minX + contentWidth / 2) * newZoom);
+        setPanY(60); 
+        setHasCentered(true);
+      }
+    }
+  }, [isPdfBoard, elements, hasCentered]);
 
   const triggerReadOnlyAlert = () => {
     setShowReadOnlyAlert(true);
@@ -291,10 +343,14 @@ export default function WhiteboardCanvas({
     ).catch((err) => console.error("Cursor sync error:", err));
   };
 
+  const containerRectRef = useRef<DOMRect | null>(null);
+
   // Convert screen coordinates into absolute canvas coordinates
   const screenToCanvasCoords = (clientX: number, clientY: number): Point => {
     if (!containerRef.current) return { x: 0, y: 0 };
-    const rect = containerRef.current.getBoundingClientRect();
+    
+    // Use cached rect if available during an interaction, otherwise fetch it
+    const rect = containerRectRef.current || containerRef.current.getBoundingClientRect();
     const x = (clientX - rect.left - panX) / zoom;
     const y = (clientY - rect.top - panY) / zoom;
     return { x, y };
@@ -306,7 +362,7 @@ export default function WhiteboardCanvas({
       const customEvent = e as CustomEvent;
       const { elementId, originalEvent } = customEvent.detail;
       const targetElement = elements.find((el) => el.id === elementId);
-      if (!targetElement || targetElement.type === "drawing") return;
+      if (!targetElement || targetElement.type === "drawing" || (targetElement as any).locked) return;
 
       setSelectedId(elementId);
       setIsResizing(true);
@@ -429,6 +485,10 @@ export default function WhiteboardCanvas({
     const coords = screenToCanvasCoords(e.clientX, e.clientY);
 
     // 1. Hand tool / Pan Canvas mode
+    if (containerRef.current) {
+      containerRectRef.current = containerRef.current.getBoundingClientRect();
+    }
+    
     if (
       (activeTool === "pan" || e.shiftKey) &&
       activeTool !== "pencil" &&
@@ -633,6 +693,15 @@ export default function WhiteboardCanvas({
       (activeTool === "pencil" || activeTool === "highlighter")
     ) {
       const coords = screenToCanvasCoords(e.clientX, e.clientY);
+      
+      // Optimization: Only add point if it moved at least 2 canvas pixels away from the last point
+      // This prevents jitter and reduces data size significantly
+      const lastPoint = drawingPointsRef.current[drawingPointsRef.current.length - 1];
+      if (lastPoint && !e.shiftKey) {
+        const dist = Math.sqrt(Math.pow(coords.x - lastPoint.x, 2) + Math.pow(coords.y - lastPoint.y, 2));
+        if (dist < 2) return;
+      }
+
       let updated: Point[];
 
       if (e.shiftKey) {
@@ -716,6 +785,7 @@ export default function WhiteboardCanvas({
   };
 
   const handleMouseUp = async (e: React.MouseEvent) => {
+    containerRectRef.current = null;
     // 0. Finish drag selection box
     if (dragSelectStart) {
       setDragSelectStart(null);
@@ -1003,9 +1073,46 @@ export default function WhiteboardCanvas({
         return;
       }
 
-      if (key === "v") setActiveTool("select");
-      else if (key === "h") setActiveTool("pan");
-      else if (["p", "n", "s", "t", "l", "e", "g"].includes(key)) {
+      if ((e.ctrlKey || e.metaKey) && key === "c") {
+        if (selectedIds.length > 0) {
+          const selected = elements.filter(el => selectedIds.includes(el.id));
+          setClipboardElements(selected);
+        }
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && key === "v") {
+        if (clipboardElements.length > 0) {
+          if (!canWrite) {
+            triggerReadOnlyAlert();
+            return;
+          }
+          
+          const newIds: string[] = [];
+          Promise.all(clipboardElements.map(async (el) => {
+             const newId = el.type + "-" + Date.now() + Math.floor(Math.random() * 1000);
+             newIds.push(newId);
+             
+             let newEl: BoardElement;
+             if (el.type === 'drawing') {
+                 newEl = { ...el, id: newId, points: el.points.map(p => ({ x: p.x + 40, y: p.y + 40 })), zIndex: elements.length + 10, updatedAt: Date.now() };
+             } else {
+                 newEl = { ...el, id: newId, x: el.x + 40, y: el.y + 40, zIndex: elements.length + 10, updatedAt: Date.now() };
+             }
+             
+             await setDoc(doc(db, "whiteboards", boardId, "elements", newId), newEl);
+          })).then(() => {
+             setSelectedIds(newIds);
+             setSelectedId(null);
+          });
+          // Do not return here, we might want to also allow OS paste, or actually we could prevent default
+          // e.preventDefault();
+        }
+      }
+
+      if (key === "v" && !(e.ctrlKey || e.metaKey)) setActiveTool("select");
+      else if (key === "h" && !(e.ctrlKey || e.metaKey)) setActiveTool("pan");
+      else if (["p", "n", "s", "t", "l", "e", "g"].includes(key) && !(e.ctrlKey || e.metaKey)) {
         if (!canWrite) {
           triggerReadOnlyAlert();
           return;
@@ -1084,6 +1191,7 @@ export default function WhiteboardCanvas({
       const positions: Record<string, any> = {};
       elements.forEach((el) => {
         if (updatedSelectedIds.includes(el.id)) {
+          if ((el as any).locked) return;
           if (el.type !== "drawing") {
             const boundedEl = el as any;
             positions[el.id] = { x: boundedEl.x, y: boundedEl.y };
@@ -1725,6 +1833,7 @@ export default function WhiteboardCanvas({
         gridMode={gridMode}
         onChangeGridMode={setGridMode}
         hasSelection={selectedIds.length > 0 || selectedId !== null}
+        isPdfMode={isPdfBoard}
       />
 
       {/* Main Interactive Interactive Zoomable & Pannable Canvas Container */}
@@ -1743,14 +1852,14 @@ export default function WhiteboardCanvas({
         style={{
           // Grid dot, math grid, or plain background pattern that scales and translates correctly
           backgroundImage:
-            gridMode === "none"
+            isPdfBoard || gridMode === "none"
               ? "none"
               : gridMode === "math"
                 ? `linear-gradient(to right, rgba(203, 213, 225, 0.45) 1px, transparent 1px), linear-gradient(to bottom, rgba(203, 213, 225, 0.45) 1px, transparent 1px)`
                 : `radial-gradient(circle, #cbd5e1 1.5px, transparent 1.5px)`,
           backgroundSize: `${24 * zoom}px ${24 * zoom}px`,
           backgroundPosition: `${panX}px ${panY}px`,
-          backgroundColor: gridMode === "none" ? "#ffffff" : "#f8fafc",
+          backgroundColor: isPdfBoard ? "#e2e8f0" : gridMode === "none" ? "#ffffff" : "#f8fafc",
         }}
       >
         {/* Render Layer of Infinite Board Elements (Shapes, Drawings, Connectors, cursors) */}
@@ -1920,9 +2029,7 @@ export default function WhiteboardCanvas({
             {elements
               .filter((el) => el.type === "drawing")
               .map((el: any) => {
-                const pts = el.points
-                  .map((p: any) => `${p.x},${p.y}`)
-                  .join(" ");
+                const pathData = getSvgPathFromPoints(el.points);
                 const isSelected = selectedIds.includes(el.id);
                 const isInteractive =
                   activeTool === "select" || activeTool === "eraser";
@@ -1937,16 +2044,16 @@ export default function WhiteboardCanvas({
                     onMouseDown={(e) => handleSelectElement(el.id, e)}
                   >
                     {/* Invisible thicker hit area for easier clicking */}
-                    <polyline
-                      points={pts}
+                    <path
+                      d={pathData}
                       fill="none"
                       stroke="transparent"
                       strokeWidth={el.width + 16}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                     />
-                    <polyline
-                      points={pts}
+                    <path
+                      d={pathData}
                       fill="none"
                       stroke={el.color}
                       strokeWidth={el.width}
@@ -1968,10 +2075,8 @@ export default function WhiteboardCanvas({
               })}
             {/* Render current local drawing */}
             {localDrawingPoints.length > 0 && (
-              <polyline
-                points={localDrawingPoints
-                  .map((p) => `${p.x},${p.y}`)
-                  .join(" ")}
+              <path
+                d={getSvgPathFromPoints(localDrawingPoints)}
                 fill="none"
                 stroke={
                   activeTool === "highlighter"

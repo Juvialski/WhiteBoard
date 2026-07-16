@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { StickyElement, UserProfile } from '../types';
-import { Smile, Trash2 } from 'lucide-react';
+import { Smile, Trash2, Lock, Unlock } from 'lucide-react';
 
 interface StickyComponentProps {
   element: StickyElement;
@@ -84,11 +84,13 @@ export default function StickyComponent({
   const isDarkColor = element.color === '#4b5563';
   const textColorClass = isDarkColor ? 'text-white' : 'text-slate-800';
 
-  const cursorClass = activeTool === 'select' 
-    ? 'cursor-grab active:cursor-grabbing' 
-    : activeTool === 'eraser' 
-      ? 'cursor-pointer hover:brightness-95 hover:ring-2 hover:ring-rose-500 hover:ring-offset-1 transition-all' 
-      : 'cursor-default';
+  const cursorClass = element.locked
+    ? 'cursor-default'
+    : activeTool === 'select' 
+      ? 'cursor-grab active:cursor-grabbing' 
+      : activeTool === 'eraser' 
+        ? 'cursor-pointer hover:brightness-95 hover:ring-2 hover:ring-rose-500 hover:ring-offset-1 transition-all' 
+        : 'cursor-default';
 
   return (
     <div
@@ -107,7 +109,7 @@ export default function StickyComponent({
     >
       {/* Content Area */}
       <div className="flex-1 flex flex-col justify-center overflow-hidden w-full relative">
-        {isEditing ? (
+        {isEditing && !element.locked ? (
           <textarea
             ref={textareaRef}
             value={text}
@@ -126,7 +128,7 @@ export default function StickyComponent({
           <div
             onDoubleClick={(e) => {
               e.stopPropagation();
-              if (!canWrite) return;
+              if (!canWrite || element.locked) return;
               setIsEditing(true);
             }}
             className={`w-full h-full text-center flex items-center justify-center font-semibold text-sm overflow-auto select-text break-words cursor-text p-1 ${textColorClass}`}
@@ -163,6 +165,22 @@ export default function StickyComponent({
         {/* Action Controls for Selected Note */}
         {isSelected && !isDraggingOrResizing && (
           <div className="flex items-center space-x-1 ml-auto">
+            {/* Lock Trigger */}
+            {canWrite && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onUpdate({ locked: !element.locked });
+                }}
+                className={`p-1 rounded hover:bg-black/5 ${textColorClass} transition-colors cursor-pointer ${
+                  element.locked ? 'text-amber-600' : ''
+                }`}
+                title={element.locked ? 'Unlock Note' : 'Lock Note'}
+              >
+                {element.locked ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
+              </button>
+            )}
+
             {/* Reaction Trigger */}
             <div className="relative">
               <button
@@ -209,7 +227,7 @@ export default function StickyComponent({
       </div>
 
       {/* Resize corner handle */}
-      {isSelected && canWrite && (
+      {isSelected && canWrite && !element.locked && (
         <div
           className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize flex items-end justify-end p-0.5 pointer-events-auto"
           onMouseDown={(e) => {

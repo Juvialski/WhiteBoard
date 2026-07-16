@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { TextElement, UserProfile } from '../types';
-import { Smile, Trash2 } from 'lucide-react';
+import { Smile, Trash2, Lock, Unlock } from 'lucide-react';
 
 interface TextComponentProps {
   element: TextElement;
@@ -79,11 +79,13 @@ export default function TextComponent({
     setShowEmojiPicker(false);
   };
 
-  const cursorClass = activeTool === 'select' 
-    ? 'cursor-grab active:cursor-grabbing' 
-    : activeTool === 'eraser' 
-      ? 'cursor-pointer hover:bg-rose-50 hover:ring-2 hover:ring-rose-500 hover:ring-offset-1 transition-all' 
-      : 'cursor-default';
+  const cursorClass = element.locked
+    ? 'cursor-default'
+    : activeTool === 'select' 
+      ? 'cursor-grab active:cursor-grabbing' 
+      : activeTool === 'eraser' 
+        ? 'cursor-pointer hover:bg-rose-50 hover:ring-2 hover:ring-rose-500 hover:ring-offset-1 transition-all' 
+        : 'cursor-default';
 
   return (
     <div
@@ -99,14 +101,14 @@ export default function TextComponent({
       }}
       id={`text-${element.id}`}
     >
-      <div className="flex-1 flex items-center justify-center relative w-full h-full overflow-hidden">
-        {isEditing ? (
+      <div className="flex-1 relative w-full h-full overflow-hidden">
+        {isEditing && !element.locked ? (
           <textarea
             ref={textareaRef}
             value={text}
             onChange={handleTextChange}
             onBlur={handleBlur}
-            className="w-full h-full bg-transparent border-none resize-none focus:outline-none text-center font-bold font-mono text-slate-800"
+            className="w-full h-full bg-transparent border-none resize-none focus:outline-none text-left font-bold font-mono text-slate-800 p-1"
             style={{ fontSize: `${element.fontSize || 16}px`, color: element.color }}
             placeholder="Type text..."
             onKeyDown={(e) => {
@@ -120,10 +122,10 @@ export default function TextComponent({
           <div
             onDoubleClick={(e) => {
               e.stopPropagation();
-              if (!canWrite) return;
+              if (!canWrite || element.locked) return;
               setIsEditing(true);
             }}
-            className="w-full h-full text-center flex items-center justify-center font-bold break-words overflow-auto select-text cursor-text"
+            className="w-full h-full text-left font-bold break-words overflow-y-auto select-text cursor-text p-1"
             style={{ fontSize: `${element.fontSize || 16}px`, color: element.color }}
           >
             {element.text || (canWrite ? <span className="opacity-30 italic text-xs font-normal">Double click to type text</span> : '')}
@@ -139,6 +141,22 @@ export default function TextComponent({
         >
           {/* Reaction picker */}
           <div className="flex items-center space-x-1 pr-2">
+            {/* Lock Trigger */}
+            {canWrite && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onUpdate({ locked: !element.locked });
+                }}
+                className={`p-1 rounded hover:bg-slate-100 transition-colors cursor-pointer ${
+                  element.locked ? 'text-amber-600' : 'text-slate-500'
+                }`}
+                title={element.locked ? 'Unlock Text' : 'Lock Text'}
+              >
+                {element.locked ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
+              </button>
+            )}
+
             {EMOJIS.map((emoji) => (
               <button
                 key={emoji}
@@ -210,7 +228,7 @@ export default function TextComponent({
       </div>
 
       {/* Resize handles */}
-      {isSelected && canWrite && (
+      {isSelected && canWrite && !element.locked && (
         <div
           className="absolute bottom-0 right-0 w-3 h-3 cursor-se-resize flex items-end justify-end pointer-events-auto"
           onMouseDown={(e) => {

@@ -34,8 +34,17 @@ export default function Dashboard({
   const [assignedStudent, setAssignedStudent] = useState('');
   
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [boardToDelete, setBoardToDelete] = useState<string | null>(null);
   
   const pdfInputRef = useRef<HTMLInputElement>(null);
+  
+  const [pdfUploadState, setPdfUploadState] = useState<{
+    file: File;
+    images: { src: string, width: number, height: number }[];
+    selectedPages: boolean[];
+    layout: 'vertical' | 'horizontal';
+  } | null>(null);
+
   const [isUploadingPdf, setIsUploadingPdf] = useState(false);
 
   const handlePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -46,11 +55,29 @@ export default function Dashboard({
     try {
       const { pdfToImages } = await import('../utils/pdf');
       const images = await pdfToImages(file);
-      
+      setPdfUploadState({
+        file,
+        images,
+        selectedPages: new Array(images.length).fill(true),
+        layout: 'vertical'
+      });
+    } catch (err) {
+      console.error('Error uploading PDF:', err);
+      alert('Failed to process PDF.');
+    } finally {
+      setIsUploadingPdf(false);
+      if (pdfInputRef.current) pdfInputRef.current.value = '';
+    }
+  };
+
+  const submitPdfBoard = async () => {
+    if (!pdfUploadState) return;
+    setIsUploadingPdf(true);
+    try {
       const finalUserName = userName.trim() || 'Anonymous User';
       
       const docRef = await addDoc(collection(db, 'whiteboards'), {
-        name: `PDF: ${file.name.replace('.pdf', '')}`,
+        name: `PDF: ${pdfUploadState.file.name.replace('.pdf', '')}`,
         description: 'PDF Workspace',
         createdAt: Date.now(),
         createdBy: finalUserName,
@@ -59,36 +86,39 @@ export default function Dashboard({
         studentsCanWrite: true,
       });
 
+      let currentX = 0;
       let currentY = 0;
       const batch = writeBatch(db);
+      const gap = 40;
       
-      for (let i = 0; i < images.length; i++) {
-        const img = images[i];
+      for (let i = 0; i < pdfUploadState.images.length; i++) {
+        if (!pdfUploadState.selectedPages[i]) continue;
+        const img = pdfUploadState.images[i];
         const elementId = `pdf-page-${i}-${Date.now()}`;
         const elRef = doc(db, 'whiteboards', docRef.id, 'elements', elementId);
         
         batch.set(elRef, {
           id: elementId,
           type: "image",
-          x: 0,
+          x: currentX,
           y: currentY,
           width: img.width,
           height: img.height,
           src: img.src,
-          zIndex: -1, // put pages in the background
+          zIndex: -1, // background
+          locked: true,
           updatedAt: Date.now()
         });
         
-        currentY += img.height + 40;
+        if (pdfUploadState.layout === 'vertical') {
+          currentY += img.height + gap;
+        } else {
+          currentX += img.width + gap;
+        }
       }
       
       await batch.commit();
 
-      if (pdfInputRef.current) {
-        pdfInputRef.current.value = '';
-      }
-      
-      // Select the new board directly
       const finalName = userName.trim() || (role === 'teacher' ? 'Teacher' : 'Student-' + Math.floor(Math.random() * 1000));
       localStorage.setItem('lucid_spark_user_name', finalName);
       localStorage.setItem('lucid_spark_user_color', userColor);
@@ -101,14 +131,15 @@ export default function Dashboard({
         role: role,
         photoURL: currentUserProfile?.photoURL
       };
+      
       if (!localStorage.getItem('lucid_spark_user_id')) {
         localStorage.setItem('lucid_spark_user_id', profile.id);
       }
-
+      
       onSelectBoard(docRef.id, profile);
-
+      setPdfUploadState(null);
     } catch (err) {
-      console.error('Error uploading PDF:', err);
+      console.error('Error creating PDF board:', err);
       alert('Failed to process PDF.');
     } finally {
       setIsUploadingPdf(false);
@@ -195,13 +226,20 @@ export default function Dashboard({
     }
   };
 
-  const handleDeleteBoard = async (boardId: string, e: React.MouseEvent) => {
+  const handleDeleteBoard = (boardId: string, e: React.MouseEvent) => {
     e.stopPropagation(); // Avoid triggering board selection
-    if (!window.confirm('Are you sure you want to delete this whiteboard?')) return;
+    setBoardToDelete(boardId);
+  };
+
+  const confirmDeleteBoard = async () => {
+    if (!boardToDelete) return;
     try {
-      await deleteDoc(doc(db, 'whiteboards', boardId));
+      await deleteDoc(doc(db, 'whiteboards', boardToDelete));
+      setBoardToDelete(null);
     } catch (err) {
       console.error('Error deleting board:', err);
+      alert('Failed to delete board.');
+      setBoardToDelete(null);
     }
   };
 
@@ -251,7 +289,7 @@ export default function Dashboard({
   });
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans" id="lucid-dashboard">
+    <div className="h-full bg-slate-50 text-slate-800 flex flex-col font-sans overflow-y-auto" id="lucid-dashboard">
       {/* Navigation Header */}
       <header className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-4 shrink-0 sticky top-0 z-10">
         <div className="flex items-center gap-3">
@@ -604,7 +642,7 @@ export default function Dashboard({
                           {isAssigned ? `Student: ${board.studentName}` : 'Collaborative Shared'}
                         </span>
                         
-                        <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 lg:opacity-0 lg:group-hover:opacity-100 opacity-100 transition-opacity">
                           <button
                             onClick={(e) => copyLink(board.id, e)}
                             className="p-1.5 hover:bg-slate-100 rounded text-slate-500 hover:text-slate-800 transition-colors"
@@ -646,6 +684,166 @@ export default function Dashboard({
           </div>
         </div>
       </main>
+    
+      {pdfUploadState && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-bold text-slate-800">Configure PDF Board</h2>
+                <p className="text-sm text-slate-500 mt-1">Select pages and choose how they will be laid out.</p>
+              </div>
+              <button 
+                onClick={() => setPdfUploadState(null)}
+                className="p-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-50 transition-colors"
+              >
+                <Trash2 className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-6 bg-slate-50 flex">
+              {/* Sidebar Settings */}
+              <div className="w-64 shrink-0 pr-6 border-r border-slate-200 space-y-6">
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-3 tracking-wider">Layout Options</label>
+                  <div className="space-y-2">
+                    <label className="flex items-center space-x-3 p-3 rounded-xl border cursor-pointer transition-colors hover:bg-white" 
+                      style={{
+                        borderColor: pdfUploadState.layout === 'vertical' ? '#3b82f6' : '#e2e8f0',
+                        backgroundColor: pdfUploadState.layout === 'vertical' ? '#eff6ff' : 'transparent'
+                      }}>
+                      <input 
+                        type="radio" 
+                        name="layout" 
+                        value="vertical"
+                        checked={pdfUploadState.layout === 'vertical'}
+                        onChange={() => setPdfUploadState({ ...pdfUploadState, layout: 'vertical' })}
+                        className="text-blue-600 focus:ring-blue-600"
+                      />
+                      <span className="text-sm font-medium text-slate-700">Vertical (Default)</span>
+                    </label>
+                    <label className="flex items-center space-x-3 p-3 rounded-xl border cursor-pointer transition-colors hover:bg-white"
+                       style={{
+                        borderColor: pdfUploadState.layout === 'horizontal' ? '#3b82f6' : '#e2e8f0',
+                        backgroundColor: pdfUploadState.layout === 'horizontal' ? '#eff6ff' : 'transparent'
+                      }}>
+                      <input 
+                        type="radio" 
+                        name="layout" 
+                        value="horizontal"
+                        checked={pdfUploadState.layout === 'horizontal'}
+                        onChange={() => setPdfUploadState({ ...pdfUploadState, layout: 'horizontal' })}
+                        className="text-blue-600 focus:ring-blue-600"
+                      />
+                      <span className="text-sm font-medium text-slate-700">Horizontal (Kami Style)</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div>
+                   <label className="block text-xs font-bold text-slate-500 uppercase mb-3 tracking-wider">Page Selection</label>
+                   <div className="flex items-center gap-2">
+                     <button 
+                       onClick={() => setPdfUploadState({...pdfUploadState, selectedPages: new Array(pdfUploadState.images.length).fill(true)})}
+                       className="flex-1 text-xs py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded font-medium transition-colors"
+                     >
+                       Select All
+                     </button>
+                     <button 
+                       onClick={() => setPdfUploadState({...pdfUploadState, selectedPages: new Array(pdfUploadState.images.length).fill(false)})}
+                       className="flex-1 text-xs py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded font-medium transition-colors"
+                     >
+                       Deselect All
+                     </button>
+                   </div>
+                   <p className="text-[11px] text-slate-500 mt-2">
+                     {pdfUploadState.selectedPages.filter(Boolean).length} of {pdfUploadState.images.length} selected
+                   </p>
+                </div>
+              </div>
+
+              {/* Main Content: Thumbnails */}
+              <div className="flex-1 pl-6">
+                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                   {pdfUploadState.images.map((img, i) => (
+                     <div 
+                       key={i} 
+                       className={`relative aspect-[3/4] bg-white border-2 rounded-lg overflow-hidden cursor-pointer group transition-all ${pdfUploadState.selectedPages[i] ? 'border-blue-500 shadow-md ring-2 ring-blue-500/20' : 'border-slate-200 opacity-60 hover:opacity-100'}`}
+                       onClick={() => {
+                         const newSelected = [...pdfUploadState.selectedPages];
+                         newSelected[i] = !newSelected[i];
+                         setPdfUploadState({...pdfUploadState, selectedPages: newSelected});
+                       }}
+                     >
+                       <img src={img.src} alt={`Page ${i+1}`} className="w-full h-full object-cover" />
+                       <div className="absolute top-2 left-2 w-6 h-6 rounded-full border-2 flex items-center justify-center bg-white shadow-sm transition-colors"
+                            style={{
+                              borderColor: pdfUploadState.selectedPages[i] ? '#3b82f6' : '#cbd5e1',
+                              backgroundColor: pdfUploadState.selectedPages[i] ? '#3b82f6' : 'white'
+                            }}>
+                          {pdfUploadState.selectedPages[i] && <Check className="w-3.5 h-3.5 text-white" />}
+                       </div>
+                       <div className="absolute bottom-2 right-2 bg-black/60 backdrop-blur-sm text-white text-xs font-bold px-2 py-1 rounded">
+                         Page {i + 1}
+                       </div>
+                     </div>
+                   ))}
+                 </div>
+              </div>
+            </div>
+            
+            <div className="p-4 border-t border-slate-100 bg-white flex justify-end items-center gap-3">
+              <button 
+                onClick={() => setPdfUploadState(null)}
+                className="px-5 py-2.5 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={submitPdfBoard}
+                disabled={isUploadingPdf || pdfUploadState.selectedPages.filter(Boolean).length === 0}
+                className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-xl shadow-sm transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isUploadingPdf ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Creating Board...</>
+                ) : (
+                  <>Create Board <ArrowRight className="w-4 h-4" /></>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {boardToDelete && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 space-y-4 animate-in zoom-in-95 duration-200">
+            <div className="w-12 h-12 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center mx-auto">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <div className="text-center">
+              <h3 className="text-lg font-bold text-slate-900">Delete Whiteboard?</h3>
+              <p className="text-sm text-slate-500 mt-1 leading-relaxed">
+                This will permanently remove the board and all its content. This action cannot be undone.
+              </p>
+            </div>
+            <div className="flex flex-col gap-2 pt-2">
+              <button 
+                onClick={confirmDeleteBoard}
+                className="w-full bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white font-bold py-3 rounded-xl transition-all shadow-sm shadow-rose-200 cursor-pointer"
+              >
+                Delete Permanently
+              </button>
+              <button 
+                onClick={() => setBoardToDelete(null)}
+                className="w-full bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 font-bold py-3 rounded-xl transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

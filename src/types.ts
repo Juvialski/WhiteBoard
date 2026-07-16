@@ -31,6 +31,7 @@ export interface ImageElement {
   reactions?: Record<string, string[]>; // emoji -> array of userNames
   zIndex: number;
   updatedAt?: number;
+  locked?: boolean;
 }
 
 export interface StickyElement {
@@ -46,6 +47,7 @@ export interface StickyElement {
   reactions?: Record<string, string[]>; // emoji -> array of userNames
   zIndex: number;
   updatedAt?: number;
+  locked?: boolean;
 }
 
 export interface ShapeElement {
@@ -84,6 +86,7 @@ export interface ShapeElement {
   }[];
   cartesianRange?: number; // axis maximum scale (e.g., 5 or 10)
   axisFontSize?: number; // font size for axis labels
+  locked?: boolean;
 }
 
 export interface TextElement {
@@ -99,6 +102,7 @@ export interface TextElement {
   reactions?: Record<string, string[]>; // emoji -> array of userNames
   zIndex: number;
   updatedAt?: number;
+  locked?: boolean;
 }
 
 export interface DrawingElement {
@@ -110,6 +114,7 @@ export interface DrawingElement {
   isHighlighter: boolean;
   zIndex: number;
   updatedAt?: number;
+  locked?: boolean;
 }
 
 export type BoardElement =

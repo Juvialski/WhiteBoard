@@ -1,10 +1,8 @@
 import * as pdfjsLib from 'pdfjs-dist';
+// @ts-ignore
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
-// Need to set the workerSrc for pdfjs to work in browser.
-// We'll use the CDN link that matches the installed version, or just the local vite worker if possible.
-// A common approach for Vite + pdfjs is to use the CDN.
-const PDFJS_VERSION = '3.11.174'; // fallback
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version || PDFJS_VERSION}/pdf.worker.min.js`;
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 export async function pdfToImages(file: File): Promise<{ src: string, width: number, height: number }[]> {
   const arrayBuffer = await file.arrayBuffer();

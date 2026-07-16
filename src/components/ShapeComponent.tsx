@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { ShapeElement, UserProfile, ShapeType } from "../types";
-import { Smile, Trash2, TrendingUp, Plus, X, Layers } from "lucide-react";
+import { Smile, Trash2, TrendingUp, Plus, X, Layers, Lock, Unlock } from "lucide-react";
 
 /**
  * Safely parses and evaluates algebraic mathematical functions like f(x) = y
@@ -1510,8 +1510,9 @@ export default function ShapeComponent({
   const isDarkFill = element.color === "#4b5563";
   const textColorClass = isDarkFill ? "text-white" : "text-slate-800";
 
-  const cursorClass =
-    activeTool === "select"
+  const cursorClass = element.locked
+    ? "cursor-default"
+    : activeTool === "select"
       ? "cursor-grab active:cursor-grabbing"
       : activeTool === "eraser"
         ? "cursor-pointer hover:brightness-95 hover:ring-2 hover:ring-rose-500 hover:ring-offset-1 transition-all"
@@ -1549,7 +1550,7 @@ export default function ShapeComponent({
         element.shapeType === "numberline"
       ) && (
         <div className="absolute inset-0 flex items-center justify-center p-6 overflow-hidden z-10">
-          {isEditing ? (
+          {isEditing && !element.locked ? (
             <textarea
               ref={textareaRef}
               value={text}
@@ -1568,7 +1569,7 @@ export default function ShapeComponent({
             <div
               onDoubleClick={(e) => {
                 e.stopPropagation();
-                if (!canWrite) return;
+                if (!canWrite || element.locked) return;
                 setIsEditing(true);
               }}
               className={`w-full h-full text-center flex items-center justify-center font-bold text-sm overflow-auto select-text break-words cursor-text ${textColorClass}`}
@@ -1592,6 +1593,22 @@ export default function ShapeComponent({
         >
           {/* Reaction Emojis list */}
           <div className="flex items-center space-x-1 border-r border-slate-100 pr-2">
+            {/* Lock Trigger */}
+            {canWrite && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onUpdate({ locked: !element.locked });
+                }}
+                className={`w-7 h-7 rounded-full hover:bg-slate-100 flex items-center justify-center transition-colors cursor-pointer ${
+                  element.locked ? "text-amber-600 bg-amber-50" : "text-slate-500"
+                }`}
+                title={element.locked ? "Unlock Shape" : "Lock Shape"}
+              >
+                {element.locked ? <Lock size={14} /> : <Unlock size={14} />}
+              </button>
+            )}
+
             {EMOJIS.map((emoji) => {
               const users = (element.reactions || {})[emoji] || [];
               const isReacted = users.includes(currentUser.name);
@@ -1749,7 +1766,7 @@ export default function ShapeComponent({
       </div>
 
       {/* Resize handle */}
-      {isSelected && canWrite && (
+      {isSelected && canWrite && !element.locked && (
         <div
           className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize flex items-end justify-end p-0.5 pointer-events-auto z-20"
           onMouseDown={(e) => {
