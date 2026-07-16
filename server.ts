@@ -7,28 +7,11 @@ import { GoogleGenAI, Type } from "@google/genai";
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 // Set up body parser with large limit for pasting images / elements
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
-
-// Initialize Google Gen AI
-const geminiApiKey = process.env.GEMINI_API_KEY;
-let ai: GoogleGenAI | null = null;
-
-if (geminiApiKey) {
-  ai = new GoogleGenAI({
-    apiKey: geminiApiKey,
-    httpOptions: {
-      headers: {
-        "User-Agent": "aistudio-build",
-      },
-    },
-  });
-} else {
-  console.warn("Warning: GEMINI_API_KEY environment variable is not set. AI features will be disabled unless custom keys are supplied.");
-}
 
 // Helper to resolve the correct AI instance (strictly user-supplied key)
 function getAiInstance(req: express.Request): GoogleGenAI | null {

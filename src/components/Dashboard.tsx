@@ -155,6 +155,21 @@ export default function Dashboard({
     setTimeout(() => setCopiedId(null), 2000);
   };
 
+  const currentName = currentUserProfile?.name || userName;
+  const normalizedName = currentName.toLowerCase().replace(/\s+/g, '-');
+  
+  const visibleBoards = boards.filter(board => {
+    // If not logged in or no name, don't show any boards
+    if (!currentName) return false;
+    // Visible if created by current user
+    if (board.createdBy === currentName) return true;
+    // Visible if assigned to current user
+    if (board.studentId && board.studentId === normalizedName) return true;
+    // If it's a shared board (no student assigned), only the creator can see it in their dashboard
+    // Others must use the direct link to join
+    return false;
+  });
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans" id="lucid-dashboard">
       {/* Navigation Header */}
@@ -432,7 +447,7 @@ export default function Dashboard({
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {boards.length === 0 ? (
+            {visibleBoards.length === 0 ? (
               <div className="col-span-full bg-white border border-dashed border-slate-200 rounded-xl py-16 text-center space-y-3">
                 <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center mx-auto text-slate-400">
                   <Sparkles className="w-5 h-5" />
@@ -440,12 +455,14 @@ export default function Dashboard({
                 <div>
                   <h3 className="font-bold text-slate-800">No Whiteboards Found</h3>
                   <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1 leading-relaxed">
-                    Create a whiteboard in teacher mode, or tap the button in the corner to spin up a collaborative canvas!
+                    {currentName 
+                      ? "Create a whiteboard in teacher mode, or tap the button in the corner to spin up a collaborative canvas!"
+                      : "Please set your nickname or log in with Google to view your whiteboards."}
                   </p>
                 </div>
               </div>
             ) : (
-              boards.map((board) => {
+              visibleBoards.map((board) => {
                 const isAssigned = !!board.studentId;
                 return (
                   <div
