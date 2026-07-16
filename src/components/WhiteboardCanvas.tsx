@@ -1863,11 +1863,12 @@ export default function WhiteboardCanvas({
 
               // Renders Image Elements
               if (el.type === "image") {
+                const isPdfPage = el.id.startsWith("pdf-page-");
                 return (
                   <div
                     key={el.id}
                     className={
-                      isInteractive
+                      isInteractive && !isPdfPage
                         ? "pointer-events-auto"
                         : "pointer-events-none"
                     }

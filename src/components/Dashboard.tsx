@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { collection, query, onSnapshot, addDoc, deleteDoc, doc } from 'firebase/firestore';
+import React, { useState, useEffect, useRef } from 'react';
+import { collection, query, onSnapshot, addDoc, deleteDoc, doc, writeBatch } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Whiteboard, UserProfile } from '../types';
-import { Plus, Trash2, ArrowRight, User, BookOpen, GraduationCap, Users, Sparkles, Copy, Check } from 'lucide-react';
+import { Plus, Trash2, ArrowRight, User, BookOpen, GraduationCap, Users, Sparkles, Copy, Check, FileUp, Loader2 } from 'lucide-react';
 
 interface DashboardProps {
   onSelectBoard: (boardId: string, profile: UserProfile) => void;
@@ -34,6 +34,86 @@ export default function Dashboard({
   const [assignedStudent, setAssignedStudent] = useState('');
   
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  
+  const pdfInputRef = useRef<HTMLInputElement>(null);
+  const [isUploadingPdf, setIsUploadingPdf] = useState(false);
+
+  const handlePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploadingPdf(true);
+    try {
+      const { pdfToImages } = await import('../utils/pdf');
+      const images = await pdfToImages(file);
+      
+      const finalUserName = userName.trim() || 'Anonymous User';
+      
+      const docRef = await addDoc(collection(db, 'whiteboards'), {
+        name: `PDF: ${file.name.replace('.pdf', '')}`,
+        description: 'PDF Workspace',
+        createdAt: Date.now(),
+        createdBy: finalUserName,
+        studentId: assignedStudent ? assignedStudent.toLowerCase().replace(/\s+/g, '-') : '',
+        studentName: assignedStudent.trim() || 'All Collaborative',
+        studentsCanWrite: true,
+      });
+
+      let currentY = 0;
+      const batch = writeBatch(db);
+      
+      for (let i = 0; i < images.length; i++) {
+        const img = images[i];
+        const elementId = `pdf-page-${i}-${Date.now()}`;
+        const elRef = doc(db, 'whiteboards', docRef.id, 'elements', elementId);
+        
+        batch.set(elRef, {
+          id: elementId,
+          type: "image",
+          x: 0,
+          y: currentY,
+          width: img.width,
+          height: img.height,
+          src: img.src,
+          zIndex: -1, // put pages in the background
+          updatedAt: Date.now()
+        });
+        
+        currentY += img.height + 40;
+      }
+      
+      await batch.commit();
+
+      if (pdfInputRef.current) {
+        pdfInputRef.current.value = '';
+      }
+      
+      // Select the new board directly
+      const finalName = userName.trim() || (role === 'teacher' ? 'Teacher' : 'Student-' + Math.floor(Math.random() * 1000));
+      localStorage.setItem('lucid_spark_user_name', finalName);
+      localStorage.setItem('lucid_spark_user_color', userColor);
+      localStorage.setItem('lucid_spark_user_role', role);
+
+      const profile: UserProfile = {
+        id: currentUserProfile?.id || localStorage.getItem('lucid_spark_user_id') || 'u-' + Math.floor(Math.random() * 1000000),
+        name: finalName,
+        color: userColor,
+        role: role,
+        photoURL: currentUserProfile?.photoURL
+      };
+      if (!localStorage.getItem('lucid_spark_user_id')) {
+        localStorage.setItem('lucid_spark_user_id', profile.id);
+      }
+
+      onSelectBoard(docRef.id, profile);
+
+    } catch (err) {
+      console.error('Error uploading PDF:', err);
+      alert('Failed to process PDF.');
+    } finally {
+      setIsUploadingPdf(false);
+    }
+  };
 
   // Sync state with Google User Profile when it changes
   useEffect(() => {
@@ -329,6 +409,48 @@ export default function Dashboard({
             </div>
           </div>
 
+          {/* PDF Upload Mode Tool */}
+          {role === 'teacher' && (
+            <div className="bg-white p-6 rounded-xl border border-indigo-200 shadow-sm relative overflow-hidden">
+              <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-600/5 rounded-full blur-2xl -mr-6 -mt-6"></div>
+              
+              <h2 className="text-sm font-bold text-slate-900 mb-2 flex items-center space-x-2">
+                <FileUp className="w-4.5 h-4.5 text-indigo-600" />
+                <span>PDF Whiteboard Mode</span>
+              </h2>
+              <p className="text-[11px] text-slate-500 mb-4 leading-relaxed">
+                Upload a PDF to automatically generate a whiteboard with all pages embedded. Perfect for annotating worksheets.
+              </p>
+
+              <input 
+                type="file"
+                accept="application/pdf"
+                className="hidden"
+                ref={pdfInputRef}
+                onChange={handlePdfUpload}
+              />
+
+              <button
+                type="button"
+                onClick={() => pdfInputRef.current?.click()}
+                disabled={isUploadingPdf}
+                className="w-full bg-indigo-50 hover:bg-indigo-100 active:bg-indigo-200 text-indigo-700 border border-indigo-200 font-semibold py-2.5 rounded-lg shadow-sm transition-all text-xs flex items-center justify-center space-x-2 cursor-pointer disabled:opacity-70 disabled:cursor-wait"
+              >
+                {isUploadingPdf ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Processing PDF...</span>
+                  </>
+                ) : (
+                  <>
+                    <FileUp className="w-3.5 h-3.5" />
+                    <span>Upload & Create PDF Board</span>
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+
           {/* Teacher Board Creation Tool (Available to anyone, but tailored for layout separation) */}
           {role === 'teacher' && (
             <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm relative overflow-hidden">
@@ -390,6 +512,8 @@ export default function Dashboard({
               </form>
             </div>
           )}
+
+
 
           {role === 'student' && (
             <div className="bg-slate-100/50 p-5 rounded-xl border border-slate-200 space-y-3">
