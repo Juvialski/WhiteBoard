@@ -13,7 +13,7 @@ interface LiveCursorsProps {
 const CollaboratorCursor = React.memo(({ collaborator, zoom }: { collaborator: Collaborator, zoom: number }) => {
   return (
     <div
-      className="absolute transition-all duration-100 ease-out pointer-events-none"
+      className="absolute pointer-events-none"
       style={{
         left: collaborator.x,
         top: collaborator.y,

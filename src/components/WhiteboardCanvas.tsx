@@ -491,6 +491,7 @@ export default function WhiteboardCanvas({
 
   // Write Minimization & Offline Persistence States & Refs
   const [activeUsersCount, setActiveUsersCount] = useState<number>(1);
+  const [firestoreActiveUsersCount, setFirestoreActiveUsersCount] = useState<number>(1);
   const [syncStatus, setSyncStatus] = useState<'synced' | 'saving-cloud' | 'saved-local' | 'offline'>('synced');
   const hasUnsavedChanges = useRef<boolean>(false);
   const pendingSyncElements = useRef<Record<string, { data: any; action: 'set' | 'delete' }>>({});
@@ -671,11 +672,17 @@ export default function WhiteboardCanvas({
           }
         }
       });
-      setActiveUsersCount(otherUsers + 1);
+      setFirestoreActiveUsersCount(otherUsers + 1);
     });
 
     return () => unsubscribe();
   }, [boardId, currentUser.id]);
+
+  // Combine both sources of truth (WebSockets + Firestore) to determine Solo vs Collaborating
+  useEffect(() => {
+    const wsCount = wsConnected ? socketCollaborators.length + 1 : 1;
+    setActiveUsersCount(Math.max(firestoreActiveUsersCount, wsCount));
+  }, [firestoreActiveUsersCount, socketCollaborators, wsConnected]);
 
   // Flushes pending Solo changes to cloud
   const flushPendingChanges = async () => {
@@ -732,87 +739,14 @@ export default function WhiteboardCanvas({
     const isDrawing = (elementData && elementData.type === 'drawing') || 
                       (actionType === 'delete' && currentElements.find(el => el.id === elementId)?.type === 'drawing');
 
-    if (isDrawing) {
-      // 1. Process local state update instantly
-      let localDrawings: DrawingElement[] = currentElements.filter(el => el.type === 'drawing') as DrawingElement[];
-      
-      if (actionType === 'delete') {
-        localDrawings = localDrawings.filter(el => el.id !== elementId);
-        updatedElements = currentElements.filter(el => el.id !== elementId);
-      } else {
-        const simplifiedData = {
-          ...elementData,
-          points: simplifyPoints(elementData.points, 1.2) // Downscale point coordinate resolution to optimize Firestore sizes
-        };
-        const exists = localDrawings.some(el => el.id === elementId);
-        if (exists) {
-          localDrawings = localDrawings.map(el => el.id === elementId ? (isMerge ? { ...el, ...simplifiedData } : { id: elementId, ...simplifiedData }) : el);
-          updatedElements = currentElements.map(el => el.id === elementId ? (isMerge ? { ...el, ...elementData } : { id: elementId, ...elementData }) : el);
-        } else {
-          localDrawings = [...localDrawings, { id: elementId, ...simplifiedData } as DrawingElement];
-          updatedElements = [...currentElements, { id: elementId, ...elementData } as BoardElement];
-        }
-      }
-
-      setElements(updatedElements);
-
-      // Save high-fidelity vector drawings to IndexedDB & fallback cache
-      try {
-        const fullDrawings = updatedElements.filter(el => el.type === 'drawing') as DrawingElement[];
-        await idbSet(`drawings_${boardId}`, fullDrawings);
-        localStorage.setItem(`whiteboard_elements_${boardId}`, JSON.stringify(updatedElements));
-      } catch (e) {
-        console.error("IndexedDB / local storage write error:", e);
-      }
-
-      // Broadcast update instantly to connected WebSocket peers (saving Firestore reads)
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({
-          type: "element_update",
-          boardId,
-          elementId,
-          elementData,
-          actionType,
-          isMerge
-        }));
-      }
-
-      // 2. Sync consolidated drawings array as a unified JSON blob in Firestore 'drawings_blob'
-      const isSolo = activeUsersCount <= 1;
-      if (isSolo) {
-        hasUnsavedChanges.current = true;
-        setSyncStatus('saved-local');
-
-        pendingSyncElements.current["drawings_blob"] = {
-          action: 'set',
-          data: {
-            type: "drawings_blob",
-            drawings: localDrawings
-          }
-        };
-
-        if (debounceTimer.current) clearTimeout(debounceTimer.current);
-        debounceTimer.current = setTimeout(() => {
-          flushPendingChanges();
-        }, 3000);
-      } else {
-        setSyncStatus('saving-cloud');
-        try {
-          const docRef = doc(db, "whiteboards", boardId, "elements", "drawings_blob");
-          await setDoc(docRef, {
-            type: "drawings_blob",
-            drawings: localDrawings
-          }, { merge: false });
-          setSyncStatus('synced');
-        } catch (err) {
-          console.error("Consolidated drawings Firestore sync error:", err);
-          setSyncStatus('offline');
-        }
-      }
-      return;
+    let processedData = elementData;
+    if (isDrawing && elementData && elementData.type === 'drawing') {
+      processedData = {
+        ...elementData,
+        points: simplifyPoints(elementData.points, 1.2) // Downscale point coordinate resolution to optimize Firestore sizes
+      };
     }
 
-    // Standard elements handling (sticky notes, shapes, text box, images)
     if (actionType === 'delete') {
       updatedElements = currentElements.filter(el => el.id !== elementId);
     } else {
@@ -820,32 +754,36 @@ export default function WhiteboardCanvas({
       if (exists) {
         updatedElements = currentElements.map(el => {
           if (el.id === elementId) {
-            return isMerge ? { ...el, ...elementData } : { id: elementId, ...elementData };
+            return isMerge ? { ...el, ...processedData } : { id: elementId, ...processedData };
           }
           return el;
         });
       } else {
-        updatedElements = [...currentElements, { id: elementId, ...elementData } as BoardElement];
+        updatedElements = [...currentElements, { id: elementId, ...processedData } as BoardElement];
       }
     }
 
     // Snappy UI update
     setElements(updatedElements);
 
-    // Immediate Local persistence
+    // Save fallback cache to localStorage and IndexedDB
     try {
       localStorage.setItem(`whiteboard_elements_${boardId}`, JSON.stringify(updatedElements));
+      if (isDrawing) {
+        const fullDrawings = updatedElements.filter(el => el.type === 'drawing') as DrawingElement[];
+        await idbSet(`drawings_${boardId}`, fullDrawings);
+      }
     } catch (e) {
-      console.error("Local storage save error:", e);
+      console.error("Local storage / IndexedDB save error:", e);
     }
 
-    // Broadcast update instantly to connected WebSocket peers
+    // Broadcast update instantly to connected WebSocket peers (saving Firestore reads)
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         type: "element_update",
         boardId,
         elementId,
-        elementData,
+        elementData: processedData,
         actionType,
         isMerge
       }));
@@ -877,7 +815,7 @@ export default function WhiteboardCanvas({
         if (actionType === 'delete') {
           await deleteDoc(docRef);
         } else {
-          await setDoc(docRef, elementData, { merge: isMerge });
+          await setDoc(docRef, processedData, { merge: isMerge });
         }
         setSyncStatus('synced');
       } catch (err) {
@@ -929,14 +867,16 @@ export default function WhiteboardCanvas({
 
   // Sync cursor movements to Firestore (throttled)
   const lastCursorUpdate = useRef<number>(0);
+  const lastFirestorePresenceWrite = useRef<number>(0);
   const lastSyncedCursorPos = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
   const updateCursorPosition = (clientX: number, clientY: number) => {
     const now = Date.now();
     const isSolo = activeUsersCount <= 1;
 
-    // Throttle: 30 seconds for presence heartbeat if alone (Solo), 1000ms (1s) if collaborating (Multiplayer)
-    const throttleLimit = isSolo ? 30000 : 1000;
+    // High performance WebSocket throttle: 50ms. If offline/solo fallback, use 30 seconds or 1 second.
+    const isWsActive = wsRef.current && wsRef.current.readyState === WebSocket.OPEN;
+    const throttleLimit = isWsActive ? 50 : (isSolo ? 30000 : 1000);
     if (now - lastCursorUpdate.current < throttleLimit) return;
 
     if (!containerRef.current) return;
@@ -948,8 +888,8 @@ export default function WhiteboardCanvas({
     const canvasX = (mouseX - panX) / zoom;
     const canvasY = (mouseY - panY) / zoom;
 
-    // If collaborating, only sync if moved at least 15 pixels to save quota
-    if (!isSolo) {
+    // If collaborating (without WS), only sync if moved at least 15 pixels to save quota
+    if (!isWsActive && !isSolo) {
       const dist = Math.sqrt(
         Math.pow(canvasX - lastSyncedCursorPos.current.x, 2) +
         Math.pow(canvasY - lastSyncedCursorPos.current.y, 2)
@@ -961,8 +901,8 @@ export default function WhiteboardCanvas({
     lastSyncedCursorPos.current = { x: canvasX, y: canvasY };
 
     // High performance: Use WebSocket if connected to bypass Firestore write limits!
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({
+    if (isWsActive) {
+      wsRef.current!.send(JSON.stringify({
         type: "cursor",
         boardId,
         userId: currentUser.id,
@@ -972,7 +912,12 @@ export default function WhiteboardCanvas({
         y: canvasY,
         lastActive: now
       }));
-      return;
+      
+      // Still write a lightweight presence heartbeat to Firestore every 30 seconds to keep activeUsersCount correct for all peers!
+      if (now - lastFirestorePresenceWrite.current < 30000) {
+        return;
+      }
+      lastFirestorePresenceWrite.current = now;
     }
 
     // Fallback: Sync cursor to Firestore if WebSocket is offline
