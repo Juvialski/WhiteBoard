@@ -1,6 +1,19 @@
-export type ElementType = 'sticky' | 'shape' | 'text' | 'drawing' | 'connector' | 'image';
+export type ElementType = "sticky" | "shape" | "text" | "drawing" | "image";
 
-export type ShapeType = 'rect' | 'circle' | 'diamond' | 'triangle' | 'star' | 'hexagon' | 'pentagon' | 'parallelogram' | 'right-triangle' | 'line' | 'cartesian' | 'numberline' | 'advanced-cartesian';
+export type ShapeType =
+  | "rect"
+  | "circle"
+  | "diamond"
+  | "triangle"
+  | "star"
+  | "hexagon"
+  | "pentagon"
+  | "parallelogram"
+  | "right-triangle"
+  | "line"
+  | "cartesian"
+  | "numberline"
+  | "advanced-cartesian";
 
 export interface Point {
   x: number;
@@ -9,7 +22,7 @@ export interface Point {
 
 export interface ImageElement {
   id: string;
-  type: 'image';
+  type: "image";
   x: number;
   y: number;
   width: number;
@@ -22,7 +35,7 @@ export interface ImageElement {
 
 export interface StickyElement {
   id: string;
-  type: 'sticky';
+  type: "sticky";
   x: number;
   y: number;
   width: number;
@@ -37,7 +50,7 @@ export interface StickyElement {
 
 export interface ShapeElement {
   id: string;
-  type: 'shape';
+  type: "shape";
   shapeType: ShapeType;
   x: number;
   y: number;
@@ -50,18 +63,32 @@ export interface ShapeElement {
   reactions?: Record<string, string[]>; // emoji -> array of userNames
   zIndex: number;
   updatedAt?: number;
-  
+
+  graphPanX?: number;
+  graphPanY?: number;
+
   // Cartesian plane specific advanced properties
-  equation?: string;         // e.g. "y = 2x + 1" or "x^2 - 2"
-  equation2?: string;        // second equation, e.g. "y = -x"
-  equation3?: string;        // third equation, e.g. "y = sin(x)"
-  plottedPoints?: string;    // comma-separated points, e.g., "(1,2), (-2,3)"
-  cartesianRange?: number;   // axis maximum scale (e.g., 5 or 10)
+  equation?: string; // e.g. "y = 2x + 1" or "x^2 - 2"
+  equation2?: string; // second equation, e.g. "y = -x"
+  equation3?: string; // third equation, e.g. "y = sin(x)"
+  equationMin?: string;
+  equationMax?: string;
+  equations?: { id: string; expr: string; color: string; min?: string; max?: string }[];
+  plottedPoints?: string; // comma-separated points, e.g., "(1,2), (-2,3)"
+  plottedLines?: {
+    id: string;
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+  }[];
+  cartesianRange?: number; // axis maximum scale (e.g., 5 or 10)
+  axisFontSize?: number; // font size for axis labels
 }
 
 export interface TextElement {
   id: string;
-  type: 'text';
+  type: "text";
   x: number;
   y: number;
   width: number;
@@ -76,7 +103,7 @@ export interface TextElement {
 
 export interface DrawingElement {
   id: string;
-  type: 'drawing';
+  type: "drawing";
   points: Point[];
   color: string;
   width: number;
@@ -85,28 +112,8 @@ export interface DrawingElement {
   updatedAt?: number;
 }
 
-export interface ConnectorElement {
-  id: string;
-  type: 'connector';
-  fromId?: string; // Connected shape/sticky ID
-  fromX?: number;  // Fallback start coordinates if not connected to an element
-  fromY?: number;
-  toId?: string;   // Connected shape/sticky ID
-  toX?: number;    // Fallback end coordinates if not connected to an element
-  toY?: number;
-  text?: string;
-  color: string;
-  zIndex: number;
-  updatedAt?: number;
-}
-
 export type BoardElement =
-  | StickyElement
-  | ShapeElement
-  | TextElement
-  | DrawingElement
-  | ConnectorElement
-  | ImageElement;
+  StickyElement | ShapeElement | TextElement | DrawingElement | ImageElement;
 
 export interface Collaborator {
   id: string;
@@ -132,6 +139,6 @@ export interface UserProfile {
   id: string;
   name: string;
   color: string;
-  role?: 'student' | 'teacher';
+  role?: "student" | "teacher";
   photoURL?: string;
 }

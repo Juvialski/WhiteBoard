@@ -1,37 +1,58 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { 
-  collection, 
-  query, 
-  onSnapshot, 
-  setDoc, 
-  deleteDoc, 
-  doc, 
-  writeBatch 
-} from 'firebase/firestore';
-import { db } from '../firebase';
-import { 
-  BoardElement, 
-  Point, 
-  UserProfile, 
-  StickyElement, 
-  ShapeElement, 
-  TextElement, 
-  DrawingElement, 
-  ConnectorElement,
+import React, { useState, useEffect, useRef } from "react";
+import {
+  collection,
+  query,
+  onSnapshot,
+  setDoc,
+  deleteDoc,
+  doc,
+  writeBatch,
+} from "firebase/firestore";
+import { db } from "../firebase";
+import {
+  BoardElement,
+  Point,
+  UserProfile,
+  StickyElement,
+  ShapeElement,
+  TextElement,
+  DrawingElement,
   ShapeType,
   ImageElement,
-  Whiteboard
-} from '../types';
-import Toolbar, { Tool } from './Toolbar';
-import StickyComponent from './StickyComponent';
-import ShapeComponent from './ShapeComponent';
-import TextComponent from './TextComponent';
-import ImageComponent from './ImageComponent';
-import ConnectorRenderer from './ConnectorRenderer';
-import LiveCursors from './LiveCursors';
-import { ChevronLeft, Share2, Copy, Check, Users, Sparkles, Keyboard, HelpCircle, X, Undo, Redo, Trash2, Lock, Unlock, Brain, Loader2, Wand2, Plus, PenTool, Key, Eye, EyeOff } from 'lucide-react';
-import Markdown from 'react-markdown';
-import { secureEncrypt, secureDecrypt } from '../utils/crypto';
+  Whiteboard,
+} from "../types";
+import Toolbar, { Tool } from "./Toolbar";
+import StickyComponent from "./StickyComponent";
+import ShapeComponent from "./ShapeComponent";
+import TextComponent from "./TextComponent";
+import ImageComponent from "./ImageComponent";
+import LiveCursors from "./LiveCursors";
+import {
+  ChevronLeft,
+  Share2,
+  Copy,
+  Check,
+  Users,
+  Sparkles,
+  Keyboard,
+  HelpCircle,
+  X,
+  Undo,
+  Redo,
+  Trash2,
+  Lock,
+  Unlock,
+  Brain,
+  Loader2,
+  Wand2,
+  Plus,
+  PenTool,
+  Key,
+  Eye,
+  EyeOff,
+} from "lucide-react";
+import Markdown from "react-markdown";
+import { secureEncrypt, secureDecrypt } from "../utils/crypto";
 
 // Client-side image compression utility to handle high volumes of pasted images safely
 // within Firestore documents without needing Firebase Storage.
@@ -41,12 +62,12 @@ const compressImage = (file: File): Promise<string | null> => {
     reader.onload = (event) => {
       const img = new Image();
       img.onload = () => {
-        const canvas = document.createElement('canvas');
+        const canvas = document.createElement("canvas");
         let width = img.width;
         let height = img.height;
 
         // Downscale to max 800px on any dimension to minimize storage footprint
-        const MAX_DIM = 800; 
+        const MAX_DIM = 800;
         if (width > MAX_DIM || height > MAX_DIM) {
           if (width > height) {
             height = Math.round((height * MAX_DIM) / width);
@@ -60,7 +81,7 @@ const compressImage = (file: File): Promise<string | null> => {
         canvas.width = width;
         canvas.height = height;
 
-        const ctx = canvas.getContext('2d');
+        const ctx = canvas.getContext("2d");
         if (!ctx) {
           resolve(null);
           return;
@@ -68,7 +89,7 @@ const compressImage = (file: File): Promise<string | null> => {
 
         ctx.drawImage(img, 0, 0, width, height);
         // Output as highly-compressed JPEG (typically reduces size to 15KB - 40KB)
-        const compressedBase64 = canvas.toDataURL('image/jpeg', 0.65);
+        const compressedBase64 = canvas.toDataURL("image/jpeg", 0.65);
         resolve(compressedBase64);
       };
       img.onerror = () => resolve(null);
@@ -90,7 +111,7 @@ export default function WhiteboardCanvas({
   boardId,
   boardName,
   currentUser,
-  onBackToDashboard
+  onBackToDashboard,
 }: WhiteboardCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -106,11 +127,11 @@ export default function WhiteboardCanvas({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [dragSelectStart, setDragSelectStart] = useState<Point | null>(null);
   const [dragSelectEnd, setDragSelectEnd] = useState<Point | null>(null);
-  const [elementStartPositions, setElementStartPositions] = useState<Record<string, { x: number; y: number }>>({});
+  const [elementStartPositions, setElementStartPositions] = useState<Record<string, any>>({});
 
   // Undo History state
   interface UndoAction {
-    type: 'add' | 'delete' | 'update';
+    type: "add" | "delete" | "update";
     elementId: string;
     beforeData?: any;
     afterData?: any;
@@ -124,11 +145,11 @@ export default function WhiteboardCanvas({
   };
 
   // Active Tool state
-  const [activeTool, setActiveTool] = useState<Tool>('select');
-  const [activeColor, setActiveColor] = useState('#fef08a'); // default yellow sticky color
-  const [activeShape, setActiveShape] = useState<ShapeType>('rect');
+  const [activeTool, setActiveTool] = useState<Tool>("select");
+  const [activeColor, setActiveColor] = useState("#fef08a"); // default yellow sticky color
+  const [activeShape, setActiveShape] = useState<ShapeType>("rect");
   const [strokeWidth, setStrokeWidth] = useState(4);
-  const [gridMode, setGridMode] = useState<'dots' | 'math' | 'none'>('dots');
+  const [gridMode, setGridMode] = useState<"dots" | "math" | "none">("dots");
 
   // Interaction State flags
   const [isPanning, setIsPanning] = useState(false);
@@ -136,12 +157,15 @@ export default function WhiteboardCanvas({
   const [isResizing, setIsResizing] = useState(false);
   const [dragStart, setDragStart] = useState<Point>({ x: 0, y: 0 });
   const [elementStartPos, setElementStartPos] = useState<Point>({ x: 0, y: 0 });
-  const [elementStartSize, setElementStartSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  const [elementStartSize, setElementStartSize] = useState<{
+    w: number;
+    h: number;
+  }>({ w: 0, h: 0 });
 
   // Permission states for Teacher/Student lock controls
   const [showReadOnlyAlert, setShowReadOnlyAlert] = useState(false);
   const alertTimeoutRef = useRef<any>(null);
-  const isTeacher = currentUser.role === 'teacher';
+  const isTeacher = currentUser.role === "teacher";
   const studentsCanWrite = boardData?.studentsCanWrite !== false;
   const canWrite = isTeacher || studentsCanWrite;
 
@@ -155,13 +179,10 @@ export default function WhiteboardCanvas({
 
   // In-progress local drawings (drawn locally on canvas for zero-latency feedback)
   const [localDrawingPoints, setLocalDrawingPoints] = useState<Point[]>([]);
-  
+
   // Drawing state tracking via refs to bypass React state-update asynchronous latency/closures
   const isDrawingRef = useRef(false);
   const drawingPointsRef = useRef<Point[]>([]);
-  
-  // Dynamic temporary connector line state
-  const [tempConnector, setTempConnector] = useState<{ startX: number; startY: number; fromId?: string; currentX: number; currentY: number } | null>(null);
 
   // Clear confirmation modal state
   const [showClearConfirm, setShowClearConfirm] = useState(false);
@@ -173,10 +194,10 @@ export default function WhiteboardCanvas({
   // AI Classroom Assistant States
   const [isAiPanelOpen, setIsAiPanelOpen] = useState(false);
   const [autoCorrectHandwriting, setAutoCorrectHandwriting] = useState(true);
-  const [aiProblemInput, setAiProblemInput] = useState('');
+  const [aiProblemInput, setAiProblemInput] = useState("");
   const [isAiLoading, setIsAiLoading] = useState(false);
-  const [aiResponseText, setAiResponseText] = useState('');
-  const [aiResponseTitle, setAiResponseTitle] = useState('');
+  const [aiResponseText, setAiResponseText] = useState("");
+  const [aiResponseTitle, setAiResponseTitle] = useState("");
   const [userApiKey, setUserApiKey] = useState<string>(() => {
     const raw = localStorage.getItem("user_gemini_api_key") || "";
     return secureDecrypt(raw, currentUser?.id);
@@ -195,7 +216,7 @@ export default function WhiteboardCanvas({
 
   // Fetch board elements in real time
   useEffect(() => {
-    const elementsRef = collection(db, 'whiteboards', boardId, 'elements');
+    const elementsRef = collection(db, "whiteboards", boardId, "elements");
     const q = query(elementsRef);
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -215,12 +236,12 @@ export default function WhiteboardCanvas({
 
   // Fetch board metadata in real time
   useEffect(() => {
-    const boardRef = doc(db, 'whiteboards', boardId);
+    const boardRef = doc(db, "whiteboards", boardId);
     const unsubscribe = onSnapshot(boardRef, (snapshot) => {
       if (snapshot.exists()) {
         setBoardData({
           id: snapshot.id,
-          ...snapshot.data()
+          ...snapshot.data(),
         } as Whiteboard);
       }
     });
@@ -250,14 +271,24 @@ export default function WhiteboardCanvas({
     const canvasX = (mouseX - panX) / zoom;
     const canvasY = (mouseY - panY) / zoom;
 
-    const cursorRef = doc(db, 'whiteboards', boardId, 'cursors', currentUser.id);
-    setDoc(cursorRef, {
-      name: currentUser.name,
-      color: currentUser.color,
-      x: canvasX,
-      y: canvasY,
-      lastActive: now,
-    }, { merge: true }).catch((err) => console.error('Cursor sync error:', err));
+    const cursorRef = doc(
+      db,
+      "whiteboards",
+      boardId,
+      "cursors",
+      currentUser.id,
+    );
+    setDoc(
+      cursorRef,
+      {
+        name: currentUser.name,
+        color: currentUser.color,
+        x: canvasX,
+        y: canvasY,
+        lastActive: now,
+      },
+      { merge: true },
+    ).catch((err) => console.error("Cursor sync error:", err));
   };
 
   // Convert screen coordinates into absolute canvas coordinates
@@ -274,8 +305,8 @@ export default function WhiteboardCanvas({
     const handleResizeStart = (e: Event) => {
       const customEvent = e as CustomEvent;
       const { elementId, originalEvent } = customEvent.detail;
-      const targetElement = elements.find(el => el.id === elementId);
-      if (!targetElement || targetElement.type === 'drawing' || targetElement.type === 'connector') return;
+      const targetElement = elements.find((el) => el.id === elementId);
+      if (!targetElement || targetElement.type === "drawing") return;
 
       setSelectedId(elementId);
       setIsResizing(true);
@@ -284,21 +315,26 @@ export default function WhiteboardCanvas({
       setElementStartPos({ x: targetElement.x, y: targetElement.y });
     };
 
-    window.addEventListener('init-resize', handleResizeStart);
-    return () => window.removeEventListener('init-resize', handleResizeStart);
+    window.addEventListener("init-resize", handleResizeStart);
+    return () => window.removeEventListener("init-resize", handleResizeStart);
   }, [elements]);
 
   // Handle Paste events for Images!
   useEffect(() => {
     const handlePaste = async (e: ClipboardEvent) => {
-      if (document.activeElement?.tagName === 'TEXTAREA' || document.activeElement?.tagName === 'INPUT') {
+      if (
+        document.activeElement?.tagName === "TEXTAREA" ||
+        document.activeElement?.tagName === "INPUT"
+      ) {
         return; // ignore if user is typing in a sticky note or text input
       }
 
       const items = e.clipboardData?.items;
       if (!items) return;
 
-      const hasImage = Array.from(items).some(item => item.type.indexOf('image') !== -1);
+      const hasImage = Array.from(items).some(
+        (item) => item.type.indexOf("image") !== -1,
+      );
       if (hasImage && !canWrite) {
         e.preventDefault();
         triggerReadOnlyAlert();
@@ -307,7 +343,7 @@ export default function WhiteboardCanvas({
 
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
-        if (item.type.indexOf('image') !== -1) {
+        if (item.type.indexOf("image") !== -1) {
           const file = item.getAsFile();
           if (!file) continue;
 
@@ -328,7 +364,7 @@ export default function WhiteboardCanvas({
             y = (centerY - panY) / zoom;
           }
 
-          const id = 'img-' + Date.now() + Math.floor(Math.random() * 100);
+          const id = "img-" + Date.now() + Math.floor(Math.random() * 100);
 
           // Get dimensions dynamically to keep correct ratio and size
           const img = new Image();
@@ -344,7 +380,7 @@ export default function WhiteboardCanvas({
 
             const newImageElement: ImageElement = {
               id,
-              type: 'image',
+              type: "image",
               x: Math.round(x - w / 2),
               y: Math.round(y - h / 2),
               width: w,
@@ -353,19 +389,26 @@ export default function WhiteboardCanvas({
               zIndex: elements.length + 1,
             };
 
-            setDoc(doc(db, 'whiteboards', boardId, 'elements', id), newImageElement)
+            setDoc(
+              doc(db, "whiteboards", boardId, "elements", id),
+              newImageElement,
+            )
               .then(() => {
-                pushToUndo({ type: 'add', elementId: id, afterData: newImageElement });
+                pushToUndo({
+                  type: "add",
+                  elementId: id,
+                  afterData: newImageElement,
+                });
               })
-              .catch((err) => console.error('Error saving pasted image:', err));
+              .catch((err) => console.error("Error saving pasted image:", err));
           };
           img.src = base64Str;
         }
       }
     };
 
-    window.addEventListener('paste', handlePaste);
-    return () => window.removeEventListener('paste', handlePaste);
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
   }, [boardId, elements.length, panX, panY, zoom, canWrite]);
 
   // Handle Board Canvas Mouse Events
@@ -373,7 +416,12 @@ export default function WhiteboardCanvas({
     // Only primary clicks trigger actions
     if (e.button !== 0) return;
 
-    if (!canWrite && activeTool !== 'select' && activeTool !== 'pan' && !e.shiftKey) {
+    if (
+      !canWrite &&
+      activeTool !== "select" &&
+      activeTool !== "pan" &&
+      !e.shiftKey
+    ) {
       triggerReadOnlyAlert();
       return;
     }
@@ -381,160 +429,144 @@ export default function WhiteboardCanvas({
     const coords = screenToCanvasCoords(e.clientX, e.clientY);
 
     // 1. Hand tool / Pan Canvas mode
-    if ((activeTool === 'pan' || e.shiftKey) && activeTool !== 'pencil' && activeTool !== 'highlighter') {
+    if (
+      (activeTool === "pan" || e.shiftKey) &&
+      activeTool !== "pencil" &&
+      activeTool !== "highlighter"
+    ) {
       setIsPanning(true);
       setDragStart({ x: e.clientX, y: e.clientY });
       return;
     }
 
     // 2. Pencil / Highlighter drawing tool
-    if (activeTool === 'pencil' || activeTool === 'highlighter') {
+    if (activeTool === "pencil" || activeTool === "highlighter") {
       isDrawingRef.current = true;
       drawingPointsRef.current = [coords];
       setLocalDrawingPoints([coords]);
       return;
     }
 
-    // 3. Connectors placement
-    if (activeTool === 'connector') {
-      // Find if clicking near an existing element
-      const clickedEl = elements.find(el => {
-        if (el.type === 'drawing' || el.type === 'connector') return false;
-        const boundedEl = el as any;
-        return (
-          coords.x >= boundedEl.x &&
-          coords.x <= boundedEl.x + boundedEl.width &&
-          coords.y >= boundedEl.y &&
-          coords.y <= boundedEl.y + boundedEl.height
-        );
-      });
-
-      const startX = clickedEl ? ((clickedEl as any).x + (clickedEl as any).width / 2) : coords.x;
-      const startY = clickedEl ? ((clickedEl as any).y + (clickedEl as any).height / 2) : coords.y;
-
-      setTempConnector({
-        startX,
-        startY,
-        fromId: clickedEl?.id,
-        currentX: coords.x,
-        currentY: coords.y
-      });
-      return;
-    }
-
     // 4. Click to spawn Stickies, Shapes, and Text instantly
-    if (activeTool === 'sticky') {
-      const id = 'sticky-' + Date.now() + Math.floor(Math.random() * 100);
+    if (activeTool === "sticky") {
+      const id = "sticky-" + Date.now() + Math.floor(Math.random() * 100);
       const newSticky: StickyElement = {
         id,
-        type: 'sticky',
+        type: "sticky",
         x: coords.x - 75, // center horizontally on tap
         y: coords.y - 75,
         width: 150,
         height: 150,
-        text: '',
+        text: "",
         color: activeColor,
         zIndex: elements.length + 1,
         reactions: {},
       };
-      setDoc(doc(db, 'whiteboards', boardId, 'elements', id), newSticky);
-      pushToUndo({ type: 'add', elementId: id, afterData: newSticky });
-      setActiveTool('select');
+      setDoc(doc(db, "whiteboards", boardId, "elements", id), newSticky);
+      pushToUndo({ type: "add", elementId: id, afterData: newSticky });
+      setActiveTool("select");
       setSelectedId(id);
       return;
     }
 
-    if (activeTool === 'cartesian' || activeTool === 'numberline' || activeTool === 'advanced-cartesian') {
-      const id = 'shape-' + Date.now() + Math.floor(Math.random() * 100);
-      
+    if (
+      activeTool === "cartesian" ||
+      activeTool === "numberline" ||
+      activeTool === "advanced-cartesian"
+    ) {
+      const id = "shape-" + Date.now() + Math.floor(Math.random() * 100);
+
       let width = 300;
       let height = 300;
-      if (activeTool === 'numberline') {
+      if (activeTool === "numberline") {
         width = 420;
         height = 80;
-      } else if (activeTool === 'advanced-cartesian') {
+      } else if (activeTool === "advanced-cartesian") {
         width = 400;
         height = 400;
       }
 
       const newShape: ShapeElement = {
         id,
-        type: 'shape',
+        type: "shape",
         shapeType: activeTool,
         x: coords.x - width / 2,
         y: coords.y - height / 2,
         width,
         height,
-        text: '',
-        color: '#ffffff',
+        text: "",
+        color: "#ffffff",
         borderColor: activeColor, // Axis/line color starts with activeColor
         zIndex: elements.length + 1,
         reactions: {},
         // Advanced cartesian properties
-        ...(activeTool === 'advanced-cartesian' ? {
-          equation: 'y = x^2 - 3',
-          plottedPoints: '(-2,1), (0,-3), (2,1)',
-          cartesianRange: 5
-        } : {})
+        ...(activeTool === "advanced-cartesian"
+          ? {
+              equation: "",
+              equations: [],
+              plottedPoints: "",
+              cartesianRange: 5,
+            }
+          : {}),
       };
-      setDoc(doc(db, 'whiteboards', boardId, 'elements', id), newShape);
-      pushToUndo({ type: 'add', elementId: id, afterData: newShape });
-      setActiveTool('select');
+      setDoc(doc(db, "whiteboards", boardId, "elements", id), newShape);
+      pushToUndo({ type: "add", elementId: id, afterData: newShape });
+      setActiveTool("select");
       setSelectedId(id);
       return;
     }
 
-    if (activeTool === 'shape') {
-      const id = 'shape-' + Date.now() + Math.floor(Math.random() * 100);
-      
+    if (activeTool === "shape") {
+      const id = "shape-" + Date.now() + Math.floor(Math.random() * 100);
+
       const width = 150;
       const height = 150;
 
       const newShape: ShapeElement = {
         id,
-        type: 'shape',
+        type: "shape",
         shapeType: activeShape,
         x: coords.x - width / 2,
         y: coords.y - height / 2,
         width,
         height,
-        text: '',
+        text: "",
         color: activeColor,
-        borderColor: '#1e293b', // deep charcoal border
+        borderColor: "#1e293b", // deep charcoal border
         zIndex: elements.length + 1,
         reactions: {},
       };
-      setDoc(doc(db, 'whiteboards', boardId, 'elements', id), newShape);
-      pushToUndo({ type: 'add', elementId: id, afterData: newShape });
-      setActiveTool('select');
+      setDoc(doc(db, "whiteboards", boardId, "elements", id), newShape);
+      pushToUndo({ type: "add", elementId: id, afterData: newShape });
+      setActiveTool("select");
       setSelectedId(id);
       return;
     }
 
-    if (activeTool === 'text') {
-      const id = 'text-' + Date.now() + Math.floor(Math.random() * 100);
+    if (activeTool === "text") {
+      const id = "text-" + Date.now() + Math.floor(Math.random() * 100);
       const newText: TextElement = {
         id,
-        type: 'text',
+        type: "text",
         x: coords.x - 100,
         y: coords.y - 25,
         width: 200,
         height: 50,
-        text: '',
-        color: activeColor === '#4b5563' ? '#4b5563' : '#1e293b',
+        text: "",
+        color: activeColor === "#4b5563" ? "#4b5563" : "#1e293b",
         fontSize: 18,
         zIndex: elements.length + 1,
         reactions: {},
       };
-      setDoc(doc(db, 'whiteboards', boardId, 'elements', id), newText);
-      pushToUndo({ type: 'add', elementId: id, afterData: newText });
-      setActiveTool('select');
+      setDoc(doc(db, "whiteboards", boardId, "elements", id), newText);
+      pushToUndo({ type: "add", elementId: id, afterData: newText });
+      setActiveTool("select");
       setSelectedId(id);
       return;
     }
 
     // 5. Default selection click
-    if (activeTool === 'select') {
+    if (activeTool === "select") {
       // Clear selection if clicking on the empty background
       setSelectedId(null);
       setSelectedIds([]);
@@ -567,28 +599,28 @@ export default function WhiteboardCanvas({
       const maxY = Math.max(dragSelectStart.y, coords.y);
 
       // Select elements inside bounds
-      const newlySelected = elements.filter((el) => {
-        if (el.type === 'drawing') {
-          // Select drawing if any of its points lie inside selection box
-          return el.points.some(pt => pt.x >= minX && pt.x <= maxX && pt.y >= minY && pt.y <= maxY);
-        } else if (el.type === 'connector') {
-          const conn = el as ConnectorElement;
-          const startX = conn.fromX ?? 0;
-          const startY = conn.fromY ?? 0;
-          const endX = conn.toX ?? 0;
-          const endY = conn.toY ?? 0;
-          return (
-            (startX >= minX && startX <= maxX && startY >= minY && startY <= maxY) ||
-            (endX >= minX && endX <= maxX && endY >= minY && endY <= maxY)
-          );
-        } else {
-          // Normal bounding box elements (sticky notes, shapes, texts, images)
-          const bounded = el as any;
-          const elWidth = bounded.width || 150;
-          const elHeight = bounded.height || 150;
-          return bounded.x < maxX && bounded.x + elWidth > minX && bounded.y < maxY && bounded.y + elHeight > minY;
-        }
-      }).map(el => el.id);
+      const newlySelected = elements
+        .filter((el) => {
+          if (el.type === "drawing") {
+            // Select drawing if any of its points lie inside selection box
+            return el.points.some(
+              (pt) =>
+                pt.x >= minX && pt.x <= maxX && pt.y >= minY && pt.y <= maxY,
+            );
+          } else {
+            // Normal bounding box elements (sticky notes, shapes, texts, images)
+            const bounded = el as any;
+            const elWidth = bounded.width || 150;
+            const elHeight = bounded.height || 150;
+            return (
+              bounded.x < maxX &&
+              bounded.x + elWidth > minX &&
+              bounded.y < maxY &&
+              bounded.y + elHeight > minY
+            );
+          }
+        })
+        .map((el) => el.id);
 
       setSelectedIds(newlySelected);
       setSelectedId(newlySelected[0] || null);
@@ -596,7 +628,10 @@ export default function WhiteboardCanvas({
     }
 
     // 2. Drawing freehand locally
-    if (isDrawingRef.current && (activeTool === 'pencil' || activeTool === 'highlighter')) {
+    if (
+      isDrawingRef.current &&
+      (activeTool === "pencil" || activeTool === "highlighter")
+    ) {
       const coords = screenToCanvasCoords(e.clientX, e.clientY);
       let updated: Point[];
 
@@ -613,33 +648,36 @@ export default function WhiteboardCanvas({
       return;
     }
 
-    // 3. Drawing temporary connector line
-    if (tempConnector) {
-      const coords = screenToCanvasCoords(e.clientX, e.clientY);
-      setTempConnector((prev) => prev ? { ...prev, currentX: coords.x, currentY: coords.y } : null);
-      return;
-    }
-
     // 4. Moving selected elements
     if (isDragging && selectedIds.length > 0) {
       const dx = (e.clientX - dragStart.x) / zoom;
       const dy = (e.clientY - dragStart.y) / zoom;
 
       // Update locally first for instantaneous rendering smoothness
-      setElements((prev) => 
+      setElements((prev) =>
         prev.map((el) => {
-          if (selectedIds.includes(el.id) && el.type !== 'drawing' && el.type !== 'connector') {
+          if (selectedIds.includes(el.id)) {
             const startPos = elementStartPositions[el.id];
             if (startPos) {
-              return {
-                ...el,
-                x: startPos.x + dx,
-                y: startPos.y + dy,
-              };
+              if (el.type !== "drawing") {
+                return {
+                  ...el,
+                  x: startPos.x + dx,
+                  y: startPos.y + dy,
+                };
+              } else {
+                return {
+                  ...el,
+                  points: startPos.points.map((p: any) => ({
+                    x: p.x + dx,
+                    y: p.y + dy,
+                  })),
+                };
+              }
             }
           }
           return el;
-        })
+        }),
       );
       return;
     }
@@ -651,8 +689,8 @@ export default function WhiteboardCanvas({
 
       setElements((prev) =>
         prev.map((el) => {
-          if (el.id === selectedId && el.type !== 'drawing' && el.type !== 'connector') {
-            if (el.type === 'image') {
+          if (el.id === selectedId && el.type !== "drawing") {
+            if (el.type === "image") {
               const startW = elementStartSize.w;
               const startH = elementStartSize.h;
               const ratio = startW > 0 ? startH / startW : 1;
@@ -671,7 +709,7 @@ export default function WhiteboardCanvas({
             };
           }
           return el;
-        })
+        }),
       );
       return;
     }
@@ -692,15 +730,15 @@ export default function WhiteboardCanvas({
     }
 
     // 2. Finish local drawing and save stroke as a single document to Firebase
-    if (activeTool === 'pencil' || activeTool === 'highlighter') {
+    if (activeTool === "pencil" || activeTool === "highlighter") {
       isDrawingRef.current = false;
       const points = drawingPointsRef.current;
       if (points.length > 1) {
-        const id = 'draw-' + Date.now() + Math.floor(Math.random() * 100);
-        const isHighlighter = activeTool === 'highlighter';
+        const id = "draw-" + Date.now() + Math.floor(Math.random() * 100);
+        const isHighlighter = activeTool === "highlighter";
         const newStroke: DrawingElement = {
           id,
-          type: 'drawing',
+          type: "drawing",
           points,
           color: isHighlighter ? `${activeColor}80` : activeColor, // add alpha opacity for highlighter
           width: isHighlighter ? strokeWidth * 2.5 : strokeWidth,
@@ -709,14 +747,17 @@ export default function WhiteboardCanvas({
         };
 
         try {
-          await setDoc(doc(db, 'whiteboards', boardId, 'elements', id), newStroke);
-          pushToUndo({ type: 'add', elementId: id, afterData: newStroke });
-          
+          await setDoc(
+            doc(db, "whiteboards", boardId, "elements", id),
+            newStroke,
+          );
+          pushToUndo({ type: "add", elementId: id, afterData: newStroke });
+
           if (autoCorrectHandwriting && !isHighlighter) {
             triggerAiBeautification(newStroke);
           }
         } catch (err) {
-          console.error('Error saving sketch to Firebase:', err);
+          console.error("Error saving sketch to Firebase:", err);
         }
       }
       drawingPointsRef.current = [];
@@ -724,99 +765,80 @@ export default function WhiteboardCanvas({
       return;
     }
 
-    // 3. Connectors creation on mouse up
-    if (tempConnector && activeTool === 'connector') {
-      const coords = screenToCanvasCoords(e.clientX, e.clientY);
-      
-      // Calculate distance dragged
-      const dx = coords.x - tempConnector.startX;
-      const dy = coords.y - tempConnector.startY;
-      const distance = Math.sqrt(dx * dx + dy * dy);
-
-      // Only create if we dragged some distance (at least 15px) to avoid accidental clicks
-      if (distance >= 15) {
-        // Find if released near a target shape
-        const targetEl = elements.find(el => {
-          if (el.type === 'drawing' || el.type === 'connector') return false;
-          return (
-            coords.x >= el.x &&
-            coords.x <= el.x + el.width &&
-            coords.y >= el.y &&
-            coords.y <= el.y + el.height
-          );
-        });
-
-        // Avoid connecting a shape to itself
-        const toId = (targetEl && targetEl.id !== tempConnector.fromId) ? targetEl.id : undefined;
-
-        const id = 'connector-' + Date.now() + Math.floor(Math.random() * 100);
-        const newConnector: any = {
-          id,
-          type: 'connector',
-          fromX: tempConnector.startX,
-          fromY: tempConnector.startY,
-          toX: coords.x,
-          toY: coords.y,
-          color: activeColor === '#fef08a' ? '#f97316' : activeColor, // standard connectors color
-          zIndex: elements.length + 1
-        };
-
-        if (tempConnector.fromId !== undefined) {
-          newConnector.fromId = tempConnector.fromId;
-        }
-        if (toId !== undefined) {
-          newConnector.toId = toId;
-        }
-
-        try {
-          await setDoc(doc(db, 'whiteboards', boardId, 'elements', id), newConnector);
-          pushToUndo({ type: 'add', elementId: id, afterData: newConnector });
-        } catch (err) {
-          console.error('Error saving connection line:', err);
-        }
-      }
-
-      setTempConnector(null);
-      setActiveTool('select');
-      return;
-    }
-
     // 4. Update elements coordinates in Firestore on move end
     if (isDragging && selectedIds.length > 0) {
       setIsDragging(false);
-      
-      const movedElements = elements.filter(el => selectedIds.includes(el.id) && el.type !== 'drawing' && el.type !== 'connector');
-      
-      await Promise.all(movedElements.map(async (el) => {
-        const startPos = elementStartPositions[el.id];
-        const boundedEl = el as any;
-        if (startPos) {
-          const hasMoved = boundedEl.x !== startPos.x || boundedEl.y !== startPos.y;
-          if (hasMoved) {
-            pushToUndo({
-              type: 'update',
-              elementId: el.id,
-              beforeData: {
-                x: startPos.x,
-                y: startPos.y,
-              },
-              afterData: {
-                x: boundedEl.x,
-                y: boundedEl.y,
-              },
-            });
 
-            try {
-              await setDoc(doc(db, 'whiteboards', boardId, 'elements', el.id), {
-                x: boundedEl.x,
-                y: boundedEl.y,
-              }, { merge: true });
-            } catch (err) {
-              console.error('Error updating moved element coordinates:', err);
+      const movedElements = elements.filter(
+        (el) => selectedIds.includes(el.id),
+      );
+
+      await Promise.all(
+        movedElements.map(async (el) => {
+          const startPos = elementStartPositions[el.id];
+          if (startPos) {
+            if (el.type !== "drawing") {
+              const boundedEl = el as any;
+              const hasMoved =
+                boundedEl.x !== startPos.x || boundedEl.y !== startPos.y;
+              if (hasMoved) {
+                pushToUndo({
+                  type: "update",
+                  elementId: el.id,
+                  beforeData: {
+                    x: startPos.x,
+                    y: startPos.y,
+                  },
+                  afterData: {
+                    x: boundedEl.x,
+                    y: boundedEl.y,
+                  },
+                });
+                try {
+                  await setDoc(
+                    doc(db, "whiteboards", boardId, "elements", el.id),
+                    {
+                      x: boundedEl.x,
+                      y: boundedEl.y,
+                    },
+                    { merge: true },
+                  );
+                } catch (err) {
+                  console.error("Error updating moved element coordinates:", err);
+                }
+              }
+            } else {
+              const drawingEl = el as any;
+              const hasMoved =
+                drawingEl.points.length > 0 &&
+                drawingEl.points[0].x !== startPos.points[0].x;
+              if (hasMoved) {
+                pushToUndo({
+                  type: "update",
+                  elementId: el.id,
+                  beforeData: {
+                    points: startPos.points,
+                  },
+                  afterData: {
+                    points: drawingEl.points,
+                  },
+                });
+                try {
+                  await setDoc(
+                    doc(db, "whiteboards", boardId, "elements", el.id),
+                    {
+                      points: drawingEl.points,
+                    },
+                    { merge: true },
+                  );
+                } catch (err) {
+                  console.error("Error updating moved drawing coordinates:", err);
+                }
+              }
             }
           }
-        }
-      }));
+        }),
+      );
       return;
     }
 
@@ -824,11 +846,12 @@ export default function WhiteboardCanvas({
     if (isResizing && selectedId) {
       setIsResizing(false);
       const el = elements.find((e) => e.id === selectedId);
-      if (el && el.type !== 'drawing' && el.type !== 'connector') {
-        const hasResized = el.width !== elementStartSize.w || el.height !== elementStartSize.h;
+      if (el && el.type !== "drawing") {
+        const hasResized =
+          el.width !== elementStartSize.w || el.height !== elementStartSize.h;
         if (hasResized) {
           pushToUndo({
-            type: 'update',
+            type: "update",
             elementId: selectedId,
             beforeData: {
               width: elementStartSize.w,
@@ -841,12 +864,16 @@ export default function WhiteboardCanvas({
           });
         }
         try {
-          await setDoc(doc(db, 'whiteboards', boardId, 'elements', selectedId), {
-            width: el.width,
-            height: el.height,
-          }, { merge: true });
+          await setDoc(
+            doc(db, "whiteboards", boardId, "elements", selectedId),
+            {
+              width: el.width,
+              height: el.height,
+            },
+            { merge: true },
+          );
         } catch (err) {
-          console.error('Error updating resized element:', err);
+          console.error("Error updating resized element:", err);
         }
       }
       return;
@@ -857,14 +884,14 @@ export default function WhiteboardCanvas({
   const handleDeleteElement = (id: string) => {
     const target = elements.find((el) => el.id === id);
     if (target) {
-      pushToUndo({ type: 'delete', elementId: id, beforeData: target });
+      pushToUndo({ type: "delete", elementId: id, beforeData: target });
     }
 
-    deleteDoc(doc(db, 'whiteboards', boardId, 'elements', id))
+    deleteDoc(doc(db, "whiteboards", boardId, "elements", id))
       .then(() => {
         if (selectedId === id) setSelectedId(null);
       })
-      .catch((err) => console.error('Error deleting element:', err));
+      .catch((err) => console.error("Error deleting element:", err));
   };
 
   // Undo the last action from the local stack
@@ -876,22 +903,31 @@ export default function WhiteboardCanvas({
     setRedoStack((prev) => [...prev, action]);
 
     try {
-      if (action.type === 'add') {
-        await deleteDoc(doc(db, 'whiteboards', boardId, 'elements', action.elementId));
+      if (action.type === "add") {
+        await deleteDoc(
+          doc(db, "whiteboards", boardId, "elements", action.elementId),
+        );
         if (selectedId === action.elementId) {
           setSelectedId(null);
         }
-      } else if (action.type === 'delete') {
+      } else if (action.type === "delete") {
         if (action.beforeData) {
-          await setDoc(doc(db, 'whiteboards', boardId, 'elements', action.elementId), action.beforeData);
+          await setDoc(
+            doc(db, "whiteboards", boardId, "elements", action.elementId),
+            action.beforeData,
+          );
         }
-      } else if (action.type === 'update') {
+      } else if (action.type === "update") {
         if (action.beforeData) {
-          await setDoc(doc(db, 'whiteboards', boardId, 'elements', action.elementId), action.beforeData, { merge: true });
+          await setDoc(
+            doc(db, "whiteboards", boardId, "elements", action.elementId),
+            action.beforeData,
+            { merge: true },
+          );
         }
       }
     } catch (err) {
-      console.error('Error executing undo:', err);
+      console.error("Error executing undo:", err);
     }
   };
 
@@ -904,34 +940,46 @@ export default function WhiteboardCanvas({
     setUndoStack((prev) => [...prev, action]);
 
     try {
-      if (action.type === 'add') {
+      if (action.type === "add") {
         if (action.afterData) {
-          await setDoc(doc(db, 'whiteboards', boardId, 'elements', action.elementId), action.afterData);
+          await setDoc(
+            doc(db, "whiteboards", boardId, "elements", action.elementId),
+            action.afterData,
+          );
         }
-      } else if (action.type === 'delete') {
-        await deleteDoc(doc(db, 'whiteboards', boardId, 'elements', action.elementId));
+      } else if (action.type === "delete") {
+        await deleteDoc(
+          doc(db, "whiteboards", boardId, "elements", action.elementId),
+        );
         if (selectedId === action.elementId) {
           setSelectedId(null);
         }
-      } else if (action.type === 'update') {
+      } else if (action.type === "update") {
         if (action.afterData) {
-          await setDoc(doc(db, 'whiteboards', boardId, 'elements', action.elementId), action.afterData, { merge: true });
+          await setDoc(
+            doc(db, "whiteboards", boardId, "elements", action.elementId),
+            action.afterData,
+            { merge: true },
+          );
         }
       }
     } catch (err) {
-      console.error('Error executing redo:', err);
+      console.error("Error executing redo:", err);
     }
   };
 
   // Keyboard shortcut listeners (standard whiteboards experience!)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (document.activeElement?.tagName === 'TEXTAREA' || document.activeElement?.tagName === 'INPUT') {
+      if (
+        document.activeElement?.tagName === "TEXTAREA" ||
+        document.activeElement?.tagName === "INPUT"
+      ) {
         return; // ignore when typing
       }
 
       const key = e.key.toLowerCase();
-      if ((e.ctrlKey || e.metaKey) && key === 'z') {
+      if ((e.ctrlKey || e.metaKey) && key === "z") {
         e.preventDefault();
         if (!canWrite) {
           triggerReadOnlyAlert();
@@ -945,7 +993,7 @@ export default function WhiteboardCanvas({
         return;
       }
 
-      if ((e.ctrlKey || e.metaKey) && key === 'y') {
+      if ((e.ctrlKey || e.metaKey) && key === "y") {
         e.preventDefault();
         if (!canWrite) {
           triggerReadOnlyAlert();
@@ -955,21 +1003,20 @@ export default function WhiteboardCanvas({
         return;
       }
 
-      if (key === 'v') setActiveTool('select');
-      else if (key === 'h') setActiveTool('pan');
-      else if (['p', 'n', 's', 't', 'l', 'e', 'g'].includes(key)) {
+      if (key === "v") setActiveTool("select");
+      else if (key === "h") setActiveTool("pan");
+      else if (["p", "n", "s", "t", "l", "e", "g"].includes(key)) {
         if (!canWrite) {
           triggerReadOnlyAlert();
           return;
         }
-        if (key === 'p') setActiveTool('pencil');
-        else if (key === 'n') setActiveTool('sticky');
-        else if (key === 's') setActiveTool('shape');
-        else if (key === 'g') setActiveTool('cartesian');
-        else if (key === 't') setActiveTool('text');
-        else if (key === 'l') setActiveTool('connector');
-        else if (key === 'e') setActiveTool('eraser');
-      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (key === "p") setActiveTool("pencil");
+        else if (key === "n") setActiveTool("sticky");
+        else if (key === "s") setActiveTool("shape");
+        else if (key === "g") setActiveTool("cartesian");
+        else if (key === "t") setActiveTool("text");
+        else if (key === "e") setActiveTool("eraser");
+      } else if (e.key === "Delete" || e.key === "Backspace") {
         if (!canWrite) {
           triggerReadOnlyAlert();
           return;
@@ -985,14 +1032,14 @@ export default function WhiteboardCanvas({
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, [selectedId, selectedIds, handleUndo, handleRedo, canWrite]);
 
   // Click handler to select an element
   const handleSelectElement = (id: string, e: React.MouseEvent) => {
     // Eraser tool clicks delete elements immediately
-    if (activeTool === 'eraser') {
+    if (activeTool === "eraser") {
       e.stopPropagation();
       if (!canWrite) {
         triggerReadOnlyAlert();
@@ -1002,7 +1049,7 @@ export default function WhiteboardCanvas({
       return;
     }
 
-    if (activeTool !== 'select') {
+    if (activeTool !== "select") {
       // Let events bubble up so drawing or other canvas tools function correctly on top of elements!
       return;
     }
@@ -1010,13 +1057,13 @@ export default function WhiteboardCanvas({
     e.stopPropagation();
 
     const target = elements.find((el) => el.id === id);
-    if (!target || target.type === 'drawing') return;
+    if (!target) return;
 
     // Multi-selection with Shift key
     let updatedSelectedIds = [...selectedIds];
     if (e.shiftKey) {
       if (selectedIds.includes(id)) {
-        updatedSelectedIds = selectedIds.filter(selected => selected !== id);
+        updatedSelectedIds = selectedIds.filter((selected) => selected !== id);
       } else {
         updatedSelectedIds.push(id);
       }
@@ -1034,12 +1081,14 @@ export default function WhiteboardCanvas({
       setDragStart({ x: e.clientX, y: e.clientY });
 
       // Store starting position for every element in selection
-      const positions: Record<string, { x: number; y: number }> = {};
+      const positions: Record<string, any> = {};
       elements.forEach((el) => {
         if (updatedSelectedIds.includes(el.id)) {
-          if (el.type !== 'drawing' && el.type !== 'connector') {
+          if (el.type !== "drawing") {
             const boundedEl = el as any;
             positions[el.id] = { x: boundedEl.x, y: boundedEl.y };
+          } else {
+            positions[el.id] = { points: [...el.points] };
           }
         }
       });
@@ -1054,48 +1103,66 @@ export default function WhiteboardCanvas({
       // Create a 'beforeData' object containing only the keys that are being updated
       const beforeData: any = {};
       Object.keys(updates).forEach((key) => {
-        beforeData[key] = (el as any)[key] !== undefined ? (el as any)[key] : null;
+        beforeData[key] =
+          (el as any)[key] !== undefined ? (el as any)[key] : null;
       });
       pushToUndo({
-        type: 'update',
+        type: "update",
         elementId: id,
         beforeData,
         afterData: updates,
       });
     }
 
-    setDoc(doc(db, 'whiteboards', boardId, 'elements', id), updates, { merge: true })
-      .catch((err) => console.error('Error updating element:', err));
+    setDoc(doc(db, "whiteboards", boardId, "elements", id), updates, {
+      merge: true,
+    }).catch((err) => console.error("Error updating element:", err));
   };
 
   // Color change handler that also updates selected element colors
   const handleColorChange = async (color: string) => {
     setActiveColor(color);
-    const activeSelection = selectedIds.length > 0 ? selectedIds : (selectedId ? [selectedId] : []);
+    const activeSelection =
+      selectedIds.length > 0 ? selectedIds : selectedId ? [selectedId] : [];
     if (activeSelection.length > 0) {
-      await Promise.all(activeSelection.map(async (id) => {
-        try {
-          const el = elements.find(e => e.id === id);
-          if (el && el.type === 'shape' && (el.shapeType === 'cartesian' || el.shapeType === 'advanced-cartesian' || el.shapeType === 'numberline' || el.shapeType === 'line')) {
-            await setDoc(doc(db, 'whiteboards', boardId, 'elements', id), { borderColor: color }, { merge: true });
-          } else {
-            await setDoc(doc(db, 'whiteboards', boardId, 'elements', id), { color }, { merge: true });
+      await Promise.all(
+        activeSelection.map(async (id) => {
+          try {
+            const el = elements.find((e) => e.id === id);
+            if (
+              el &&
+              el.type === "shape" &&
+              (el.shapeType === "cartesian" ||
+                el.shapeType === "advanced-cartesian" ||
+                el.shapeType === "numberline" ||
+                el.shapeType === "line")
+            ) {
+              await setDoc(
+                doc(db, "whiteboards", boardId, "elements", id),
+                { borderColor: color },
+                { merge: true },
+              );
+            } else {
+              await setDoc(
+                doc(db, "whiteboards", boardId, "elements", id),
+                { color },
+                { merge: true },
+              );
+            }
+          } catch (err) {
+            console.error("Error updating selected element color:", err);
           }
-        } catch (err) {
-          console.error('Error updating selected element color:', err);
-        }
-      }));
+        }),
+      );
     }
   };
-
-
 
   // Clear all items on the board
   const handleClearBoard = async () => {
     try {
       const batch = writeBatch(db);
       elements.forEach((el) => {
-        const docRef = doc(db, 'whiteboards', boardId, 'elements', el.id);
+        const docRef = doc(db, "whiteboards", boardId, "elements", el.id);
         batch.delete(docRef);
       });
       await batch.commit();
@@ -1104,7 +1171,7 @@ export default function WhiteboardCanvas({
       setUndoStack([]);
       setRedoStack([]);
     } catch (err) {
-      console.error('Error clearing whiteboard:', err);
+      console.error("Error clearing whiteboard:", err);
     }
   };
 
@@ -1112,11 +1179,15 @@ export default function WhiteboardCanvas({
   const handleToggleStudentsCanWrite = async () => {
     if (!isTeacher) return;
     try {
-      await setDoc(doc(db, 'whiteboards', boardId), {
-        studentsCanWrite: !studentsCanWrite
-      }, { merge: true });
+      await setDoc(
+        doc(db, "whiteboards", boardId),
+        {
+          studentsCanWrite: !studentsCanWrite,
+        },
+        { merge: true },
+      );
     } catch (err) {
-      console.error('Error toggling student writing permissions:', err);
+      console.error("Error toggling student writing permissions:", err);
     }
   };
 
@@ -1128,11 +1199,11 @@ export default function WhiteboardCanvas({
     try {
       const res = await fetch("/api/ai/beautify", {
         method: "POST",
-        headers: { 
+        headers: {
           "Content-Type": "application/json",
-          "x-user-api-key": userApiKey
+          "x-user-api-key": userApiKey,
         },
-        body: JSON.stringify({ points: stroke.points })
+        body: JSON.stringify({ points: stroke.points }),
       });
       if (!res.ok) {
         const errData = await res.json();
@@ -1140,50 +1211,56 @@ export default function WhiteboardCanvas({
         return;
       }
       const data = await res.json();
-      
+
       if (data.type === "shape" && data.shapeType) {
         // Delete original stroke
-        await deleteDoc(doc(db, 'whiteboards', boardId, 'elements', stroke.id));
-        
+        await deleteDoc(doc(db, "whiteboards", boardId, "elements", stroke.id));
+
         // Add new shape element
-        const shapeId = 'shape-' + Date.now() + Math.floor(Math.random() * 100);
+        const shapeId = "shape-" + Date.now() + Math.floor(Math.random() * 100);
         const newShape: ShapeElement = {
           id: shapeId,
-          type: 'shape',
+          type: "shape",
           shapeType: data.shapeType as ShapeType,
           x: data.bounds.x,
           y: data.bounds.y,
           width: Math.max(80, data.bounds.width),
           height: Math.max(80, data.bounds.height),
-          text: '',
+          text: "",
           color: activeColor,
-          borderColor: '#1e293b',
+          borderColor: "#1e293b",
           zIndex: elements.length + 10,
-          reactions: {}
+          reactions: {},
         };
-        await setDoc(doc(db, 'whiteboards', boardId, 'elements', shapeId), newShape);
-        pushToUndo({ type: 'add', elementId: shapeId, afterData: newShape });
+        await setDoc(
+          doc(db, "whiteboards", boardId, "elements", shapeId),
+          newShape,
+        );
+        pushToUndo({ type: "add", elementId: shapeId, afterData: newShape });
       } else if (data.type === "text" && data.text) {
         // Delete original stroke
-        await deleteDoc(doc(db, 'whiteboards', boardId, 'elements', stroke.id));
-        
+        await deleteDoc(doc(db, "whiteboards", boardId, "elements", stroke.id));
+
         // Add new text element
-        const textId = 'text-' + Date.now() + Math.floor(Math.random() * 100);
+        const textId = "text-" + Date.now() + Math.floor(Math.random() * 100);
         const newText: TextElement = {
           id: textId,
-          type: 'text',
+          type: "text",
           x: data.bounds.x,
           y: data.bounds.y,
           width: Math.max(120, data.bounds.width + 40),
           height: Math.max(40, data.bounds.height + 20),
           text: data.text,
-          color: '#1e293b',
+          color: "#1e293b",
           fontSize: 18,
           zIndex: elements.length + 10,
-          reactions: {}
+          reactions: {},
         };
-        await setDoc(doc(db, 'whiteboards', boardId, 'elements', textId), newText);
-        pushToUndo({ type: 'add', elementId: textId, afterData: newText });
+        await setDoc(
+          doc(db, "whiteboards", boardId, "elements", textId),
+          newText,
+        );
+        pushToUndo({ type: "add", elementId: textId, afterData: newText });
       }
     } catch (err) {
       console.error("Error beautifying stroke:", err);
@@ -1192,17 +1269,21 @@ export default function WhiteboardCanvas({
 
   const handleBeautifySelection = async () => {
     if (!userApiKey || !userApiKey.trim()) {
-      alert("AI features are exclusive to users with their own API keys. Please enter your Google AI Studio API Key in the AI Assistant settings panel (bottom right icon) to activate this feature.");
+      alert(
+        "AI features are exclusive to users with their own API keys. Please enter your Google AI Studio API Key in the AI Assistant settings panel (bottom right icon) to activate this feature.",
+      );
       setIsAiPanelOpen(true);
       return;
     }
 
     const selectedDrawings = elements.filter(
-      (el) => selectedIds.includes(el.id) && el.type === 'drawing'
+      (el) => selectedIds.includes(el.id) && el.type === "drawing",
     ) as DrawingElement[];
 
     if (selectedDrawings.length === 0) {
-      alert("Please select one or more freehand drawing strokes on the canvas first (using the Select tool).");
+      alert(
+        "Please select one or more freehand drawing strokes on the canvas first (using the Select tool).",
+      );
       return;
     }
 
@@ -1214,11 +1295,11 @@ export default function WhiteboardCanvas({
 
       const res = await fetch("/api/ai/beautify", {
         method: "POST",
-        headers: { 
+        headers: {
           "Content-Type": "application/json",
-          "x-user-api-key": userApiKey
+          "x-user-api-key": userApiKey,
         },
-        body: JSON.stringify({ points: allPoints })
+        body: JSON.stringify({ points: allPoints }),
       });
       if (!res.ok) {
         const errData = await res.json();
@@ -1228,48 +1309,64 @@ export default function WhiteboardCanvas({
       const data = await res.json();
 
       if (data.type === "shape" && data.shapeType) {
-        await Promise.all(selectedDrawings.map(d => deleteDoc(doc(db, 'whiteboards', boardId, 'elements', d.id))));
-        
-        const shapeId = 'shape-' + Date.now() + Math.floor(Math.random() * 100);
+        await Promise.all(
+          selectedDrawings.map((d) =>
+            deleteDoc(doc(db, "whiteboards", boardId, "elements", d.id)),
+          ),
+        );
+
+        const shapeId = "shape-" + Date.now() + Math.floor(Math.random() * 100);
         const newShape: ShapeElement = {
           id: shapeId,
-          type: 'shape',
+          type: "shape",
           shapeType: data.shapeType as ShapeType,
           x: data.bounds.x,
           y: data.bounds.y,
           width: Math.max(100, data.bounds.width),
           height: Math.max(100, data.bounds.height),
-          text: '',
+          text: "",
           color: activeColor,
-          borderColor: '#1e293b',
+          borderColor: "#1e293b",
           zIndex: elements.length + 10,
-          reactions: {}
+          reactions: {},
         };
-        await setDoc(doc(db, 'whiteboards', boardId, 'elements', shapeId), newShape);
+        await setDoc(
+          doc(db, "whiteboards", boardId, "elements", shapeId),
+          newShape,
+        );
         setSelectedIds([shapeId]);
         setSelectedId(shapeId);
       } else if (data.type === "text" && data.text) {
-        await Promise.all(selectedDrawings.map(d => deleteDoc(doc(db, 'whiteboards', boardId, 'elements', d.id))));
-        
-        const textId = 'text-' + Date.now() + Math.floor(Math.random() * 100);
+        await Promise.all(
+          selectedDrawings.map((d) =>
+            deleteDoc(doc(db, "whiteboards", boardId, "elements", d.id)),
+          ),
+        );
+
+        const textId = "text-" + Date.now() + Math.floor(Math.random() * 100);
         const newText: TextElement = {
           id: textId,
-          type: 'text',
+          type: "text",
           x: data.bounds.x,
           y: data.bounds.y,
           width: Math.max(150, data.bounds.width + 40),
           height: Math.max(50, data.bounds.height + 20),
           text: data.text,
-          color: '#1e293b',
+          color: "#1e293b",
           fontSize: 18,
           zIndex: elements.length + 10,
-          reactions: {}
+          reactions: {},
         };
-        await setDoc(doc(db, 'whiteboards', boardId, 'elements', textId), newText);
+        await setDoc(
+          doc(db, "whiteboards", boardId, "elements", textId),
+          newText,
+        );
         setSelectedIds([textId]);
         setSelectedId(textId);
       } else {
-        alert("AI couldn't clearly recognize this as a simple shape or text. Try writing or drawing more clearly!");
+        alert(
+          "AI couldn't clearly recognize this as a simple shape or text. Try writing or drawing more clearly!",
+        );
       }
     } catch (err) {
       console.error("Error beautifying selection:", err);
@@ -1280,32 +1377,38 @@ export default function WhiteboardCanvas({
 
   const handleSolveProblem = async (customPrompt?: string) => {
     if (!userApiKey || !userApiKey.trim()) {
-      alert("AI features are exclusive to users with their own API keys. Please enter your Google AI Studio API Key in the AI Assistant settings panel (bottom right icon) to activate this feature.");
+      alert(
+        "AI features are exclusive to users with their own API keys. Please enter your Google AI Studio API Key in the AI Assistant settings panel (bottom right icon) to activate this feature.",
+      );
       setIsAiPanelOpen(true);
       return;
     }
 
     if (selectedIds.length === 0) {
-      alert("Please select the specific parts or equations on the whiteboard first (using the Select tool) to activate the solver.");
+      alert(
+        "Please select the specific parts or equations on the whiteboard first (using the Select tool) to activate the solver.",
+      );
       return;
     }
     setIsAiLoading(true);
-    setAiResponseText('');
-    setAiResponseTitle('');
+    setAiResponseText("");
+    setAiResponseTitle("");
 
     try {
-      const targetElements = elements.filter(el => selectedIds.includes(el.id));
+      const targetElements = elements.filter((el) =>
+        selectedIds.includes(el.id),
+      );
 
       const res = await fetch("/api/ai/solve", {
         method: "POST",
-        headers: { 
+        headers: {
           "Content-Type": "application/json",
-          "x-user-api-key": userApiKey
+          "x-user-api-key": userApiKey,
         },
         body: JSON.stringify({
           elements: targetElements,
-          prompt: customPrompt || aiProblemInput
-        })
+          prompt: customPrompt || aiProblemInput,
+        }),
       });
 
       if (!res.ok) {
@@ -1331,46 +1434,43 @@ export default function WhiteboardCanvas({
         const shiftY = Math.round(centerY - 200);
 
         const createdIds: string[] = [];
-        await Promise.all(data.elements.map(async (el: any) => {
-          const id = el.id.startsWith('ai-') ? el.id : `ai-${el.id}-${Date.now()}`;
-          const posX = Math.round((el.x || 0) + shiftX);
-          const posY = Math.round((el.y || 0) + shiftY);
+        await Promise.all(
+          data.elements.map(async (el: any) => {
+            const id = el.id.startsWith("ai-")
+              ? el.id
+              : `ai-${el.id}-${Date.now()}`;
+            const posX = Math.round((el.x || 0) + shiftX);
+            const posY = Math.round((el.y || 0) + shiftY);
 
-          const baseElement: any = {
-            id,
-            type: el.type,
-            x: posX,
-            y: posY,
-            width: el.width || 120,
-            height: el.height || 80,
-            text: el.text || '',
-            zIndex: el.zIndex || (elements.length + 10),
-            reactions: {}
-          };
+            const baseElement: any = {
+              id,
+              type: el.type,
+              x: posX,
+              y: posY,
+              width: el.width || 120,
+              height: el.height || 80,
+              text: el.text || "",
+              zIndex: el.zIndex || elements.length + 10,
+              reactions: {},
+            };
 
-          if (el.type === 'shape') {
-            baseElement.shapeType = el.shapeType || 'rect';
-            baseElement.color = el.color || '#bfdbfe';
-            baseElement.borderColor = el.borderColor || '#1e293b';
-          } else if (el.type === 'sticky') {
-            baseElement.color = el.color || '#fef08a';
-          } else if (el.type === 'text') {
-            baseElement.color = el.color || '#1e293b';
-            baseElement.fontSize = el.fontSize || 16;
-          } else if (el.type === 'connector') {
-            baseElement.fromX = Math.round((el.fromX || 0) + shiftX);
-            baseElement.fromY = Math.round((el.fromY || 0) + shiftY);
-            baseElement.toX = Math.round((el.toX || 0) + shiftX);
-            baseElement.toY = Math.round((el.toY || 0) + shiftY);
-            if (el.fromId) baseElement.fromId = el.fromId;
-            if (el.toId) baseElement.toId = el.toId;
-            baseElement.text = el.connectorText || '';
-            baseElement.color = el.color || '#f97316';
-          }
-
-          await setDoc(doc(db, 'whiteboards', boardId, 'elements', id), baseElement);
-          createdIds.push(id);
-        }));
+            if (el.type === "shape") {
+              baseElement.shapeType = el.shapeType || "rect";
+              baseElement.color = el.color || "#bfdbfe";
+              baseElement.borderColor = el.borderColor || "#1e293b";
+            } else if (el.type === "sticky") {
+              baseElement.color = el.color || "#fef08a";
+            } else if (el.type === "text") {
+              baseElement.color = el.color || "#1e293b";
+              baseElement.fontSize = el.fontSize || 16;
+            }
+            await setDoc(
+              doc(db, "whiteboards", boardId, "elements", id),
+              baseElement,
+            );
+            createdIds.push(id);
+          }),
+        );
 
         if (createdIds.length > 0) {
           setSelectedIds(createdIds);
@@ -1393,7 +1493,7 @@ export default function WhiteboardCanvas({
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
     const zoomIntensity = 0.05;
-    
+
     if (!containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
@@ -1421,7 +1521,10 @@ export default function WhiteboardCanvas({
   };
 
   return (
-    <div className="flex-1 h-screen relative flex flex-col bg-[#F3F4F6] overflow-hidden" id="whiteboard-workspace">
+    <div
+      className="flex-1 h-screen relative flex flex-col bg-[#F3F4F6] overflow-hidden"
+      id="whiteboard-workspace"
+    >
       {/* Upper Navigation Control Bar */}
       <nav className="bg-white border-b border-slate-200 px-4 h-14 flex items-center justify-between z-30 shadow-xs absolute top-0 left-0 right-0">
         <div className="flex items-center space-x-3">
@@ -1432,15 +1535,19 @@ export default function WhiteboardCanvas({
             <ChevronLeft className="w-4 h-4" />
             <span className="hidden sm:inline">All Boards</span>
           </button>
-          
+
           <div className="h-4 w-[1px] bg-slate-200 hidden sm:block"></div>
 
           <div>
             <h2 className="text-sm font-semibold leading-tight text-slate-900 flex items-center space-x-1.5">
               <span>{boardName}</span>
-              <span className="bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold">Active</span>
+              <span className="bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold">
+                Active
+              </span>
             </h2>
-            <p className="text-[10px] text-slate-500 font-mono">Workspace ID: {boardId.slice(0, 8)}...</p>
+            <p className="text-[10px] text-slate-500 font-mono">
+              Workspace ID: {boardId.slice(0, 8)}...
+            </p>
           </div>
 
           <div className="h-4 w-[1px] bg-slate-200 hidden md:block"></div>
@@ -1450,12 +1557,14 @@ export default function WhiteboardCanvas({
             disabled={undoStack.length === 0}
             className={`px-3 py-1.5 rounded-lg flex items-center space-x-1.5 font-bold text-xs transition-all cursor-pointer ${
               undoStack.length > 0
-                ? 'bg-slate-100 border border-slate-200 text-slate-700 hover:bg-slate-200 hover:text-slate-950 hover:scale-[1.02] active:scale-[0.98]'
-                : 'text-slate-300 bg-slate-50 border border-slate-150 cursor-not-allowed'
+                ? "bg-slate-100 border border-slate-200 text-slate-700 hover:bg-slate-200 hover:text-slate-950 hover:scale-[1.02] active:scale-[0.98]"
+                : "text-slate-300 bg-slate-50 border border-slate-150 cursor-not-allowed"
             }`}
             title="Undo last action (Ctrl+Z)"
           >
-            <Undo className={`w-3.5 h-3.5 ${undoStack.length > 0 ? 'text-slate-600' : 'text-slate-300'}`} />
+            <Undo
+              className={`w-3.5 h-3.5 ${undoStack.length > 0 ? "text-slate-600" : "text-slate-300"}`}
+            />
             <span>Undo</span>
             {undoStack.length > 0 && (
               <span className="bg-blue-600 text-white text-[9px] px-1.5 py-0.5 rounded-full font-mono font-extrabold">
@@ -1469,12 +1578,14 @@ export default function WhiteboardCanvas({
             disabled={redoStack.length === 0}
             className={`px-3 py-1.5 rounded-lg flex items-center space-x-1.5 font-bold text-xs transition-all cursor-pointer ${
               redoStack.length > 0
-                ? 'bg-slate-100 border border-slate-200 text-slate-700 hover:bg-slate-200 hover:text-slate-950 hover:scale-[1.02] active:scale-[0.98]'
-                : 'text-slate-300 bg-slate-50 border border-slate-150 cursor-not-allowed'
+                ? "bg-slate-100 border border-slate-200 text-slate-700 hover:bg-slate-200 hover:text-slate-950 hover:scale-[1.02] active:scale-[0.98]"
+                : "text-slate-300 bg-slate-50 border border-slate-150 cursor-not-allowed"
             }`}
             title="Redo last action (Ctrl+Y)"
           >
-            <Redo className={`w-3.5 h-3.5 ${redoStack.length > 0 ? 'text-slate-600' : 'text-slate-300'}`} />
+            <Redo
+              className={`w-3.5 h-3.5 ${redoStack.length > 0 ? "text-slate-600" : "text-slate-300"}`}
+            />
             <span>Redo</span>
             {redoStack.length > 0 && (
               <span className="bg-blue-600 text-white text-[9px] px-1.5 py-0.5 rounded-full font-mono font-extrabold">
@@ -1487,7 +1598,10 @@ export default function WhiteboardCanvas({
         {/* Current Collaborator Profile details and Share action */}
         <div className="flex items-center space-x-3">
           <div className="flex items-center space-x-1.5 bg-slate-100 px-2.5 py-1 rounded-full text-xs font-bold text-slate-600 border border-slate-200">
-            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: currentUser.color }} />
+            <span
+              className="w-2 h-2 rounded-full"
+              style={{ backgroundColor: currentUser.color }}
+            />
             <span>{currentUser.name} (You)</span>
           </div>
 
@@ -1497,10 +1611,14 @@ export default function WhiteboardCanvas({
               onClick={handleToggleStudentsCanWrite}
               className={`px-3 py-1.5 rounded-lg flex items-center space-x-1.5 font-bold text-xs transition-all cursor-pointer border ${
                 studentsCanWrite
-                  ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'
-                  : 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100 animate-pulse'
+                  ? "bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100"
+                  : "bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100 animate-pulse"
               }`}
-              title={studentsCanWrite ? "Click to lock board for students (Read Only)" : "Click to unlock board for students (Collaborative)"}
+              title={
+                studentsCanWrite
+                  ? "Click to lock board for students (Read Only)"
+                  : "Click to unlock board for students (Collaborative)"
+              }
             >
               {studentsCanWrite ? (
                 <>
@@ -1519,8 +1637,8 @@ export default function WhiteboardCanvas({
             <div
               className={`px-3 py-1.5 rounded-lg flex items-center space-x-1.5 font-bold text-xs border ${
                 studentsCanWrite
-                  ? 'bg-emerald-50 border-emerald-100 text-emerald-600'
-                  : 'bg-amber-50 border-amber-200 text-amber-700'
+                  ? "bg-emerald-50 border-emerald-100 text-emerald-600"
+                  : "bg-amber-50 border-amber-200 text-amber-700"
               }`}
             >
               {studentsCanWrite ? (
@@ -1543,21 +1661,23 @@ export default function WhiteboardCanvas({
           <button
             onClick={() => setIsAiPanelOpen(!isAiPanelOpen)}
             className={`px-3.5 py-1.5 rounded text-xs font-semibold flex items-center space-x-1.5 transition-all cursor-pointer ${
-              isAiPanelOpen 
-                ? 'bg-purple-600 hover:bg-purple-700 text-white shadow-md border-purple-600 scale-102' 
-                : 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 shadow-xs'
+              isAiPanelOpen
+                ? "bg-purple-600 hover:bg-purple-700 text-white shadow-md border-purple-600 scale-102"
+                : "bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 shadow-xs"
             }`}
           >
-            <Sparkles className={`w-3.5 h-3.5 ${isAiPanelOpen ? 'text-white animate-pulse' : 'text-purple-600'}`} />
+            <Sparkles
+              className={`w-3.5 h-3.5 ${isAiPanelOpen ? "text-white animate-pulse" : "text-purple-600"}`}
+            />
             <span>AI Assistant</span>
           </button>
 
           <button
             onClick={copyBoardLink}
             className={`px-3.5 py-1.5 rounded text-xs font-medium flex items-center space-x-1.5 transition-all cursor-pointer ${
-              copiedLink 
-                ? 'bg-green-500 text-white shadow-sm' 
-                : 'bg-blue-600 hover:bg-blue-700 text-white shadow-sm'
+              copiedLink
+                ? "bg-green-500 text-white shadow-sm"
+                : "bg-blue-600 hover:bg-blue-700 text-white shadow-sm"
             }`}
           >
             {copiedLink ? (
@@ -1579,7 +1699,7 @@ export default function WhiteboardCanvas({
       <Toolbar
         activeTool={activeTool}
         onChangeTool={(tool) => {
-          if (!canWrite && tool !== 'select' && tool !== 'pan') {
+          if (!canWrite && tool !== "select" && tool !== "pan") {
             triggerReadOnlyAlert();
             return;
           }
@@ -1616,18 +1736,21 @@ export default function WhiteboardCanvas({
         onMouseLeave={handleMouseUp}
         onWheel={handleWheel}
         className={`w-full h-full relative outline-none select-none ${
-          activeTool === 'pan' ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
+          activeTool === "pan"
+            ? "cursor-grab active:cursor-grabbing"
+            : "cursor-default"
         }`}
         style={{
           // Grid dot, math grid, or plain background pattern that scales and translates correctly
-          backgroundImage: gridMode === 'none'
-            ? 'none'
-            : gridMode === 'math'
-              ? `linear-gradient(to right, rgba(203, 213, 225, 0.45) 1px, transparent 1px), linear-gradient(to bottom, rgba(203, 213, 225, 0.45) 1px, transparent 1px)`
-              : `radial-gradient(circle, #cbd5e1 1.5px, transparent 1.5px)`,
+          backgroundImage:
+            gridMode === "none"
+              ? "none"
+              : gridMode === "math"
+                ? `linear-gradient(to right, rgba(203, 213, 225, 0.45) 1px, transparent 1px), linear-gradient(to bottom, rgba(203, 213, 225, 0.45) 1px, transparent 1px)`
+                : `radial-gradient(circle, #cbd5e1 1.5px, transparent 1.5px)`,
           backgroundSize: `${24 * zoom}px ${24 * zoom}px`,
           backgroundPosition: `${panX}px ${panY}px`,
-          backgroundColor: gridMode === 'none' ? '#ffffff' : '#f8fafc'
+          backgroundColor: gridMode === "none" ? "#ffffff" : "#f8fafc",
         }}
       >
         {/* Render Layer of Infinite Board Elements (Shapes, Drawings, Connectors, cursors) */}
@@ -1635,28 +1758,40 @@ export default function WhiteboardCanvas({
           className="absolute inset-0 pointer-events-none"
           style={{
             transform: `translate(${panX}px, ${panY}px) scale(${zoom})`,
-            transformOrigin: '0 0',
+            transformOrigin: "0 0",
           }}
         >
           {/* 1. Interactive DOM elements Layer (Sticky notes, Shapes, Textboxes) */}
           <div className="absolute inset-0 pointer-events-none z-10">
             {elements.map((el) => {
               const isSelected = selectedIds.includes(el.id);
-              const isInteractive = activeTool === 'select' || activeTool === 'eraser';
+              const isInteractive =
+                activeTool === "select" || activeTool === "eraser";
 
               // Renders Sticky Note Elements
-              if (el.type === 'sticky') {
+              if (el.type === "sticky") {
                 return (
-                  <div key={el.id} className={isInteractive ? "pointer-events-auto" : "pointer-events-none"}>
+                  <div
+                    key={el.id}
+                    className={
+                      isInteractive
+                        ? "pointer-events-auto"
+                        : "pointer-events-none"
+                    }
+                  >
                     <StickyComponent
                       element={el}
                       isSelected={isSelected}
                       currentUser={currentUser}
                       zoom={zoom}
                       onSelect={(e) => handleSelectElement(el.id, e)}
-                      onUpdate={(updates) => handleUpdateElement(el.id, updates)}
+                      onUpdate={(updates) =>
+                        handleUpdateElement(el.id, updates)
+                      }
                       onDelete={() => handleDeleteElement(el.id)}
-                      isDraggingOrResizing={isDragging || isResizing || selectedIds.length > 1}
+                      isDraggingOrResizing={
+                        isDragging || isResizing || selectedIds.length > 1
+                      }
                       activeTool={activeTool}
                       canWrite={canWrite}
                     />
@@ -1665,18 +1800,29 @@ export default function WhiteboardCanvas({
               }
 
               // Renders Shape Elements
-              if (el.type === 'shape') {
+              if (el.type === "shape") {
                 return (
-                  <div key={el.id} className={isInteractive ? "pointer-events-auto" : "pointer-events-none"}>
+                  <div
+                    key={el.id}
+                    className={
+                      isInteractive
+                        ? "pointer-events-auto"
+                        : "pointer-events-none"
+                    }
+                  >
                     <ShapeComponent
                       element={el}
                       isSelected={isSelected}
                       currentUser={currentUser}
                       zoom={zoom}
                       onSelect={(e) => handleSelectElement(el.id, e)}
-                      onUpdate={(updates) => handleUpdateElement(el.id, updates)}
+                      onUpdate={(updates) =>
+                        handleUpdateElement(el.id, updates)
+                      }
                       onDelete={() => handleDeleteElement(el.id)}
-                      isDraggingOrResizing={isDragging || isResizing || selectedIds.length > 1}
+                      isDraggingOrResizing={
+                        isDragging || isResizing || selectedIds.length > 1
+                      }
                       activeTool={activeTool}
                       canWrite={canWrite}
                     />
@@ -1685,18 +1831,29 @@ export default function WhiteboardCanvas({
               }
 
               // Renders Text Box Elements
-              if (el.type === 'text') {
+              if (el.type === "text") {
                 return (
-                  <div key={el.id} className={isInteractive ? "pointer-events-auto" : "pointer-events-none"}>
+                  <div
+                    key={el.id}
+                    className={
+                      isInteractive
+                        ? "pointer-events-auto"
+                        : "pointer-events-none"
+                    }
+                  >
                     <TextComponent
                       element={el}
                       isSelected={isSelected}
                       currentUser={currentUser}
                       zoom={zoom}
                       onSelect={(e) => handleSelectElement(el.id, e)}
-                      onUpdate={(updates) => handleUpdateElement(el.id, updates)}
+                      onUpdate={(updates) =>
+                        handleUpdateElement(el.id, updates)
+                      }
                       onDelete={() => handleDeleteElement(el.id)}
-                      isDraggingOrResizing={isDragging || isResizing || selectedIds.length > 1}
+                      isDraggingOrResizing={
+                        isDragging || isResizing || selectedIds.length > 1
+                      }
                       activeTool={activeTool}
                       canWrite={canWrite}
                     />
@@ -1705,18 +1862,29 @@ export default function WhiteboardCanvas({
               }
 
               // Renders Image Elements
-              if (el.type === 'image') {
+              if (el.type === "image") {
                 return (
-                  <div key={el.id} className={isInteractive ? "pointer-events-auto" : "pointer-events-none"}>
+                  <div
+                    key={el.id}
+                    className={
+                      isInteractive
+                        ? "pointer-events-auto"
+                        : "pointer-events-none"
+                    }
+                  >
                     <ImageComponent
                       element={el}
                       isSelected={isSelected}
                       currentUser={currentUser}
                       zoom={zoom}
                       onSelect={(e) => handleSelectElement(el.id, e)}
-                      onUpdate={(updates) => handleUpdateElement(el.id, updates)}
+                      onUpdate={(updates) =>
+                        handleUpdateElement(el.id, updates)
+                      }
                       onDelete={() => handleDeleteElement(el.id)}
-                      isDraggingOrResizing={isDragging || isResizing || selectedIds.length > 1}
+                      isDraggingOrResizing={
+                        isDragging || isResizing || selectedIds.length > 1
+                      }
                       activeTool={activeTool}
                       canWrite={canWrite}
                     />
@@ -1742,90 +1910,83 @@ export default function WhiteboardCanvas({
           )}
 
           {/* 2. Global Svg Vector Overlay (Connector Lines, Drawings, Sketches) */}
-          <svg 
-            width="100%" 
-            height="100%" 
+          <svg
+            width="100%"
+            height="100%"
             className="absolute inset-0 overflow-visible pointer-events-none z-20"
           >
-            {/* Draw active/temp connector line */}
-            {tempConnector && (
-              <line
-                x1={tempConnector.startX}
-                y1={tempConnector.startY}
-                x2={tempConnector.currentX}
-                y2={tempConnector.currentY}
-                stroke="#3b82f6"
-                strokeWidth="2.5"
-                strokeDasharray="4,4"
-              />
-            )}
-
-            {/* Draw SVG connectors */}
+            {/* Render saved drawings */}
             {elements
-              .filter((el): el is ConnectorElement => el.type === 'connector')
-              .map((conn) => (
-                <g key={conn.id}>
-                  <ConnectorRenderer
-                    connector={conn}
-                    elements={elements}
-                    isSelected={selectedIds.includes(conn.id)}
-                    onSelect={(e) => handleSelectElement(conn.id, e)}
-                    onDelete={() => handleDeleteElement(conn.id)}
-                  />
-                </g>
-              ))}
-
-            {/* Draw collaborative freehand drawings/sketches */}
-            {elements
-              .filter((el): el is DrawingElement => el.type === 'drawing')
-              .map((draw) => {
-                if (draw.points.length < 2) return null;
-                const pathData = `M ${draw.points[0].x} ${draw.points[0].y} ` + 
-                  draw.points.slice(1).map((p) => `L ${p.x} ${p.y}`).join(' ');
-                
-                const isDrawSelected = selectedIds.includes(draw.id);
+              .filter((el) => el.type === "drawing")
+              .map((el: any) => {
+                const pts = el.points
+                  .map((p: any) => `${p.x},${p.y}`)
+                  .join(" ");
+                const isSelected = selectedIds.includes(el.id);
+                const isInteractive =
+                  activeTool === "select" || activeTool === "eraser";
                 return (
-                  <g key={draw.id}>
-                    {isDrawSelected && (
-                      <path
-                        d={pathData}
-                        fill="none"
-                        stroke="#3b82f6"
-                        strokeWidth={draw.width + 6}
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        opacity="0.3"
-                      />
-                    )}
-                    <path
-                      d={pathData}
+                  <g
+                    key={el.id}
+                    className={
+                      isInteractive
+                        ? "pointer-events-auto cursor-pointer"
+                        : "pointer-events-none"
+                    }
+                    onMouseDown={(e) => handleSelectElement(el.id, e)}
+                  >
+                    {/* Invisible thicker hit area for easier clicking */}
+                    <polyline
+                      points={pts}
                       fill="none"
-                      stroke={draw.color}
-                      strokeWidth={draw.width}
+                      stroke="transparent"
+                      strokeWidth={el.width + 16}
                       strokeLinecap="round"
                       strokeLinejoin="round"
-                      className={`transition-all duration-150 ${activeTool === 'eraser' ? 'hover:stroke-rose-600/50 cursor-pointer pointer-events-auto' : ''}`}
-                      onClick={(e) => {
-                        if (activeTool === 'eraser') {
-                          e.stopPropagation();
-                          handleDeleteElement(draw.id);
-                        }
-                      }}
+                    />
+                    <polyline
+                      points={pts}
+                      fill="none"
+                      stroke={el.color}
+                      strokeWidth={el.width}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className={
+                        el.isHighlighter
+                          ? "mix-blend-multiply"
+                          : "drop-shadow-sm"
+                      }
+                      style={
+                        isSelected
+                          ? { filter: "drop-shadow(0 0 4px #3b82f6)" }
+                          : {}
+                      }
                     />
                   </g>
                 );
               })}
-
-            {/* Render local in-progress draw strokes instantly (eliminates latency!) */}
-            {localDrawingPoints.length > 1 && (
-              <path
-                d={`M ${localDrawingPoints[0].x} ${localDrawingPoints[0].y} ` + 
-                  localDrawingPoints.slice(1).map((p) => `L ${p.x} ${p.y}`).join(' ')}
+            {/* Render current local drawing */}
+            {localDrawingPoints.length > 0 && (
+              <polyline
+                points={localDrawingPoints
+                  .map((p) => `${p.x},${p.y}`)
+                  .join(" ")}
                 fill="none"
-                stroke={activeTool === 'highlighter' ? `${activeColor}80` : activeColor}
-                strokeWidth={activeTool === 'highlighter' ? strokeWidth * 2.5 : strokeWidth}
+                stroke={
+                  activeTool === "highlighter"
+                    ? `${activeColor}80`
+                    : activeColor
+                }
+                strokeWidth={
+                  activeTool === "highlighter" ? strokeWidth * 2.5 : strokeWidth
+                }
                 strokeLinecap="round"
                 strokeLinejoin="round"
+                className={
+                  activeTool === "highlighter"
+                    ? "mix-blend-multiply"
+                    : "drop-shadow-sm"
+                }
               />
             )}
           </svg>
@@ -1836,7 +1997,10 @@ export default function WhiteboardCanvas({
       </div>
 
       {/* Interactive Shortcuts and Quick-Tools Widget */}
-      <div className="absolute bottom-6 right-6 z-30 flex flex-col items-end" id="shortcuts-panel">
+      <div
+        className="absolute bottom-6 right-6 z-30 flex flex-col items-end"
+        id="shortcuts-panel"
+      >
         {!isShortcutsExpanded ? (
           <button
             onClick={() => setIsShortcutsExpanded(true)}
@@ -1868,20 +2032,20 @@ export default function WhiteboardCanvas({
 
             {/* Intro description */}
             <p className="text-[11px] text-slate-500 leading-normal">
-              Press the hotkey on your keyboard or click the buttons below to switch tools instantly:
+              Press the hotkey on your keyboard or click the buttons below to
+              switch tools instantly:
             </p>
 
             {/* Interactive Shortcut Row List */}
             <div className="flex flex-col space-y-1">
               {[
-                { key: 'V', label: 'Select & Edit', tool: 'select' },
-                { key: 'H', label: 'Pan Canvas', tool: 'pan' },
-                { key: 'P', label: 'Pen / Ink Drawing', tool: 'pencil' },
-                { key: 'N', label: 'Sticky Note', tool: 'sticky' },
-                { key: 'S', label: 'Shapes Selector', tool: 'shape' },
-                { key: 'T', label: 'Text Box', tool: 'text' },
-                { key: 'L', label: 'Connector Line', tool: 'connector' },
-                { key: 'E', label: 'Eraser Tool', tool: 'eraser' }
+                { key: "V", label: "Select & Edit", tool: "select" },
+                { key: "H", label: "Pan Canvas", tool: "pan" },
+                { key: "P", label: "Pen / Ink Drawing", tool: "pencil" },
+                { key: "N", label: "Sticky Note", tool: "sticky" },
+                { key: "S", label: "Shapes Selector", tool: "shape" },
+                { key: "T", label: "Text Box", tool: "text" },
+                { key: "E", label: "Eraser Tool", tool: "eraser" },
               ].map((item) => {
                 const isActive = activeTool === item.tool;
                 return (
@@ -1892,16 +2056,18 @@ export default function WhiteboardCanvas({
                     }}
                     className={`group w-full flex items-center justify-between p-1.5 rounded-lg text-left text-xs transition-all cursor-pointer ${
                       isActive
-                        ? 'bg-blue-50 text-blue-700 font-bold border border-blue-100 shadow-xs'
-                        : 'hover:bg-slate-50 text-slate-600 hover:text-slate-900 border border-transparent'
+                        ? "bg-blue-50 text-blue-700 font-bold border border-blue-100 shadow-xs"
+                        : "hover:bg-slate-50 text-slate-600 hover:text-slate-900 border border-transparent"
                     }`}
                   >
                     <div className="flex items-center space-x-2">
-                      <kbd className={`min-w-[20px] h-5 px-1.5 py-0.5 font-mono text-[10px] font-bold border rounded shadow-xs flex items-center justify-center transition-colors ${
-                        isActive
-                          ? 'bg-blue-600 border-blue-700 text-white'
-                          : 'bg-white border-slate-300 text-slate-600 group-hover:bg-slate-100'
-                      }`}>
+                      <kbd
+                        className={`min-w-[20px] h-5 px-1.5 py-0.5 font-mono text-[10px] font-bold border rounded shadow-xs flex items-center justify-center transition-colors ${
+                          isActive
+                            ? "bg-blue-600 border-blue-700 text-white"
+                            : "bg-white border-slate-300 text-slate-600 group-hover:bg-slate-100"
+                        }`}
+                      >
                         {item.key}
                       </kbd>
                       <span className="font-semibold">{item.label}</span>
@@ -1918,44 +2084,54 @@ export default function WhiteboardCanvas({
 
             {/* General Non-Tool Shortcuts */}
             <div className="border-t border-slate-100 pt-2.5 flex flex-col space-y-1.5">
-              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Other Commands</div>
-              
+              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">
+                Other Commands
+              </div>
+
               <div className="flex items-center justify-between text-xs text-slate-600">
-                <span className="font-medium text-slate-500">Delete Selected Item</span>
+                <span className="font-medium text-slate-500">
+                  Delete Selected Item
+                </span>
                 <div className="flex items-center space-x-1">
-                  <kbd className="px-1.5 py-0.5 font-mono text-[10px] font-bold bg-slate-50 border border-slate-300 rounded shadow-xs text-slate-600">Del</kbd>
+                  <kbd className="px-1.5 py-0.5 font-mono text-[10px] font-bold bg-slate-50 border border-slate-300 rounded shadow-xs text-slate-600">
+                    Del
+                  </kbd>
                   <span className="text-[10px] text-slate-400">or</span>
-                  <kbd className="px-1.5 py-0.5 font-mono text-[10px] font-bold bg-slate-50 border border-slate-300 rounded shadow-xs text-slate-600">⌫</kbd>
+                  <kbd className="px-1.5 py-0.5 font-mono text-[10px] font-bold bg-slate-50 border border-slate-300 rounded shadow-xs text-slate-600">
+                    ⌫
+                  </kbd>
                 </div>
               </div>
 
               <div className="flex items-center justify-between text-xs text-slate-600">
-                <span className="font-medium text-slate-500">Paste Board Images</span>
-                <kbd className="px-1.5 py-0.5 font-mono text-[10px] font-bold bg-slate-50 border border-slate-300 rounded shadow-xs text-slate-600">Ctrl + V</kbd>
+                <span className="font-medium text-slate-500">
+                  Paste Board Images
+                </span>
+                <kbd className="px-1.5 py-0.5 font-mono text-[10px] font-bold bg-slate-50 border border-slate-300 rounded shadow-xs text-slate-600">
+                  Ctrl + V
+                </kbd>
               </div>
 
               <div className="flex items-center justify-between text-xs text-slate-600">
-                <span className="font-medium text-slate-500">Undo Last Action</span>
-                <kbd className="px-1.5 py-0.5 font-mono text-[10px] font-bold bg-slate-50 border border-slate-300 rounded shadow-xs text-slate-600">Ctrl + Z</kbd>
+                <span className="font-medium text-slate-500">
+                  Undo Last Action
+                </span>
+                <kbd className="px-1.5 py-0.5 font-mono text-[10px] font-bold bg-slate-50 border border-slate-300 rounded shadow-xs text-slate-600">
+                  Ctrl + Z
+                </kbd>
               </div>
             </div>
           </div>
         )}
       </div>
 
-      {/* Connector Tool active guide tip */}
-      {activeTool === 'connector' && (
-        <div className="absolute top-18 left-1/2 -translate-x-1/2 bg-blue-600 text-white font-semibold text-xs px-4 py-2.5 rounded-full shadow-lg z-40 flex items-center space-x-2 border border-blue-500 animate-bounce">
-          <Sparkles className="w-3.5 h-3.5" />
-          <span>Click and drag between elements (or empty space) to connect them!</span>
-        </div>
-      )}
-
       {/* Read-Only Mode Floating Notice Banner */}
       {showReadOnlyAlert && (
         <div className="fixed top-18 left-1/2 -translate-x-1/2 bg-amber-500 text-white font-bold text-xs px-5 py-3 rounded-full shadow-2xl z-50 flex items-center space-x-2 border border-amber-400 animate-bounce">
           <Lock className="w-3.5 h-3.5 text-white" />
-          <span>View-Only Mode: The teacher has locked writing access on this board.</span>
+          <span>
+            View-Only Mode: The teacher has locked writing access on this board.
+          </span>
         </div>
       )}
 
@@ -1969,9 +2145,11 @@ export default function WhiteboardCanvas({
               </div>
               <h3 className="text-base font-bold">Clear Entire Whiteboard?</h3>
             </div>
-            
+
             <p className="text-xs text-slate-500 leading-relaxed">
-              Are you sure you want to delete all elements, shapes, drawings, and connection lines on this board? This action is permanent, synchronizes for all users in real time, and cannot be undone.
+              Are you sure you want to delete all elements, shapes, drawings,
+              and connection lines on this board? This action is permanent,
+              synchronizes for all users in real time, and cannot be undone.
             </p>
 
             <div className="flex items-center justify-end space-x-2.5 pt-2 border-t border-slate-100">
@@ -1997,7 +2175,10 @@ export default function WhiteboardCanvas({
 
       {/* AI Classroom Assistant Sliding/Floating Side Panel */}
       {isAiPanelOpen && (
-        <div className="absolute right-4 top-16 bottom-24 w-[420px] bg-white rounded-2xl border border-slate-200 shadow-2xl z-40 flex flex-col overflow-hidden text-slate-800" id="ai-assistant-panel">
+        <div
+          className="absolute right-4 top-16 bottom-24 w-[420px] bg-white rounded-2xl border border-slate-200 shadow-2xl z-40 flex flex-col overflow-hidden text-slate-800"
+          id="ai-assistant-panel"
+        >
           {/* Header */}
           <div className="p-4 border-b border-slate-100 bg-purple-50/50 flex items-center justify-between">
             <div className="flex items-center space-x-2">
@@ -2005,8 +2186,12 @@ export default function WhiteboardCanvas({
                 <Brain className="w-4 h-4" />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-slate-900">AI Tutor & Problem Solver</h3>
-                <p className="text-[10px] text-purple-600 font-semibold uppercase tracking-wider">Gemini classroom assistant</p>
+                <h3 className="text-sm font-bold text-slate-900">
+                  AI Tutor & Problem Solver
+                </h3>
+                <p className="text-[10px] text-purple-600 font-semibold uppercase tracking-wider">
+                  Gemini classroom assistant
+                </p>
               </div>
             </div>
             <button
@@ -2019,7 +2204,6 @@ export default function WhiteboardCanvas({
 
           {/* Panel Content (Scrollable) */}
           <div className="flex-1 overflow-y-auto p-4 space-y-5">
-            
             {/* Custom API Key Section */}
             <div className="space-y-2.5 bg-gradient-to-r from-purple-50/70 to-indigo-50/70 p-3.5 rounded-xl border border-purple-100/65 shadow-sm">
               <div className="flex items-center justify-between">
@@ -2027,22 +2211,33 @@ export default function WhiteboardCanvas({
                   <Key className="w-3.5 h-3.5 text-purple-600" />
                   <span>Personal API limits</span>
                 </h4>
-                <span className={`text-[9px] px-1.5 py-0.5 font-bold rounded-md ${
-                  userApiKey ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800 border border-amber-200'
-                }`}>
+                <span
+                  className={`text-[9px] px-1.5 py-0.5 font-bold rounded-md ${
+                    userApiKey
+                      ? "bg-emerald-100 text-emerald-800"
+                      : "bg-amber-100 text-amber-800 border border-amber-200"
+                  }`}
+                >
                   {userApiKey ? "AI Features Active" : "AI Features Locked"}
                 </span>
               </div>
-              
+
               <p className="text-[10px] text-slate-500 leading-normal">
-                AI Classroom Assistant features are exclusive to users with their own Google API key. Enter your personal, 100% free <strong>Google AI Studio Key</strong> below. This key is saved strictly inside your local browser storage.
+                AI Classroom Assistant features are exclusive to users with
+                their own Google API key. Enter your personal, 100% free{" "}
+                <strong>Google AI Studio Key</strong> below. This key is saved
+                strictly inside your local browser storage.
               </p>
 
               {/* Secure explanation and quick-link */}
               <div className="bg-white/80 border border-purple-100/50 rounded-lg p-2.5 space-y-2">
                 <div className="text-[9px] text-slate-400 flex items-start space-x-1.5 leading-normal">
                   <span className="shrink-0 text-[10px] leading-none">🔒</span>
-                  <span>Note: Because API keys are secure developer credentials, they cannot be programmatically read from your Google account session.</span>
+                  <span>
+                    Note: Because API keys are secure developer credentials,
+                    they cannot be programmatically read from your Google
+                    account session.
+                  </span>
                 </div>
                 <div className="flex justify-start">
                   <a
@@ -2052,8 +2247,18 @@ export default function WhiteboardCanvas({
                     className="inline-flex items-center space-x-1 bg-purple-600 hover:bg-purple-700 active:bg-purple-800 text-white font-bold py-1 px-2.5 rounded-md text-[9px] shadow-sm transition-all cursor-pointer"
                   >
                     <span>Get Free API Key from Google AI Studio</span>
-                    <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                    <svg
+                      className="w-2.5 h-2.5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2.5}
+                        d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+                      />
                     </svg>
                   </a>
                 </div>
@@ -2083,7 +2288,11 @@ export default function WhiteboardCanvas({
                     className="text-slate-400 hover:text-slate-600 cursor-pointer p-0.5"
                     title={showApiKey ? "Hide Key" : "Show Key"}
                   >
-                    {showApiKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    {showApiKey ? (
+                      <EyeOff className="w-3.5 h-3.5" />
+                    ) : (
+                      <Eye className="w-3.5 h-3.5" />
+                    )}
                   </button>
                   {userApiKey && (
                     <button
@@ -2102,26 +2311,37 @@ export default function WhiteboardCanvas({
 
             {/* Handwriting Options */}
             <div className="space-y-2.5">
-              <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Handwriting Assist</h4>
-              
+              <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                Handwriting Assist
+              </h4>
+
               {/* Toggle autocorrect */}
               <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-100 rounded-xl">
                 <div className="flex items-start space-x-2.5">
                   <PenTool className="w-4 h-4 text-purple-600 mt-0.5 animate-pulse" />
                   <div>
-                    <div className="text-xs font-bold text-slate-800">Auto-Correct Drawings</div>
-                    <div className="text-[10px] text-slate-500">Automatically replace messy pencil drawings with crisp geometric shapes or clean typed text.</div>
+                    <div className="text-xs font-bold text-slate-800">
+                      Auto-Correct Drawings
+                    </div>
+                    <div className="text-[10px] text-slate-500">
+                      Automatically replace messy pencil drawings with crisp
+                      geometric shapes or clean typed text.
+                    </div>
                   </div>
                 </div>
                 <button
-                  onClick={() => setAutoCorrectHandwriting(!autoCorrectHandwriting)}
+                  onClick={() =>
+                    setAutoCorrectHandwriting(!autoCorrectHandwriting)
+                  }
                   className={`w-9 h-5 rounded-full p-0.5 transition-colors cursor-pointer ${
-                    autoCorrectHandwriting ? 'bg-purple-600' : 'bg-slate-300'
+                    autoCorrectHandwriting ? "bg-purple-600" : "bg-slate-300"
                   }`}
                 >
-                  <div className={`bg-white w-4 h-4 rounded-full shadow-sm transform duration-200 ${
-                    autoCorrectHandwriting ? 'translate-x-4' : 'translate-x-0'
-                  }`} />
+                  <div
+                    className={`bg-white w-4 h-4 rounded-full shadow-sm transform duration-200 ${
+                      autoCorrectHandwriting ? "translate-x-4" : "translate-x-0"
+                    }`}
+                  />
                 </button>
               </div>
 
@@ -2139,7 +2359,9 @@ export default function WhiteboardCanvas({
             {/* Solver Options */}
             <div className="space-y-3 pt-3 border-t border-slate-100">
               <div className="flex items-center justify-between">
-                <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Visual Math Solver</h4>
+                <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                  Visual Math Solver
+                </h4>
                 {selectedIds.length > 0 ? (
                   <span className="px-2 py-0.5 bg-green-50 text-green-700 text-[10px] font-bold rounded-full border border-green-200 flex items-center space-x-1 animate-pulse">
                     <span>●</span>
@@ -2151,9 +2373,10 @@ export default function WhiteboardCanvas({
                   </span>
                 )}
               </div>
-              
+
               <div className="text-xs text-slate-600 leading-normal">
-                To keep solving safe and precise, the solver only processes specific elements you select.
+                To keep solving safe and precise, the solver only processes
+                specific elements you select.
               </div>
 
               {selectedIds.length === 0 ? (
@@ -2162,7 +2385,10 @@ export default function WhiteboardCanvas({
                     <span>💡 How to Solve:</span>
                   </div>
                   <p className="text-[10.5px] text-amber-800 leading-relaxed">
-                    Use the <strong>Select tool (pointer icon)</strong> to click or drag a selection box around your handwritten formulas, math notes, or drawings, then click below to activate the solver.
+                    Use the <strong>Select tool (pointer icon)</strong> to click
+                    or drag a selection box around your handwritten formulas,
+                    math notes, or drawings, then click below to activate the
+                    solver.
                   </p>
                 </div>
               ) : (
@@ -2171,13 +2397,17 @@ export default function WhiteboardCanvas({
                     🎯 Selected Elements Ready
                   </div>
                   <p className="text-[10.5px] text-indigo-800 leading-relaxed">
-                    The solver will analyze the {selectedIds.length} selected element(s) to solve the math and generate editable diagrams in your view.
+                    The solver will analyze the {selectedIds.length} selected
+                    element(s) to solve the math and generate editable diagrams
+                    in your view.
                   </p>
                 </div>
               )}
 
               <div>
-                <label className="block text-[10px] font-bold text-slate-400 mb-1.5 uppercase">Specify Custom Problem (Optional)</label>
+                <label className="block text-[10px] font-bold text-slate-400 mb-1.5 uppercase">
+                  Specify Custom Problem (Optional)
+                </label>
                 <textarea
                   rows={3}
                   placeholder="Tom has 12 apples, and Sarah has twice as many. Show the bar model and find total apples."
@@ -2202,7 +2432,11 @@ export default function WhiteboardCanvas({
                 </button>
 
                 <button
-                  onClick={() => handleSolveProblem("Solve and draw a Singapore Math bar model illustration")}
+                  onClick={() =>
+                    handleSolveProblem(
+                      "Solve and draw a Singapore Math bar model illustration",
+                    )
+                  }
                   disabled={isAiLoading || selectedIds.length === 0}
                   className="flex items-center justify-center space-x-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 rounded-xl text-xs transition-colors cursor-pointer shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
                 >
@@ -2221,14 +2455,21 @@ export default function WhiteboardCanvas({
               <div className="space-y-2 pt-3 border-t border-slate-100 flex flex-col min-h-[160px]">
                 <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center space-x-1">
                   <span>Solution Output</span>
-                  {isAiLoading && <Loader2 className="w-3 h-3 animate-spin text-purple-600" />}
+                  {isAiLoading && (
+                    <Loader2 className="w-3 h-3 animate-spin text-purple-600" />
+                  )}
                 </h4>
 
                 {isAiLoading ? (
                   <div className="flex-1 flex flex-col items-center justify-center py-8 text-center space-y-2 bg-slate-50 border border-dashed border-slate-200 rounded-xl">
                     <Loader2 className="w-8 h-8 animate-spin text-purple-600" />
-                    <p className="text-xs font-bold text-slate-700">Tutor thinking...</p>
-                    <p className="text-[10px] text-slate-500 max-w-xs px-4">Analyzing whiteboard elements and generating visual Singapore Math diagrams.</p>
+                    <p className="text-xs font-bold text-slate-700">
+                      Tutor thinking...
+                    </p>
+                    <p className="text-[10px] text-slate-500 max-w-xs px-4">
+                      Analyzing whiteboard elements and generating visual
+                      Singapore Math diagrams.
+                    </p>
                   </div>
                 ) : (
                   <div className="flex-1 p-3.5 bg-purple-50/50 border border-purple-100 rounded-xl overflow-y-auto max-h-[250px] text-xs leading-relaxed text-slate-700">
@@ -2245,7 +2486,6 @@ export default function WhiteboardCanvas({
                 )}
               </div>
             )}
-
           </div>
         </div>
       )}
