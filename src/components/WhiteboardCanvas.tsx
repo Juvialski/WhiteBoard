@@ -223,6 +223,129 @@ const RemoteStreamItem = React.memo(({ stream }: { stream: any }) => {
   );
 });
 
+const ElementWrapper = React.memo(({
+  el,
+  isSelected,
+  isInteractive,
+  currentUser,
+  zoom,
+  isDragging,
+  isResizing,
+  selectedIdsLength,
+  activeTool,
+  canWrite,
+  onSelectElement,
+  onUpdateElement,
+  onDeleteElement
+}: {
+  el: BoardElement;
+  isSelected: boolean;
+  isInteractive: boolean;
+  currentUser: UserProfile;
+  zoom: number;
+  isDragging: boolean;
+  isResizing: boolean;
+  selectedIdsLength: number;
+  activeTool: string;
+  canWrite: boolean;
+  onSelectElement: (id: string, e: React.MouseEvent) => void;
+  onUpdateElement: (id: string, updates: Partial<BoardElement>) => void;
+  onDeleteElement: (id: string) => void;
+}) => {
+  const onSelect = React.useCallback((e: React.MouseEvent) => {
+    onSelectElement(el.id, e);
+  }, [el.id, onSelectElement]);
+
+  const onUpdate = React.useCallback((updates: any) => {
+    onUpdateElement(el.id, updates);
+  }, [el.id, onUpdateElement]);
+
+  const onDelete = React.useCallback(() => {
+    onDeleteElement(el.id);
+  }, [el.id, onDeleteElement]);
+
+  const isDraggingOrResizing = isDragging || isResizing || selectedIdsLength > 1;
+
+  if (el.type === "sticky") {
+    return (
+      <div className={isInteractive ? "pointer-events-auto" : "pointer-events-none"}>
+        <StickyComponent
+          element={el}
+          isSelected={isSelected}
+          currentUser={currentUser}
+          zoom={zoom}
+          onSelect={onSelect}
+          onUpdate={onUpdate}
+          onDelete={onDelete}
+          isDraggingOrResizing={isDraggingOrResizing}
+          activeTool={activeTool}
+          canWrite={canWrite}
+        />
+      </div>
+    );
+  }
+
+  if (el.type === "shape") {
+    return (
+      <div className={isInteractive ? "pointer-events-auto" : "pointer-events-none"}>
+        <ShapeComponent
+          element={el}
+          isSelected={isSelected}
+          currentUser={currentUser}
+          zoom={zoom}
+          onSelect={onSelect}
+          onUpdate={onUpdate}
+          onDelete={onDelete}
+          isDraggingOrResizing={isDraggingOrResizing}
+          activeTool={activeTool}
+          canWrite={canWrite}
+        />
+      </div>
+    );
+  }
+
+  if (el.type === "text") {
+    return (
+      <div className={isInteractive ? "pointer-events-auto" : "pointer-events-none"}>
+        <TextComponent
+          element={el}
+          isSelected={isSelected}
+          currentUser={currentUser}
+          zoom={zoom}
+          onSelect={onSelect}
+          onUpdate={onUpdate}
+          onDelete={onDelete}
+          isDraggingOrResizing={isDraggingOrResizing}
+          activeTool={activeTool}
+          canWrite={canWrite}
+        />
+      </div>
+    );
+  }
+
+  if (el.type === "image") {
+    const isPdfPage = el.id.startsWith("pdf-page-");
+    return (
+      <div className={isInteractive && !isPdfPage ? "pointer-events-auto" : "pointer-events-none"}>
+        <ImageComponent
+          element={el}
+          isSelected={isSelected}
+          currentUser={currentUser}
+          zoom={zoom}
+          onSelect={onSelect}
+          onUpdate={onUpdate}
+          onDelete={onDelete}
+          isDraggingOrResizing={isDraggingOrResizing}
+          activeTool={activeTool}
+          canWrite={canWrite}
+        />
+      </div>
+    );
+  }
+
+  return null;
+});
+
 interface WhiteboardCanvasProps {
   boardId: string;
   boardName: string;
@@ -242,6 +365,22 @@ export default function WhiteboardCanvas({
   const [panX, setPanX] = useState(window.innerWidth / 2 - 400);
   const [panY, setPanY] = useState(window.innerHeight / 2 - 300);
   const [zoom, setZoom] = useState(1);
+
+  const panXRef = useRef(panX);
+  const panYRef = useRef(panY);
+  const zoomRef = useRef(zoom);
+
+  useEffect(() => {
+    panXRef.current = panX;
+  }, [panX]);
+
+  useEffect(() => {
+    panYRef.current = panY;
+  }, [panY]);
+
+  useEffect(() => {
+    zoomRef.current = zoom;
+  }, [zoom]);
 
   // Whiteboard Elements State (loads instantly from LocalStorage cache as recovery fallback)
   const [elements, setElements] = useState<BoardElement[]>(() => {
@@ -507,10 +646,10 @@ export default function WhiteboardCanvas({
   const [undoStack, setUndoStack] = useState<UndoAction[]>([]);
   const [redoStack, setRedoStack] = useState<UndoAction[]>([]);
 
-  const pushToUndo = (action: UndoAction) => {
+  const pushToUndo = React.useCallback((action: UndoAction) => {
     setUndoStack((prev) => [...prev, action]);
     setRedoStack([]); // standard clear redo on new action
-  };
+  }, []);
 
   // Active Tool state
   const [activeTool, setActiveTool] = useState<Tool>("select");
@@ -684,8 +823,51 @@ export default function WhiteboardCanvas({
     setActiveUsersCount(Math.max(firestoreActiveUsersCount, wsCount));
   }, [firestoreActiveUsersCount, socketCollaborators, wsConnected]);
 
+  // Native non-passive Wheel/Pinch event listener for ultra-responsive zooming and scrolling
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleNativeWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      
+      const rect = container.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      const wheelValue = e.deltaY;
+      
+      // Support pinch-to-zoom (trackpad) perfectly and standard wheel scrolling smoothly
+      const isPinch = e.ctrlKey;
+      const zoomIntensity = isPinch ? 0.04 : 0.08;
+      const zoomFactor = wheelValue < 0 ? 1 + zoomIntensity : 1 - zoomIntensity;
+      
+      const currentZoom = zoomRef.current;
+      const currentPanX = panXRef.current;
+      const currentPanY = panYRef.current;
+
+      const newZoom = Math.min(3, Math.max(0.15, currentZoom * zoomFactor));
+      
+      // Calculate coordinates relative to canvas before zooming
+      const canvasMouseX = (mouseX - currentPanX) / currentZoom;
+      const canvasMouseY = (mouseY - currentPanY) / currentZoom;
+      
+      const newPanX = mouseX - canvasMouseX * newZoom;
+      const newPanY = mouseY - canvasMouseY * newZoom;
+
+      setPanX(newPanX);
+      setPanY(newPanY);
+      setZoom(newZoom);
+    };
+
+    container.addEventListener("wheel", handleNativeWheel, { passive: false });
+    return () => {
+      container.removeEventListener("wheel", handleNativeWheel);
+    };
+  }, []);
+
   // Flushes pending Solo changes to cloud
-  const flushPendingChanges = async () => {
+  const flushPendingChanges = React.useCallback(async () => {
     const queue = { ...pendingSyncElements.current };
     const keys = Object.keys(queue);
     if (keys.length === 0) {
@@ -723,10 +905,10 @@ export default function WhiteboardCanvas({
       hasUnsavedChanges.current = true;
       setSyncStatus('offline');
     }
-  };
+  }, [boardId]);
 
   // Centralized write-minimizer dispatcher handling local-first updates + debounced/immediate syncing
-  const saveElementLocallyAndSync = async (
+  const saveElementLocallyAndSync = React.useCallback(async (
     elementId: string,
     elementData: any,
     isMerge: boolean = false,
@@ -823,7 +1005,7 @@ export default function WhiteboardCanvas({
         setSyncStatus('offline');
       }
     }
-  };
+  }, [boardId, activeUsersCount, currentUser, setElements, setSyncStatus, flushPendingChanges]);
 
 
   // Synchronize unsaved changes on tab close or navigation away
@@ -1561,7 +1743,7 @@ export default function WhiteboardCanvas({
   };
 
   // Delete an element
-  const handleDeleteElement = (id: string) => {
+  const handleDeleteElement = React.useCallback((id: string) => {
     const target = elements.find((el) => el.id === id);
     if (target) {
       pushToUndo({ type: "delete", elementId: id, beforeData: target });
@@ -1572,7 +1754,7 @@ export default function WhiteboardCanvas({
         if (selectedId === id) setSelectedId(null);
       })
       .catch((err) => console.error("Error deleting element:", err));
-  };
+  }, [elements, pushToUndo, saveElementLocallyAndSync, selectedId, setSelectedId]);
 
   // Undo the last action from the local stack
   const handleUndo = async () => {
@@ -1820,7 +2002,7 @@ export default function WhiteboardCanvas({
   }, [selectedId, selectedIds, elements, clipboardElements, canWrite, zoom, boardId, handleUndo, handleRedo]);
 
   // Click handler to select an element
-  const handleSelectElement = (id: string, e: React.MouseEvent) => {
+  const handleSelectElement = React.useCallback((id: string, e: React.MouseEvent) => {
     // Eraser tool clicks delete elements immediately
     if (activeTool === "eraser") {
       e.stopPropagation();
@@ -1878,10 +2060,10 @@ export default function WhiteboardCanvas({
       });
       setElementStartPositions(positions);
     }
-  };
+  }, [activeTool, canWrite, handleDeleteElement, elements, selectedIds, setSelectedIds, setSelectedId, setIsDragging, setDragStart, setElementStartPositions]);
 
   // Update specific values of an element
-  const handleUpdateElement = (id: string, updates: Partial<BoardElement>) => {
+  const handleUpdateElement = React.useCallback((id: string, updates: Partial<BoardElement>) => {
     const el = elements.find((e) => e.id === id);
     if (el) {
       // Create a 'beforeData' object containing only the keys that are being updated
@@ -1901,7 +2083,7 @@ export default function WhiteboardCanvas({
     saveElementLocallyAndSync(id, updates, true).catch((err) =>
       console.error("Error updating element:", err)
     );
-  };
+  }, [elements, pushToUndo, saveElementLocallyAndSync]);
 
   // Color change handler that also updates selected element colors
   const handleColorChange = async (color: string) => {
@@ -2276,29 +2458,6 @@ export default function WhiteboardCanvas({
   const handleZoomOut = () => setZoom((prev) => Math.max(0.15, prev - 0.15));
   const handleZoomReset = () => setZoom(1);
 
-  // Mouse wheel zoom (intuitive infinite workspace feel!)
-  const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    const zoomIntensity = 0.05;
-
-    if (!containerRef.current) return;
-    const rect = containerRef.current.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-
-    const wheelValue = e.deltaY;
-    const zoomFactor = wheelValue < 0 ? 1 + zoomIntensity : 1 - zoomIntensity;
-    const newZoom = Math.min(3, Math.max(0.15, zoom * zoomFactor));
-
-    // Translation logic: center zoom calculation on current cursor coordinate
-    const canvasMouseX = (mouseX - panX) / zoom;
-    const canvasMouseY = (mouseY - panY) / zoom;
-
-    setPanX(mouseX - canvasMouseX * newZoom);
-    setPanY(mouseY - canvasMouseY * newZoom);
-    setZoom(newZoom);
-  };
-
   // Share Board link copying
   const copyBoardLink = () => {
     const link = `${window.location.origin}/?board=${boardId}`;
@@ -2566,7 +2725,6 @@ export default function WhiteboardCanvas({
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
-        onWheel={handleWheel}
         className={`w-full h-full relative outline-none select-none ${
           activeTool === "pan"
             ? "cursor-grab active:cursor-grabbing"
@@ -2591,141 +2749,36 @@ export default function WhiteboardCanvas({
           style={{
             transform: `translate(${panX}px, ${panY}px) scale(${zoom})`,
             transformOrigin: "0 0",
+            willChange: "transform",
           }}
         >
           {/* 1. Interactive DOM elements Layer (Sticky notes, Shapes, Textboxes) */}
           <div className="absolute inset-0 pointer-events-none z-10">
             {elements.map((el) => {
+              if (el.type === "drawing") return null;
+              
               const isSelected = selectedIds.includes(el.id);
               const isInteractive =
                 activeTool === "select" || activeTool === "eraser";
 
-              // Renders Sticky Note Elements
-              if (el.type === "sticky") {
-                return (
-                  <div
-                    key={el.id}
-                    className={
-                      isInteractive
-                        ? "pointer-events-auto"
-                        : "pointer-events-none"
-                    }
-                  >
-                    <StickyComponent
-                      element={el}
-                      isSelected={isSelected}
-                      currentUser={currentUser}
-                      zoom={zoom}
-                      onSelect={(e) => handleSelectElement(el.id, e)}
-                      onUpdate={(updates) =>
-                        handleUpdateElement(el.id, updates)
-                      }
-                      onDelete={() => handleDeleteElement(el.id)}
-                      isDraggingOrResizing={
-                        isDragging || isResizing || selectedIds.length > 1
-                      }
-                      activeTool={activeTool}
-                      canWrite={canWrite}
-                    />
-                  </div>
-                );
-              }
-
-              // Renders Shape Elements
-              if (el.type === "shape") {
-                return (
-                  <div
-                    key={el.id}
-                    className={
-                      isInteractive
-                        ? "pointer-events-auto"
-                        : "pointer-events-none"
-                    }
-                  >
-                    <ShapeComponent
-                      element={el}
-                      isSelected={isSelected}
-                      currentUser={currentUser}
-                      zoom={zoom}
-                      onSelect={(e) => handleSelectElement(el.id, e)}
-                      onUpdate={(updates) =>
-                        handleUpdateElement(el.id, updates)
-                      }
-                      onDelete={() => handleDeleteElement(el.id)}
-                      isDraggingOrResizing={
-                        isDragging || isResizing || selectedIds.length > 1
-                      }
-                      activeTool={activeTool}
-                      canWrite={canWrite}
-                    />
-                  </div>
-                );
-              }
-
-              // Renders Text Box Elements
-              if (el.type === "text") {
-                return (
-                  <div
-                    key={el.id}
-                    className={
-                      isInteractive
-                        ? "pointer-events-auto"
-                        : "pointer-events-none"
-                    }
-                  >
-                    <TextComponent
-                      element={el}
-                      isSelected={isSelected}
-                      currentUser={currentUser}
-                      zoom={zoom}
-                      onSelect={(e) => handleSelectElement(el.id, e)}
-                      onUpdate={(updates) =>
-                        handleUpdateElement(el.id, updates)
-                      }
-                      onDelete={() => handleDeleteElement(el.id)}
-                      isDraggingOrResizing={
-                        isDragging || isResizing || selectedIds.length > 1
-                      }
-                      activeTool={activeTool}
-                      canWrite={canWrite}
-                    />
-                  </div>
-                );
-              }
-
-              // Renders Image Elements
-              if (el.type === "image") {
-                const isPdfPage = el.id.startsWith("pdf-page-");
-                return (
-                  <div
-                    key={el.id}
-                    className={
-                      isInteractive && !isPdfPage
-                        ? "pointer-events-auto"
-                        : "pointer-events-none"
-                    }
-                  >
-                    <ImageComponent
-                      element={el}
-                      isSelected={isSelected}
-                      currentUser={currentUser}
-                      zoom={zoom}
-                      onSelect={(e) => handleSelectElement(el.id, e)}
-                      onUpdate={(updates) =>
-                        handleUpdateElement(el.id, updates)
-                      }
-                      onDelete={() => handleDeleteElement(el.id)}
-                      isDraggingOrResizing={
-                        isDragging || isResizing || selectedIds.length > 1
-                      }
-                      activeTool={activeTool}
-                      canWrite={canWrite}
-                    />
-                  </div>
-                );
-              }
-
-              return null;
+              return (
+                <ElementWrapper
+                  key={el.id}
+                  el={el}
+                  isSelected={isSelected}
+                  isInteractive={isInteractive}
+                  currentUser={currentUser}
+                  zoom={zoom}
+                  isDragging={isDragging}
+                  isResizing={isResizing}
+                  selectedIdsLength={selectedIds.length}
+                  activeTool={activeTool}
+                  canWrite={canWrite}
+                  onSelectElement={handleSelectElement}
+                  onUpdateElement={handleUpdateElement}
+                  onDeleteElement={handleDeleteElement}
+                />
+              );
             })}
           </div>
 
