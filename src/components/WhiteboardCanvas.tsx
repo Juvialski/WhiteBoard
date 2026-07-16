@@ -148,6 +148,81 @@ function simplifyPoints(points: Point[], tolerance: number = 1.0): Point[] {
   return result;
 }
 
+// Memoized individual drawing component for high performance during zoom/pan re-renders
+const DrawingItem = React.memo(({ 
+  el, 
+  isSelected, 
+  isInteractive, 
+  activeTool, 
+  handleSelectElement 
+}: { 
+  el: any, 
+  isSelected: boolean, 
+  isInteractive: boolean, 
+  activeTool: string, 
+  handleSelectElement: (id: string, e: React.MouseEvent) => void 
+}) => {
+  const pathData = React.useMemo(() => getSvgPathFromPoints(el.points), [el.points]);
+  
+  return (
+    <g
+      className={
+        isInteractive
+          ? "pointer-events-auto cursor-pointer"
+          : "pointer-events-none"
+      }
+      onMouseDown={(e) => handleSelectElement(el.id, e)}
+    >
+      {/* Invisible thicker hit area for easier clicking */}
+      <path
+        d={pathData}
+        fill="none"
+        stroke="transparent"
+        strokeWidth={(el.width || 2) + 16}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d={pathData}
+        fill="none"
+        stroke={el.color}
+        strokeWidth={el.width}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={
+          el.isHighlighter
+            ? "mix-blend-multiply"
+            : "drop-shadow-sm"
+        }
+        style={
+          isSelected
+            ? { filter: "drop-shadow(0 0 4px #3b82f6)" }
+            : {}
+        }
+      />
+    </g>
+  );
+});
+
+const RemoteStreamItem = React.memo(({ stream }: { stream: any }) => {
+  const pathData = React.useMemo(() => getSvgPathFromPoints(stream.points), [stream.points]);
+  return (
+    <path
+      d={pathData}
+      fill="none"
+      stroke={stream.color}
+      strokeWidth={stream.width}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={
+        stream.isHighlighter
+          ? "mix-blend-multiply"
+          : "drop-shadow-sm"
+      }
+    />
+  );
+});
+
 interface WhiteboardCanvasProps {
   boardId: string;
   boardName: string;
@@ -233,7 +308,7 @@ export default function WhiteboardCanvas({
       wsRef.current = socket;
       
       socket.onopen = () => {
-        console.log("WebSocket connected to real-time relay");
+        console.log("WebSocket connected to real-time relay for board:", boardId);
         setWsConnected(true);
         // Register client to this specific board room
         socket.send(JSON.stringify({
@@ -2771,48 +2846,18 @@ export default function WhiteboardCanvas({
             {elements
               .filter((el) => el.type === "drawing")
               .map((el: any) => {
-                const pathData = getSvgPathFromPoints(el.points);
                 const isSelected = selectedIds.includes(el.id);
                 const isInteractive =
                   activeTool === "select" || activeTool === "eraser";
                 return (
-                  <g
+                  <DrawingItem
                     key={el.id}
-                    className={
-                      isInteractive
-                        ? "pointer-events-auto cursor-pointer"
-                        : "pointer-events-none"
-                    }
-                    onMouseDown={(e) => handleSelectElement(el.id, e)}
-                  >
-                    {/* Invisible thicker hit area for easier clicking */}
-                    <path
-                      d={pathData}
-                      fill="none"
-                      stroke="transparent"
-                      strokeWidth={el.width + 16}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                    <path
-                      d={pathData}
-                      fill="none"
-                      stroke={el.color}
-                      strokeWidth={el.width}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      className={
-                        el.isHighlighter
-                          ? "mix-blend-multiply"
-                          : "drop-shadow-sm"
-                      }
-                      style={
-                        isSelected
-                          ? { filter: "drop-shadow(0 0 4px #3b82f6)" }
-                          : {}
-                      }
-                    />
-                  </g>
+                    el={el}
+                    isSelected={isSelected}
+                    isInteractive={isInteractive}
+                    activeTool={activeTool}
+                    handleSelectElement={handleSelectElement}
+                  />
                 );
               })}
             {/* Render current local drawing */}
@@ -2841,19 +2886,9 @@ export default function WhiteboardCanvas({
             {Object.entries(remoteDrawingStreams).map(([userId, stream]) => {
               if (!stream || stream.points.length === 0) return null;
               return (
-                <path
+                <RemoteStreamItem 
                   key={`stream-${userId}`}
-                  d={getSvgPathFromPoints(stream.points)}
-                  fill="none"
-                  stroke={stream.color}
-                  strokeWidth={stream.width}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className={
-                    stream.isHighlighter
-                      ? "mix-blend-multiply"
-                      : "drop-shadow-sm"
-                  }
+                  stream={stream}
                 />
               );
             })}
@@ -2864,7 +2899,7 @@ export default function WhiteboardCanvas({
             boardId={boardId}
             currentUser={currentUser}
             zoom={zoom}
-            socketCollaborators={socketCollaborators.length > 0 || wsConnected ? socketCollaborators : undefined}
+            socketCollaborators={wsConnected ? socketCollaborators : undefined}
           />
 
         </div>
