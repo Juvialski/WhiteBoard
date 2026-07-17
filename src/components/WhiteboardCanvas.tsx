@@ -398,6 +398,7 @@ export default function WhiteboardCanvas({
     }
     return [];
   });
+  
   const [clipboardElements, setClipboardElements] = useState<BoardElement[]>([]);
   const [boardData, setBoardData] = useState<Whiteboard | null>(null);
 
@@ -954,23 +955,35 @@ export default function WhiteboardCanvas({
 
   // Monitor active cursors to determine Solo User Mode (Solo) vs Collaborative Mode (Multiplayer)
   useEffect(() => {
-    const cursorsRef = collection(db, "whiteboards", boardId, "cursors");
-    const unsubscribe = onSnapshot(cursorsRef, (snapshot) => {
-      const now = Date.now();
-      let otherUsers = 0;
-      snapshot.forEach((docSnap) => {
-        if (docSnap.id !== currentUser.id) {
-          const data = docSnap.data();
-          // Consider a user active if their last cursor ping was within the last 45 seconds
-          if (now - (data.lastActive || 0) < 45000) {
-            otherUsers++;
+    let isMounted = true;
+    const fetchCursors = async () => {
+      try {
+        const cursorsRef = collection(db, "whiteboards", boardId, "cursors");
+        const snapshot = await import('firebase/firestore').then(m => m.getDocs(cursorsRef));
+        if (!isMounted) return;
+        const now = Date.now();
+        let otherUsers = 0;
+        snapshot.forEach((docSnap) => {
+          if (docSnap.id !== currentUser.id) {
+            const data = docSnap.data();
+            if (now - (data.lastActive || 0) < 45000) {
+              otherUsers++;
+            }
           }
-        }
-      });
-      setFirestoreActiveUsersCount(otherUsers + 1);
-    });
+        });
+        setFirestoreActiveUsersCount(otherUsers + 1);
+      } catch (err) {
+        console.error("Error fetching cursors:", err);
+      }
+    };
 
-    return () => unsubscribe();
+    fetchCursors();
+    const interval = setInterval(fetchCursors, 30000); // Check every 30 seconds instead of real-time reads
+    
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, [boardId, currentUser.id]);
 
   // Combine both sources of truth (WebSockets + Firestore) to determine Solo vs Collaborating
@@ -1826,7 +1839,7 @@ export default function WhiteboardCanvas({
   }, [boardId, elements.length, panX, panY, zoom, canWrite]);
 
   // Handle Board Canvas Mouse Events
-  const handleMouseDown = (e: React.MouseEvent) => {
+  const handleMouseDown = (e: React.PointerEvent) => {
     // Only primary clicks trigger actions
     if (e.button !== 0) return;
 
@@ -1993,7 +2006,7 @@ export default function WhiteboardCanvas({
     }
   };
 
-  const handleMouseMove = (e: React.MouseEvent) => {
+  const handleMouseMove = (e: React.PointerEvent) => {
     updateCursorPosition(e.clientX, e.clientY);
 
     // 1. Panning canvas background
@@ -2157,7 +2170,7 @@ export default function WhiteboardCanvas({
     }
   };
 
-  const handleMouseUp = async (e: React.MouseEvent) => {
+  const handleMouseUp = async (e: React.PointerEvent) => {
     containerRectRef.current = null;
     // 0. Finish drag selection box
     if (dragSelectStart) {
@@ -2337,10 +2350,10 @@ export default function WhiteboardCanvas({
 
     saveElementLocallyAndSync(id, null, false, 'delete')
       .then(() => {
-        if (selectedId === id) setSelectedId(null);
+        setSelectedId(prev => prev === id ? null : prev);
       })
       .catch((err) => console.error("Error deleting element:", err));
-  }, [pushToUndo, saveElementLocallyAndSync, selectedId, setSelectedId]);
+  }, [pushToUndo, saveElementLocallyAndSync, setSelectedId]);
 
   // Undo the last action from the local stack
   const handleUndo = async () => {
@@ -2608,50 +2621,50 @@ export default function WhiteboardCanvas({
 
     e.stopPropagation();
 
-    const target = elements.find((el) => el.id === id);
+    const target = elementsRef.current.find((el) => el.id === id);
     if (!target) return;
 
-    // Multi-selection with Shift key
-    let updatedSelectedIds = [...selectedIds];
-    if (e.shiftKey) {
-      if (selectedIds.includes(id)) {
-        updatedSelectedIds = selectedIds.filter((selected) => selected !== id);
-      } else {
-        updatedSelectedIds.push(id);
-      }
-    } else {
-      if (!selectedIds.includes(id)) {
-        updatedSelectedIds = [id];
-      }
-    }
-
-    setSelectedIds(updatedSelectedIds);
-    setSelectedId(id);
-
-    if (canWrite) {
-      setIsDragging(true);
-      setDragStart({ x: e.clientX, y: e.clientY });
-
-      // Store starting position for every element in selection
-      const positions: Record<string, any> = {};
-      elements.forEach((el) => {
-        if (updatedSelectedIds.includes(el.id)) {
-          if ((el as any).locked) return;
-          if (el.type !== "drawing") {
-            const boundedEl = el as any;
-            positions[el.id] = { x: boundedEl.x, y: boundedEl.y };
-          } else {
-            positions[el.id] = { points: [...el.points] };
-          }
+    setSelectedIds((prevSelectedIds) => {
+      let updatedSelectedIds = [...prevSelectedIds];
+      if (e.shiftKey) {
+        if (prevSelectedIds.includes(id)) {
+          updatedSelectedIds = prevSelectedIds.filter((selected) => selected !== id);
+        } else {
+          updatedSelectedIds.push(id);
         }
-      });
-      setElementStartPositions(positions);
-    }
-  }, [activeTool, canWrite, handleDeleteElement, elements, selectedIds, setSelectedIds, setSelectedId, setIsDragging, setDragStart, setElementStartPositions]);
+      } else {
+        if (!prevSelectedIds.includes(id)) {
+          updatedSelectedIds = [id];
+        }
+      }
+
+      if (canWrite) {
+        setIsDragging(true);
+        setDragStart({ x: e.clientX, y: e.clientY });
+
+        // Store starting position for every element in selection
+        const positions: Record<string, any> = {};
+        elementsRef.current.forEach((el) => {
+          if (updatedSelectedIds.includes(el.id)) {
+            if ((el as any).locked) return;
+            if (el.type !== "drawing") {
+              const boundedEl = el as any;
+              positions[el.id] = { x: boundedEl.x, y: boundedEl.y };
+            } else {
+              positions[el.id] = { points: [...el.points] };
+            }
+          }
+        });
+        setElementStartPositions(positions);
+      }
+      return updatedSelectedIds;
+    });
+    setSelectedId(id);
+  }, [activeTool, canWrite, handleDeleteElement, setSelectedIds, setSelectedId, setIsDragging, setDragStart, setElementStartPositions]);
 
   // Update specific values of an element
   const handleUpdateElement = React.useCallback((id: string, updates: Partial<BoardElement>) => {
-    const el = elements.find((e) => e.id === id);
+    const el = elementsRef.current.find((e) => e.id === id);
     if (el) {
       // Create a 'beforeData' object containing only the keys that are being updated
       const beforeData: any = {};
@@ -2670,7 +2683,7 @@ export default function WhiteboardCanvas({
     saveElementLocallyAndSync(id, updates, true).catch((err) =>
       console.error("Error updating element:", err)
     );
-  }, [elements, pushToUndo, saveElementLocallyAndSync]);
+  }, [pushToUndo, saveElementLocallyAndSync]);
 
   // Color change handler that also updates selected element colors
   const handleColorChange = async (color: string) => {
@@ -3393,12 +3406,13 @@ export default function WhiteboardCanvas({
       {/* Main Interactive Interactive Zoomable & Pannable Canvas Container */}
       <div
         ref={containerRef}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
+        onPointerDown={handleMouseDown}
+        onPointerMove={handleMouseMove}
+        onPointerUp={handleMouseUp}
+        onPointerLeave={handleMouseUp}
         className="w-full h-full relative outline-none select-none"
         style={{
+          touchAction: "none",
           cursor:
             activeTool === "pan"
               ? isPanning
