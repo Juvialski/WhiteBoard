@@ -7,7 +7,7 @@ interface LiveCursorsProps {
   boardId: string;
   currentUser: UserProfile;
   zoom?: number;
-  socketCollaborators?: Collaborator[];
+  socketCollaboratorsRef?: React.MutableRefObject<Record<string, Collaborator>>;
 }
 
 const CollaboratorCursor = React.memo(({ collaborator, zoom }: { collaborator: Collaborator, zoom: number }) => {
@@ -45,13 +45,17 @@ const CollaboratorCursor = React.memo(({ collaborator, zoom }: { collaborator: C
   );
 });
 
-export default function LiveCursors({ boardId, currentUser, zoom = 1, socketCollaborators }: LiveCursorsProps) {
+export default function LiveCursors({ boardId, currentUser, zoom = 1, socketCollaboratorsRef }: LiveCursorsProps) {
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
 
   useEffect(() => {
-    if (socketCollaborators && socketCollaborators.length > 0) {
-      setCollaborators(socketCollaborators);
-      return;
+    let interval: any;
+    if (socketCollaboratorsRef) {
+      interval = setInterval(() => {
+        const list = Object.values(socketCollaboratorsRef.current);
+        setCollaborators(list);
+      }, 1000 / 30);
+      return () => clearInterval(interval);
     }
 
     // Listen to all active cursors for this board (Firestore fallback)
@@ -81,7 +85,7 @@ export default function LiveCursors({ boardId, currentUser, zoom = 1, socketColl
     });
 
     return () => unsubscribe();
-  }, [boardId, currentUser.id, socketCollaborators]);
+  }, [boardId, currentUser.id, socketCollaboratorsRef]);
 
   return (
     <div className="absolute inset-0 pointer-events-none z-40" id="live-cursors-layer">

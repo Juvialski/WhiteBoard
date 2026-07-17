@@ -227,6 +227,29 @@ const RemoteStreamItem = React.memo(({ stream }: { stream: any }) => {
   );
 });
 
+const RemoteDrawingStreamsLayer = React.memo(({ streamsRef, dirtyRef }: { streamsRef: any, dirtyRef: any }) => {
+  const [streams, setStreams] = useState<any>({});
+  
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (dirtyRef.current) {
+        setStreams({ ...streamsRef.current });
+        dirtyRef.current = false;
+      }
+    }, 1000 / 30);
+    return () => clearInterval(interval);
+  }, [streamsRef, dirtyRef]);
+
+  return (
+    <>
+      {Object.entries(streams).map(([userId, stream]: any) => {
+        if (!stream || stream.points.length === 0) return null;
+        return <RemoteStreamItem key={`stream-${userId}`} stream={stream} />;
+      })}
+    </>
+  );
+});
+
 const ElementWrapper = React.memo(({
   el,
   isSelected,
@@ -405,14 +428,15 @@ export default function WhiteboardCanvas({
   // Real-Time WebSockets Sync & Caching States
   const wsRef = useRef<WebSocket | null>(null);
   const [wsConnected, setWsConnected] = useState(false);
-  const [socketCollaborators, setSocketCollaborators] = useState<Collaborator[]>([]);
+  const [activeCollaboratorIds, setActiveCollaboratorIds] = useState<string[]>([]);
   const socketCollaboratorsRef = useRef<Record<string, Collaborator>>({});
-  const [remoteDrawingStreams, setRemoteDrawingStreams] = useState<Record<string, {
+  const remoteDrawingStreamsRef = useRef<Record<string, {
     points: Point[];
     color: string;
     width: number;
     isHighlighter: boolean;
   }>>({});
+  const remoteDrawingStreamsDirtyRef = useRef(false);
   const [remoteSelections, setRemoteSelections] = useState<Record<string, {
     userName: string;
     color: string;
@@ -477,6 +501,7 @@ export default function WhiteboardCanvas({
           const msg = JSON.parse(event.data);
           if (msg.type === "cursor") {
             // Track cursor movement from remote collaborator
+            const isNew = !socketCollaboratorsRef.current[msg.userId];
             socketCollaboratorsRef.current[msg.userId] = {
               id: msg.userId,
               name: msg.name,
@@ -485,25 +510,22 @@ export default function WhiteboardCanvas({
               y: msg.y,
               lastActive: msg.lastActive
             };
-            setSocketCollaborators(Object.values(socketCollaboratorsRef.current));
+            if (isNew) {
+              setActiveCollaboratorIds(Object.keys(socketCollaboratorsRef.current));
+            }
           } else if (msg.type === "drawing_stream") {
             // Stream sketch points real-time
-            setRemoteDrawingStreams((prev) => ({
-              ...prev,
-              [msg.userId]: {
-                points: msg.points,
-                color: msg.color,
-                width: msg.width,
-                isHighlighter: msg.isHighlighter
-              }
-            }));
+            remoteDrawingStreamsRef.current[msg.userId] = {
+              points: msg.points,
+              color: msg.color,
+              width: msg.width,
+              isHighlighter: msg.isHighlighter
+            };
+            remoteDrawingStreamsDirtyRef.current = true;
           } else if (msg.type === "drawing_stream_end") {
             // Clear stream when finished drawing
-            setRemoteDrawingStreams((prev) => {
-              const copy = { ...prev };
-              delete copy[msg.userId];
-              return copy;
-            });
+            delete remoteDrawingStreamsRef.current[msg.userId];
+            remoteDrawingStreamsDirtyRef.current = true;
           } else if (msg.type === "element_update") {
             const { elementId, elementData, actionType, isMerge } = msg;
             setElements((prev) => {
@@ -585,11 +607,12 @@ export default function WhiteboardCanvas({
       });
       if (changed) {
         socketCollaboratorsRef.current = updated;
-        setSocketCollaborators(Object.values(updated));
+        setActiveCollaboratorIds(Object.keys(updated));
       }
     }, 5000);
     return () => clearInterval(interval);
   }, []);
+
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -613,7 +636,7 @@ export default function WhiteboardCanvas({
 
   // Keep remote selections in sync with active collaborators
   useEffect(() => {
-    const activeUserIds = new Set(socketCollaborators.map(c => c.id));
+    const activeUserIds = new Set(activeCollaboratorIds);
     setRemoteSelections((prev) => {
       let changed = false;
       const filtered = { ...prev };
@@ -625,7 +648,7 @@ export default function WhiteboardCanvas({
       });
       return changed ? filtered : prev;
     });
-  }, [socketCollaborators]);
+  }, [activeCollaboratorIds]);
 
   // Elements Ref to always bypass stale closure contexts safely in async event handlers
   const elementsRef = useRef<BoardElement[]>([]);
@@ -852,11 +875,12 @@ export default function WhiteboardCanvas({
   };
 
   // In-progress local drawings (drawn locally on canvas for zero-latency feedback)
-  const [localDrawingPoints, setLocalDrawingPoints] = useState<Point[]>([]);
+  const localDrawingPathRef = useRef<SVGPathElement>(null);
 
   // Drawing state tracking via refs to bypass React state-update asynchronous latency/closures
   const isDrawingRef = useRef(false);
   const drawingPointsRef = useRef<Point[]>([]);
+  const lastStreamBroadcast = useRef<number>(0);
 
   // Clear confirmation modal state
   const [showClearConfirm, setShowClearConfirm] = useState(false);
@@ -988,9 +1012,9 @@ export default function WhiteboardCanvas({
 
   // Combine both sources of truth (WebSockets + Firestore) to determine Solo vs Collaborating
   useEffect(() => {
-    const wsCount = wsConnected ? socketCollaborators.length + 1 : 1;
+    const wsCount = wsConnected ? activeCollaboratorIds.length + 1 : 1;
     setActiveUsersCount(Math.max(firestoreActiveUsersCount, wsCount));
-  }, [firestoreActiveUsersCount, socketCollaborators, wsConnected]);
+  }, [firestoreActiveUsersCount, activeCollaboratorIds, wsConnected]);
 
   // Native non-passive Wheel/Pinch event listener for ultra-responsive zooming and scrolling
   useEffect(() => {
@@ -1104,169 +1128,6 @@ export default function WhiteboardCanvas({
         isDrawingRef.current = false;
         return;
       }
-
-      if (e.touches.length === 1) {
-        const t = e.touches[0];
-        const clientX = t.clientX;
-        const clientY = t.clientY;
-        const coords = screenToCanvasCoords(clientX, clientY);
-
-        if (!canWriteRef.current && activeToolRef.current !== "select" && activeToolRef.current !== "pan") {
-          triggerReadOnlyAlert();
-          return;
-        }
-
-        if (container) {
-          containerRectRef.current = container.getBoundingClientRect();
-        }
-
-        // 1. Draw mode
-        if (activeToolRef.current === "pencil" || activeToolRef.current === "highlighter") {
-          isDrawingRef.current = true;
-          drawingPointsRef.current = [coords];
-          setLocalDrawingPoints([coords]);
-          return;
-        }
-
-        // 2. Eraser mode
-        if (activeToolRef.current === "eraser") {
-          const el = findElementAtCoords(coords);
-          if (el) {
-            handleDeleteElement(el.id);
-          }
-          return;
-        }
-
-        // 3. Selection tool interactions
-        if (activeToolRef.current === "select") {
-          const currentSelectedId = selectedIdRef.current;
-          const currentSelectedEl = currentSelectedId ? elementsRef.current.find(el => el.id === currentSelectedId) : null;
-
-          if (currentSelectedEl && isNearResizeHandle(currentSelectedEl, coords)) {
-            setIsResizing(true);
-            const startPos = { x: clientX, y: clientY };
-            dragStartRef.current = startPos;
-            setDragStart(startPos);
-            setElementStartSize({ w: (currentSelectedEl as any).width, h: (currentSelectedEl as any).height });
-            setElementStartPos({ x: (currentSelectedEl as any).x, y: (currentSelectedEl as any).y });
-            return;
-          }
-
-          const el = findElementAtCoords(coords);
-          if (el) {
-            setSelectedId(el.id);
-            setSelectedIds([el.id]);
-
-            if (canWriteRef.current && !(el as any).locked) {
-              setIsDragging(true);
-              const startPos = { x: clientX, y: clientY };
-              dragStartRef.current = startPos;
-              setDragStart(startPos);
-
-              const positions: Record<string, any> = {};
-              const targetIds = [el.id];
-              elementsRef.current.forEach((item) => {
-                if (targetIds.includes(item.id)) {
-                  if ((item as any).locked) return;
-                  if (item.type !== "drawing") {
-                    positions[item.id] = { x: (item as any).x, y: (item as any).y };
-                  } else {
-                    positions[item.id] = { points: [...item.points] };
-                  }
-                }
-              });
-              setElementStartPositions(positions);
-            }
-            return;
-          } else {
-            // Touch empty canvas under Select tool: auto-pan! (Super premium UX for mobile viewports)
-            setSelectedId(null);
-            setSelectedIds([]);
-
-            setIsPanning(true);
-            const startPos = { x: clientX, y: clientY };
-            dragStartRef.current = startPos;
-            setDragStart(startPos);
-            return;
-          }
-        }
-
-        // 4. Pan mode
-        if (activeToolRef.current === "pan") {
-          setIsPanning(true);
-          const startPos = { x: clientX, y: clientY };
-          dragStartRef.current = startPos;
-          setDragStart(startPos);
-          return;
-        }
-
-        // 5. Spawn elements instantly on touch start
-        if (activeToolRef.current === "sticky") {
-          const id = "sticky-" + Date.now() + Math.floor(Math.random() * 100);
-          const newSticky: StickyElement = {
-            id,
-            type: "sticky",
-            x: coords.x - 75,
-            y: coords.y - 75,
-            width: 150,
-            height: 150,
-            text: "",
-            color: activeColorRef.current,
-            zIndex: elementsRef.current.length + 1,
-            reactions: {},
-          };
-          saveElementLocallyAndSync(id, newSticky);
-          pushToUndo({ type: "add", elementId: id, afterData: newSticky });
-          setActiveTool("select");
-          setSelectedId(id);
-          return;
-        }
-
-        if (activeToolRef.current === "shape") {
-          const id = "shape-" + Date.now() + Math.floor(Math.random() * 100);
-          const newShape: ShapeElement = {
-            id,
-            type: "shape",
-            shapeType: activeShape,
-            x: coords.x - 75,
-            y: coords.y - 75,
-            width: 150,
-            height: 150,
-            text: "",
-            color: activeColorRef.current,
-            borderColor: "#1e293b",
-            zIndex: elementsRef.current.length + 1,
-            reactions: {},
-          };
-          saveElementLocallyAndSync(id, newShape);
-          pushToUndo({ type: "add", elementId: id, afterData: newShape });
-          setActiveTool("select");
-          setSelectedId(id);
-          return;
-        }
-
-        if (activeToolRef.current === "text") {
-          const id = "text-" + Date.now() + Math.floor(Math.random() * 100);
-          const newText: TextElement = {
-            id,
-            type: "text",
-            x: coords.x - 100,
-            y: coords.y - 25,
-            width: 200,
-            height: 50,
-            text: "",
-            color: activeColorRef.current === "#4b5563" ? "#4b5563" : "#1e293b",
-            fontSize: 18,
-            zIndex: elementsRef.current.length + 1,
-            reactions: {},
-          };
-          saveElementLocallyAndSync(id, newText);
-          pushToUndo({ type: "add", elementId: id, afterData: newText });
-          setActiveTool("select");
-          setSelectedId(id);
-          return;
-        }
-      }
     };
 
     const handleNativeTouchMove = (e: TouchEvent) => {
@@ -1293,131 +1154,10 @@ export default function WhiteboardCanvas({
         setPanY(newPanY);
         return;
       }
-
-      // 2. Single touch move
-      if (e.touches.length === 1) {
-        const t = e.touches[0];
-        const clientX = t.clientX;
-        const clientY = t.clientY;
-
-        updateCursorPosition(clientX, clientY);
-
-        if (isPanningRef.current || isDrawingRef.current || isDraggingRef.current || isResizingRef.current) {
-          e.preventDefault(); // lock page scrolling
-        }
-
-        // Panning background
-        if (isPanningRef.current) {
-          const dx = clientX - dragStartRef.current.x;
-          const dy = clientY - dragStartRef.current.y;
-          setPanX((prev) => prev + dx);
-          setPanY((prev) => prev + dy);
-
-          const newStart = { x: clientX, y: clientY };
-          dragStartRef.current = newStart;
-          setDragStart(newStart);
-          return;
-        }
-
-        // Drawing freehand
-        if (isDrawingRef.current && (activeToolRef.current === "pencil" || activeToolRef.current === "highlighter")) {
-          const coords = screenToCanvasCoords(clientX, clientY);
-          const lastPoint = drawingPointsRef.current[drawingPointsRef.current.length - 1];
-          let addPoint = true;
-          if (lastPoint) {
-            const dist = Math.sqrt(Math.pow(coords.x - lastPoint.x, 2) + Math.pow(coords.y - lastPoint.y, 2));
-            if (dist < 2) addPoint = false;
-          }
-
-          if (addPoint) {
-            const updated = [...drawingPointsRef.current, coords];
-            drawingPointsRef.current = updated;
-            setLocalDrawingPoints(updated);
-
-            if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-              wsRef.current.send(JSON.stringify({
-                type: "drawing_stream",
-                boardId,
-                userId: currentUser.id,
-                userName: currentUser.name,
-                color: activeToolRef.current === "highlighter" ? `${activeColorRef.current}80` : activeColorRef.current,
-                width: activeToolRef.current === "highlighter" ? strokeWidthRef.current * 2.5 : strokeWidthRef.current,
-                points: updated,
-                isHighlighter: activeToolRef.current === "highlighter"
-              }));
-            }
-          }
-          return;
-        }
-
-        // Moving elements
-        if (isDraggingRef.current && selectedIdsRef.current.length > 0) {
-          const dx = (clientX - dragStartRef.current.x) / zoomRef.current;
-          const dy = (clientY - dragStartRef.current.y) / zoomRef.current;
-
-          setElements((prev) =>
-            prev.map((el) => {
-              if (selectedIdsRef.current.includes(el.id)) {
-                const startPos = elementStartPositions[el.id];
-                if (startPos) {
-                  if (el.type !== "drawing") {
-                    return {
-                      ...el,
-                      x: startPos.x + dx,
-                      y: startPos.y + dy,
-                    };
-                  } else {
-                    return {
-                      ...el,
-                      points: startPos.points.map((p: any) => ({
-                        x: p.x + dx,
-                        y: p.y + dy,
-                      })),
-                    };
-                  }
-                }
-              }
-              return el;
-            })
-          );
-          return;
-        }
-
-        // Resizing elements
-        if (isResizingRef.current && selectedIdRef.current) {
-          const dx = (clientX - dragStartRef.current.x) / zoomRef.current;
-          const dy = (clientY - dragStartRef.current.y) / zoomRef.current;
-
-          setElements((prev) =>
-            prev.map((el) => {
-              if (el.id === selectedIdRef.current && el.type !== "drawing") {
-                if (el.type === "image") {
-                  const startW = elementStartSize.w;
-                  const startH = elementStartSize.h;
-                  const ratio = startW > 0 ? startH / startW : 1;
-                  const newW = Math.max(40, startW + dx);
-                  const newH = Math.max(40, newW * ratio);
-                  return { ...el, width: newW, height: newH };
-                }
-                return {
-                  ...el,
-                  width: Math.max(60, elementStartSize.w + dx),
-                  height: Math.max(60, elementStartSize.h + dy),
-                };
-              }
-              return el;
-            })
-          );
-          return;
-        }
-      }
     };
 
     const handleNativeTouchEnd = (e: TouchEvent) => {
-      if (e.touches.length === 0) {
-        touchStartData.dist = 0;
-        handleMouseUp(null as any);
-      } else if (e.touches.length === 1) {
+      if (e.touches.length === 0 || e.touches.length === 1) {
         touchStartData.dist = 0;
       }
     };
@@ -1874,7 +1614,7 @@ export default function WhiteboardCanvas({
     if (activeTool === "pencil" || activeTool === "highlighter") {
       isDrawingRef.current = true;
       drawingPointsRef.current = [coords];
-      setLocalDrawingPoints([coords]);
+      if (localDrawingPathRef.current) localDrawingPathRef.current.setAttribute("d", getSvgPathFromPoints([coords]));
       return;
     }
 
@@ -2084,10 +1824,12 @@ export default function WhiteboardCanvas({
       }
 
       drawingPointsRef.current = updated;
-      setLocalDrawingPoints(updated);
+      if (localDrawingPathRef.current) localDrawingPathRef.current.setAttribute("d", getSvgPathFromPoints(updated));
 
       // Broadcast active drawing path coordinates to other users over WebSocket for real-time collaboration
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      const now = Date.now();
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && now - lastStreamBroadcast.current > 40) {
+        lastStreamBroadcast.current = now;
         wsRef.current.send(JSON.stringify({
           type: "drawing_stream",
           boardId,
@@ -2231,7 +1973,7 @@ export default function WhiteboardCanvas({
         }
       }
       drawingPointsRef.current = [];
-      setLocalDrawingPoints([]);
+      if (localDrawingPathRef.current) localDrawingPathRef.current.setAttribute("d", "");
       return;
     }
 
@@ -3410,7 +3152,7 @@ export default function WhiteboardCanvas({
         onPointerMove={handleMouseMove}
         onPointerUp={handleMouseUp}
         onPointerLeave={handleMouseUp}
-        className="w-full h-full relative outline-none select-none"
+        className="w-full h-full relative outline-none select-none touch-none"
         style={{
           touchAction: "none",
           cursor:
@@ -3558,38 +3300,29 @@ export default function WhiteboardCanvas({
                   />
                 );
               })}
-            {/* Render current local drawing */}
-            {localDrawingPoints.length > 0 && (
-              <path
-                d={getSvgPathFromPoints(localDrawingPoints)}
-                fill="none"
-                stroke={
-                  activeTool === "highlighter"
-                    ? `${activeColor}80`
-                    : activeColor
-                }
-                strokeWidth={
-                  activeTool === "highlighter" ? strokeWidth * 2.5 : strokeWidth
-                }
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className={
-                  activeTool === "highlighter"
-                    ? "mix-blend-multiply"
-                    : "drop-shadow-sm"
-                }
-              />
-            )}
+            {/* Render current local drawing imperatively */}
+            <path
+              ref={localDrawingPathRef}
+              d=""
+              fill="none"
+              stroke={
+                activeTool === "highlighter"
+                  ? `${activeColor}80`
+                  : activeColor
+              }
+              strokeWidth={
+                activeTool === "highlighter" ? strokeWidth * 2.5 : strokeWidth
+              }
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className={
+                activeTool === "highlighter"
+                  ? "mix-blend-multiply"
+                  : "drop-shadow-sm"
+              }
+            />
             {/* Render remote active drawing streams */}
-            {Object.entries(remoteDrawingStreams).map(([userId, stream]) => {
-              if (!stream || stream.points.length === 0) return null;
-              return (
-                <RemoteStreamItem 
-                  key={`stream-${userId}`}
-                  stream={stream}
-                />
-              );
-            })}
+            <RemoteDrawingStreamsLayer streamsRef={remoteDrawingStreamsRef} dirtyRef={remoteDrawingStreamsDirtyRef} />
           </svg>
 
           {/* 3. Real-Time Collaborative Cursors Tracker Overlay */}
@@ -3597,7 +3330,7 @@ export default function WhiteboardCanvas({
             boardId={boardId}
             currentUser={currentUser}
             zoom={zoom}
-            socketCollaborators={wsConnected ? socketCollaborators : undefined}
+            socketCollaboratorsRef={wsConnected ? socketCollaboratorsRef : undefined}
           />
 
         </div>
