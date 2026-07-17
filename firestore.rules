@@ -45,7 +45,8 @@ service cloud.firestore {
         allow read: if true;
         allow create, update: if isValidId(elementId)
                               && (
-                                (elementId == "drawings_blob" && request.resource.data.type == "drawings_blob") ||
+                                elementId == "drawings_blob" ||
+                                elementId == "elements_blob" ||
                                 (
                                   request.resource.data.get('id', elementId) == elementId
                                   && request.resource.data.type in ['sticky', 'shape', 'text', 'drawing', 'connector', 'image']
