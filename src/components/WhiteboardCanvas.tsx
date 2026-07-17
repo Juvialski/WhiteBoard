@@ -59,6 +59,8 @@ import {
   Zap,
   ZapOff,
   Download,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 import Markdown from "react-markdown";
 import { secureEncrypt, secureDecrypt } from "../utils/crypto";
@@ -767,6 +769,7 @@ export default function WhiteboardCanvas({
   const [activeShape, setActiveShape] = useState<ShapeType>("rect");
   const [strokeWidth, setStrokeWidth] = useState(4);
   const [gridMode, setGridMode] = useState<"dots" | "math" | "none">("dots");
+  const [isZenMode, setIsZenMode] = useState(false);
 
   // Interaction State flags
   const [isPanning, setIsPanning] = useState(false);
@@ -866,6 +869,38 @@ export default function WhiteboardCanvas({
       }
     }
   }, [isPdfBoard, elements, hasCentered]);
+
+  const handleToggleZenMode = () => {
+    const nextZenMode = !isZenMode;
+    setIsZenMode(nextZenMode);
+
+    if (nextZenMode) {
+      const elem = document.getElementById("whiteboard-workspace");
+      if (elem && elem.requestFullscreen) {
+        elem.requestFullscreen().catch((err) => {
+          console.warn("Fullscreen API rejected or not allowed in iframe:", err);
+        });
+      }
+    } else {
+      if (document.fullscreenElement && document.exitFullscreen) {
+        document.exitFullscreen().catch((err) => {
+          console.warn("Error exiting fullscreen:", err);
+        });
+      }
+    }
+  };
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const isCurrentlyFullscreen = !!document.fullscreenElement;
+      setIsZenMode(isCurrentlyFullscreen);
+    };
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+    };
+  }, []);
 
   const triggerReadOnlyAlert = () => {
     setShowReadOnlyAlert(true);
@@ -2990,70 +3025,86 @@ export default function WhiteboardCanvas({
       id="whiteboard-workspace"
     >
       {/* Upper Navigation Control Bar */}
-      <nav className="bg-white border-b border-slate-200 px-4 h-14 flex items-center justify-between z-30 shadow-xs absolute top-0 left-0 right-0">
-        <div className="flex items-center space-x-3">
+      <nav className={`bg-white border-b border-slate-200 px-2 sm:px-4 h-14 flex items-center justify-between z-30 shadow-xs absolute top-0 left-0 right-0 transition-all duration-300 ${isZenMode ? "-translate-y-full opacity-0 pointer-events-none" : "translate-y-0"}`}>
+        <div className="flex items-center space-x-1.5 sm:space-x-3">
           <button
             onClick={onBackToDashboard}
-            className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-slate-800 transition-colors flex items-center space-x-1 font-bold text-xs cursor-pointer"
+            className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-slate-800 transition-colors flex items-center space-x-1 font-bold text-xs cursor-pointer shrink-0"
           >
             <ChevronLeft className="w-4 h-4" />
-            <span className="hidden sm:inline">All Boards</span>
+            <span className="hidden md:inline">All Boards</span>
           </button>
 
           <div className="h-4 w-[1px] bg-slate-200 hidden sm:block"></div>
 
           <div>
             <h2 className="text-sm font-semibold leading-tight text-slate-900 flex items-center space-x-1.5 flex-wrap gap-y-1">
-              <span>{boardName}</span>
-              <span className="bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold">
-                Active
-              </span>
-              {/* Write minimization & offline sync badges */}
-              {syncStatus === "synced" && (
-                <span className="bg-emerald-50 text-emerald-700 border border-emerald-100 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold flex items-center space-x-1">
-                  <span className="w-1 h-1 rounded-full bg-emerald-500"></span>
-                  <span>Synced</span>
+              <span className="truncate max-w-[80px] sm:max-w-[180px]" title={boardName}>{boardName}</span>
+              
+              <div className="hidden sm:flex items-center space-x-1.5">
+                <span className="bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold">
+                  Active
                 </span>
-              )}
-              {syncStatus === "saving-cloud" && (
-                <span className="bg-blue-50 text-blue-700 border border-blue-100 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold flex items-center space-x-1">
-                  <Loader2 className="w-2.5 h-2.5 animate-spin text-blue-500" />
-                  <span>Syncing</span>
-                </span>
-              )}
-              {syncStatus === "saved-local" && (
-                <span className="bg-amber-50 text-amber-700 border border-amber-100 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold flex items-center space-x-1" title="Offline-ready local buffer active. Synced to cloud once you pause or others join.">
-                  <span className="w-1 h-1 rounded-full bg-amber-500 animate-pulse"></span>
-                  <span>Local Buffer ({activeUsersCount === 1 ? "Solo" : "Collaborating"})</span>
-                </span>
-              )}
-              {syncStatus === "offline" && (
-                <span className="bg-rose-50 text-rose-700 border border-rose-100 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold flex items-center space-x-1">
-                  <span className="w-1 h-1 rounded-full bg-rose-500"></span>
-                  <span>Offline</span>
-                </span>
-              )}
+                {/* Write minimization & offline sync badges */}
+                {syncStatus === "synced" && (
+                  <span className="bg-emerald-50 text-emerald-700 border border-emerald-100 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold flex items-center space-x-1">
+                    <span className="w-1 h-1 rounded-full bg-emerald-500"></span>
+                    <span>Synced</span>
+                  </span>
+                )}
+                {syncStatus === "saving-cloud" && (
+                  <span className="bg-blue-50 text-blue-700 border border-blue-100 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold flex items-center space-x-1">
+                    <Loader2 className="w-2.5 h-2.5 animate-spin text-blue-500" />
+                    <span>Syncing</span>
+                  </span>
+                )}
+                {syncStatus === "saved-local" && (
+                  <span className="bg-amber-50 text-amber-700 border border-amber-100 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold flex items-center space-x-1" title="Offline-ready local buffer active. Synced to cloud once you pause or others join.">
+                    <span className="w-1 h-1 rounded-full bg-amber-500 animate-pulse"></span>
+                    <span>Local Buffer ({activeUsersCount === 1 ? "Solo" : "Collaborating"})</span>
+                  </span>
+                )}
+                {syncStatus === "offline" && (
+                  <span className="bg-rose-50 text-rose-700 border border-rose-100 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold flex items-center space-x-1">
+                    <span className="w-1 h-1 rounded-full bg-rose-500"></span>
+                    <span>Offline</span>
+                  </span>
+                )}
 
-              {/* WebSocket Status Indicator with Real-Time latency */}
-              {wsConnected ? (
-                <span
-                  className="bg-purple-50 text-purple-700 border border-purple-100 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold flex items-center space-x-1"
-                  title="Connected to low-latency real-time WebSockets. Cursors and active drawings stream at 60fps."
-                >
-                  <Zap className="w-2.5 h-2.5 text-purple-600 animate-pulse" />
-                  <span>Real-time WS {wsLatency !== null ? `(${wsLatency}ms)` : ""}</span>
-                </span>
-              ) : (
-                <span
-                  className="bg-slate-50 text-slate-500 border border-slate-100 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold flex items-center space-x-1"
-                  title="Disconnected from real-time WebSockets. Reverting to Firestore presence."
-                >
-                  <ZapOff className="w-2.5 h-2.5 text-slate-400" />
-                  <span>Standard Sync</span>
-                </span>
-              )}
+                {/* WebSocket Status Indicator with Real-Time latency */}
+                {wsConnected ? (
+                  <span
+                    className="bg-purple-50 text-purple-700 border border-purple-100 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold flex items-center space-x-1"
+                    title="Connected to low-latency real-time WebSockets. Cursors and active drawings stream at 60fps."
+                  >
+                    <Zap className="w-2.5 h-2.5 text-purple-600 animate-pulse" />
+                    <span>Real-time WS {wsLatency !== null ? `(${wsLatency}ms)` : ""}</span>
+                  </span>
+                ) : (
+                  <span
+                    className="bg-slate-50 text-slate-500 border border-slate-100 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold flex items-center space-x-1"
+                    title="Disconnected from real-time WebSockets. Reverting to Firestore presence."
+                  >
+                    <ZapOff className="w-2.5 h-2.5 text-slate-400" />
+                    <span>Standard Sync</span>
+                  </span>
+                )}
+              </div>
+
+              {/* Minimal compact indicator dot for mobile */}
+              <div className="flex sm:hidden items-center px-1">
+                <span 
+                  className={`w-2 h-2 rounded-full ${
+                    syncStatus === "synced" && wsConnected ? "bg-purple-500 animate-pulse" :
+                    syncStatus === "synced" ? "bg-emerald-500" :
+                    syncStatus === "saving-cloud" ? "bg-blue-500 animate-bounce" :
+                    syncStatus === "saved-local" ? "bg-amber-500 animate-pulse" : "bg-rose-500"
+                  }`}
+                  title={`Status: ${syncStatus} | WS: ${wsConnected ? "Connected" : "Disconnected"}`}
+                />
+              </div>
             </h2>
-            <p className="text-[10px] text-slate-500 font-mono">
+            <p className="text-[10px] text-slate-500 font-mono hidden sm:block">
               Workspace ID: {boardId.slice(0, 8)}...
             </p>
           </div>
@@ -3063,7 +3114,7 @@ export default function WhiteboardCanvas({
           <button
             onClick={handleUndo}
             disabled={undoStack.length === 0}
-            className={`px-3 py-1.5 rounded-lg flex items-center space-x-1.5 font-bold text-xs transition-all cursor-pointer ${
+            className={`p-1.5 md:px-3 md:py-1.5 rounded-lg flex items-center space-x-1.5 font-bold text-xs transition-all cursor-pointer shrink-0 ${
               undoStack.length > 0
                 ? "bg-slate-100 border border-slate-200 text-slate-700 hover:bg-slate-200 hover:text-slate-950 hover:scale-[1.02] active:scale-[0.98]"
                 : "text-slate-300 bg-slate-50 border border-slate-150 cursor-not-allowed"
@@ -3073,7 +3124,7 @@ export default function WhiteboardCanvas({
             <Undo
               className={`w-3.5 h-3.5 ${undoStack.length > 0 ? "text-slate-600" : "text-slate-300"}`}
             />
-            <span>Undo</span>
+            <span className="hidden md:inline">Undo</span>
             {undoStack.length > 0 && (
               <span className="bg-blue-600 text-white text-[9px] px-1.5 py-0.5 rounded-full font-mono font-extrabold">
                 {undoStack.length}
@@ -3084,7 +3135,7 @@ export default function WhiteboardCanvas({
           <button
             onClick={handleRedo}
             disabled={redoStack.length === 0}
-            className={`px-3 py-1.5 rounded-lg flex items-center space-x-1.5 font-bold text-xs transition-all cursor-pointer ${
+            className={`p-1.5 md:px-3 md:py-1.5 rounded-lg flex items-center space-x-1.5 font-bold text-xs transition-all cursor-pointer shrink-0 ${
               redoStack.length > 0
                 ? "bg-slate-100 border border-slate-200 text-slate-700 hover:bg-slate-200 hover:text-slate-950 hover:scale-[1.02] active:scale-[0.98]"
                 : "text-slate-300 bg-slate-50 border border-slate-150 cursor-not-allowed"
@@ -3094,7 +3145,7 @@ export default function WhiteboardCanvas({
             <Redo
               className={`w-3.5 h-3.5 ${redoStack.length > 0 ? "text-slate-600" : "text-slate-300"}`}
             />
-            <span>Redo</span>
+            <span className="hidden md:inline">Redo</span>
             {redoStack.length > 0 && (
               <span className="bg-blue-600 text-white text-[9px] px-1.5 py-0.5 rounded-full font-mono font-extrabold">
                 {redoStack.length}
@@ -3104,20 +3155,20 @@ export default function WhiteboardCanvas({
         </div>
 
         {/* Current Collaborator Profile details and Share action */}
-        <div className="flex items-center space-x-3">
-          <div className="flex items-center space-x-1.5 bg-slate-100 px-2.5 py-1 rounded-full text-xs font-bold text-slate-600 border border-slate-200">
+        <div className="flex items-center space-x-1 sm:space-x-2 shrink-0">
+          <div className="flex items-center space-x-1.5 bg-slate-100 p-1 md:px-2.5 md:py-1 rounded-full text-xs font-bold text-slate-600 border border-slate-200 shrink-0" title={`${currentUser.name} (You)`}>
             <span
-              className="w-2 h-2 rounded-full"
+              className="w-2.5 h-2.5 rounded-full shrink-0"
               style={{ backgroundColor: currentUser.color }}
             />
-            <span>{currentUser.name} (You)</span>
+            <span className="hidden md:inline truncate max-w-[80px]">{currentUser.name} (You)</span>
           </div>
 
           {/* Teacher control to allow/disallow student writing */}
           {isTeacher ? (
             <button
               onClick={handleToggleStudentsCanWrite}
-              className={`px-3 py-1.5 rounded-lg flex items-center space-x-1.5 font-bold text-xs transition-all cursor-pointer border ${
+              className={`p-1.5 md:px-3 md:py-1.5 rounded-lg flex items-center space-x-1.5 font-bold text-xs transition-all cursor-pointer border shrink-0 ${
                 studentsCanWrite
                   ? "bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100"
                   : "bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100 animate-pulse"
@@ -3130,37 +3181,38 @@ export default function WhiteboardCanvas({
             >
               {studentsCanWrite ? (
                 <>
-                  <Unlock className="w-3.5 h-3.5" />
-                  <span>Students Can Write</span>
+                  <Unlock className="w-3.5 h-3.5 shrink-0" />
+                  <span className="hidden md:inline">Students Can Write</span>
                 </>
               ) : (
                 <>
-                  <Lock className="w-3.5 h-3.5 text-amber-600" />
-                  <span>Students Locked</span>
+                  <Lock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                  <span className="hidden md:inline">Students Locked</span>
                 </>
               )}
             </button>
           ) : (
             /* Student status indicator */
             <div
-              className={`px-3 py-1.5 rounded-lg flex items-center space-x-1.5 font-bold text-xs border ${
+              className={`p-1.5 md:px-3 md:py-1.5 rounded-lg flex items-center space-x-1.5 font-bold text-xs border shrink-0 ${
                 studentsCanWrite
                   ? "bg-emerald-50 border-emerald-100 text-emerald-600"
                   : "bg-amber-50 border-amber-200 text-amber-700"
               }`}
+              title={studentsCanWrite ? "Collaborative Mode" : "View Only Mode"}
             >
               {studentsCanWrite ? (
                 <>
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 relative flex h-2 w-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 relative flex h-2 w-2 shrink-0">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                   </span>
-                  <span>Collaborative Mode</span>
+                  <span className="hidden md:inline">Collaborative Mode</span>
                 </>
               ) : (
                 <>
-                  <Lock className="w-3.5 h-3.5 text-amber-500 animate-bounce" />
-                  <span>View Only Mode</span>
+                  <Lock className="w-3.5 h-3.5 text-amber-500 animate-bounce shrink-0" />
+                  <span className="hidden md:inline">View Only Mode</span>
                 </>
               )}
             </div>
@@ -3168,33 +3220,35 @@ export default function WhiteboardCanvas({
 
           <button
             onClick={() => setIsAiPanelOpen(!isAiPanelOpen)}
-            className={`px-3.5 py-1.5 rounded text-xs font-semibold flex items-center space-x-1.5 transition-all cursor-pointer ${
+            className={`p-1.5 md:px-3.5 md:py-1.5 rounded text-xs font-semibold flex items-center space-x-1.5 transition-all cursor-pointer shrink-0 ${
               isAiPanelOpen
                 ? "bg-purple-600 hover:bg-purple-700 text-white shadow-md border-purple-600 scale-102"
                 : "bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 shadow-xs"
             }`}
+            title="AI Assistant"
           >
             <Sparkles
-              className={`w-3.5 h-3.5 ${isAiPanelOpen ? "text-white animate-pulse" : "text-purple-600"}`}
+              className={`w-3.5 h-3.5 shrink-0 ${isAiPanelOpen ? "text-white animate-pulse" : "text-purple-600"}`}
             />
-            <span>AI Assistant</span>
+            <span className="hidden lg:inline">AI Assistant</span>
           </button>
 
           {isPdfBoard && (
             <button
               onClick={handleDownloadPdfWithDrawings}
               disabled={isGeneratingPdf}
-              className="px-3.5 py-1.5 rounded text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm flex items-center space-x-1.5 transition-all cursor-pointer disabled:opacity-50"
+              className="p-1.5 md:px-3.5 md:py-1.5 rounded text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm flex items-center space-x-1.5 transition-all cursor-pointer disabled:opacity-50 shrink-0"
+              title="Download PDF"
             >
               {isGeneratingPdf ? (
                 <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>Exporting...</span>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                  <span className="hidden lg:inline">Exporting...</span>
                 </>
               ) : (
                 <>
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Download PDF</span>
+                  <Download className="w-3.5 h-3.5 shrink-0" />
+                  <span className="hidden lg:inline">Download PDF</span>
                 </>
               )}
             </button>
@@ -3202,26 +3256,38 @@ export default function WhiteboardCanvas({
 
           <button
             onClick={copyBoardLink}
-            className={`px-3.5 py-1.5 rounded text-xs font-medium flex items-center space-x-1.5 transition-all cursor-pointer ${
+            className={`p-1.5 md:px-3.5 md:py-1.5 rounded text-xs font-medium flex items-center space-x-1.5 transition-all cursor-pointer shrink-0 ${
               copiedLink
                 ? "bg-green-500 text-white shadow-sm"
                 : "bg-blue-600 hover:bg-blue-700 text-white shadow-sm"
             }`}
+            title="Share Canvas"
           >
             {copiedLink ? (
               <>
-                <Check className="w-3.5 h-3.5" />
-                <span>Link Copied</span>
+                <Check className="w-3.5 h-3.5 shrink-0" />
+                <span className="hidden lg:inline">Link Copied</span>
               </>
             ) : (
               <>
-                <Share2 className="w-3.5 h-3.5" />
-                <span>Share Canvas</span>
+                <Share2 className="w-3.5 h-3.5 shrink-0" />
+                <span className="hidden lg:inline">Share Canvas</span>
               </>
             )}
           </button>
         </div>
       </nav>
+
+      {isZenMode && (
+        <button
+          onClick={handleToggleZenMode}
+          className="fixed top-4 right-4 z-50 bg-slate-900/95 hover:bg-slate-800 text-white rounded-full px-4 py-2 flex items-center space-x-2 text-xs font-bold shadow-lg border border-slate-700 hover:scale-105 active:scale-95 transition-all cursor-pointer"
+          title="Exit Full Screen Mode (Escape)"
+        >
+          <Minimize2 className="w-4 h-4 text-slate-300" />
+          <span>Exit Full Screen</span>
+        </button>
+      )}
 
       {/* Floating vertical sidebar toolbar */}
       <Toolbar
@@ -3255,6 +3321,8 @@ export default function WhiteboardCanvas({
         hasSelection={selectedIds.length > 0 || selectedId !== null}
         isPdfMode={isPdfBoard}
         teacherDailyWritesCount={localTeacherWritesCount}
+        isZenMode={isZenMode}
+        onToggleZenMode={handleToggleZenMode}
       />
 
       {/* Main Interactive Interactive Zoomable & Pannable Canvas Container */}
@@ -3628,7 +3696,7 @@ export default function WhiteboardCanvas({
       {/* AI Classroom Assistant Sliding/Floating Side Panel */}
       {isAiPanelOpen && (
         <div
-          className="absolute right-4 top-16 bottom-24 w-[420px] bg-white rounded-2xl border border-slate-200 shadow-2xl z-40 flex flex-col overflow-hidden text-slate-800"
+          className="absolute right-2 left-2 sm:left-auto sm:right-4 top-16 bottom-20 sm:bottom-24 w-[calc(100vw-16px)] sm:w-[420px] bg-white rounded-2xl border border-slate-200 shadow-2xl z-40 flex flex-col overflow-hidden text-slate-800"
           id="ai-assistant-panel"
         >
           {/* Header */}

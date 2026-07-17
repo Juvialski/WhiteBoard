@@ -57,6 +57,8 @@ interface ToolbarProps {
   hasSelection?: boolean;
   isPdfMode?: boolean;
   teacherDailyWritesCount?: number;
+  isZenMode?: boolean;
+  onToggleZenMode?: () => void;
 }
 
 const STICKY_COLORS = [
@@ -195,6 +197,8 @@ export default function Toolbar({
   hasSelection = false,
   isPdfMode = false,
   teacherDailyWritesCount,
+  isZenMode = false,
+  onToggleZenMode,
 }: ToolbarProps) {
   const [showShapeMenu, setShowShapeMenu] = useState(false);
   const [showGraphMenu, setShowGraphMenu] = useState(false);
@@ -288,7 +292,9 @@ export default function Toolbar({
   return (
     <>
       <div
-        className="absolute left-4 top-24 z-30 flex flex-col space-y-4"
+        className={`absolute left-4 z-30 flex flex-col space-y-4 transition-all duration-300 ${
+          isZenMode ? "top-6" : "top-24"
+        }`}
         id="whiteboard-toolbar"
       >
         {/* Primary Toolbar */}
@@ -505,111 +511,126 @@ export default function Toolbar({
       </div>
 
       {/* Floating Bottom Left Controls */}
-      <div className="fixed bottom-6 left-6 z-30 flex items-center space-x-4">
-        {/* Zoom Controls */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-lg p-1.5 flex items-center space-x-1">
-          <button
-            onClick={onZoomOut}
-            className="p-2 rounded-xl text-slate-600 hover:bg-slate-100 flex items-center justify-center"
-            title="Zoom Out"
-          >
-            <ZoomOut className="w-4 h-4" />
-          </button>
-          <button
-            onClick={onZoomReset}
-            className="py-1 px-2 text-[11px] font-bold text-slate-500 hover:bg-slate-100 rounded-lg text-center font-mono whitespace-nowrap min-w-[3rem]"
-            title="Reset Zoom"
-          >
-            {Math.round(zoom * 100)}%
-          </button>
-          <button
-            onClick={onZoomIn}
-            className="p-2 rounded-xl text-slate-600 hover:bg-slate-100 flex items-center justify-center"
-            title="Zoom In"
-          >
-            <ZoomIn className="w-4 h-4" />
-          </button>
-        </div>
-
-        {/* Grid Mode Selection */}
-        {!isPdfMode && (
+      {!isZenMode && (
+        <div className="fixed bottom-6 left-6 z-30 flex items-center space-x-4">
+          {/* Zoom Controls */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-lg p-1.5 flex items-center space-x-1">
             <button
-              onClick={() => onChangeGridMode("dots")}
-              className={`p-2 rounded-xl transition-all flex items-center justify-center ${
-                gridMode === "dots"
-                  ? "bg-blue-50 text-blue-600 ring-1 ring-blue-600/20 font-bold shadow-xs"
-                  : "text-slate-500 hover:bg-slate-100"
-              }`}
-              title="Dotted Canvas"
+              onClick={onZoomOut}
+              className="p-2 rounded-xl text-slate-600 hover:bg-slate-100 flex items-center justify-center"
+              title="Zoom Out"
             >
-              <svg
-                className="w-4 h-4"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-              >
-                <circle cx="6" cy="6" r="1" fill="currentColor" />
-                <circle cx="12" cy="6" r="1" fill="currentColor" />
-                <circle cx="18" cy="6" r="1" fill="currentColor" />
-                <circle cx="6" cy="12" r="1" fill="currentColor" />
-                <circle cx="12" cy="12" r="1" fill="currentColor" />
-                <circle cx="18" cy="12" r="1" fill="currentColor" />
-                <circle cx="6" cy="18" r="1" fill="currentColor" />
-                <circle cx="12" cy="18" r="1" fill="currentColor" />
-                <circle cx="18" cy="18" r="1" fill="currentColor" />
-              </svg>
+              <ZoomOut className="w-4 h-4" />
             </button>
             <button
-              onClick={() => onChangeGridMode("math")}
-              className={`p-2 rounded-xl transition-all flex items-center justify-center ${
-                gridMode === "math"
-                  ? "bg-blue-50 text-blue-600 ring-1 ring-blue-600/20 font-bold shadow-xs"
-                  : "text-slate-500 hover:bg-slate-100"
-              }`}
-              title="Math Grid (Graph Paper)"
+              onClick={onZoomReset}
+              className="py-1 px-2 text-[11px] font-bold text-slate-500 hover:bg-slate-100 rounded-lg text-center font-mono whitespace-nowrap min-w-[3rem]"
+              title="Reset Zoom"
             >
-              <Grid className="w-4 h-4" />
+              {Math.round(zoom * 100)}%
             </button>
             <button
-              onClick={() => onChangeGridMode("none")}
-              className={`p-2 rounded-xl transition-all flex items-center justify-center ${
-                gridMode === "none"
-                  ? "bg-blue-50 text-blue-600 ring-1 ring-blue-600/20 font-bold shadow-xs"
-                  : "text-slate-500 hover:bg-slate-100"
-              }`}
-              title="Plain White Background"
+              onClick={onZoomIn}
+              className="p-2 rounded-xl text-slate-600 hover:bg-slate-100 flex items-center justify-center"
+              title="Zoom In"
             >
-              <svg
-                className="w-4 h-4"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <rect x="3" y="3" width="18" height="18" rx="2" />
-              </svg>
+              <ZoomIn className="w-4 h-4" />
             </button>
           </div>
-        )}
 
-        {/* Daily Firebase Writes Counter */}
-        {teacherDailyWritesCount !== undefined && (
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-lg p-1.5 flex items-center space-x-2 animate-fade-in hover:shadow-xl transition-all duration-300">
-            <div className="flex items-center space-x-1.5 text-slate-500 font-bold uppercase tracking-wider text-[9px] px-1">
-              <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-500 animate-pulse shrink-0" />
-              <span className="hidden sm:inline">Writes Today</span>
-              <span className="inline sm:hidden">Writes</span>
+          {/* Grid Mode Selection */}
+          {!isPdfMode && (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-lg p-1.5 flex items-center space-x-1">
+              <button
+                onClick={() => onChangeGridMode("dots")}
+                className={`p-2 rounded-xl transition-all flex items-center justify-center ${
+                  gridMode === "dots"
+                    ? "bg-blue-50 text-blue-600 ring-1 ring-blue-600/20 font-bold shadow-xs"
+                    : "text-slate-500 hover:bg-slate-100"
+                }`}
+                title="Dotted Canvas"
+              >
+                <svg
+                  className="w-4 h-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                >
+                  <circle cx="6" cy="6" r="1" fill="currentColor" />
+                  <circle cx="12" cy="6" r="1" fill="currentColor" />
+                  <circle cx="18" cy="6" r="1" fill="currentColor" />
+                  <circle cx="6" cy="12" r="1" fill="currentColor" />
+                  <circle cx="12" cy="12" r="1" fill="currentColor" />
+                  <circle cx="18" cy="12" r="1" fill="currentColor" />
+                  <circle cx="6" cy="18" r="1" fill="currentColor" />
+                  <circle cx="12" cy="18" r="1" fill="currentColor" />
+                  <circle cx="18" cy="18" r="1" fill="currentColor" />
+                </svg>
+              </button>
+              <button
+                onClick={() => onChangeGridMode("math")}
+                className={`p-2 rounded-xl transition-all flex items-center justify-center ${
+                  gridMode === "math"
+                    ? "bg-blue-50 text-blue-600 ring-1 ring-blue-600/20 font-bold shadow-xs"
+                    : "text-slate-500 hover:bg-slate-100"
+                }`}
+                title="Math Grid (Graph Paper)"
+              >
+                <Grid className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => onChangeGridMode("none")}
+                className={`p-2 rounded-xl transition-all flex items-center justify-center ${
+                  gridMode === "none"
+                    ? "bg-blue-50 text-blue-600 ring-1 ring-blue-600/20 font-bold shadow-xs"
+                    : "text-slate-500 hover:bg-slate-100"
+                }`}
+                title="Plain White Background"
+              >
+                <svg
+                  className="w-4 h-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <rect x="3" y="3" width="18" height="18" rx="2" />
+                </svg>
+              </button>
             </div>
-            <div className="font-mono font-black text-xs text-slate-800 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded-lg border border-slate-200/60 shadow-xs flex items-center justify-center min-w-[2rem] transition-colors" title="Today's total Firestore database write actions initiated by teachers. Runs on an optimized low-write buffer system.">
-              {teacherDailyWritesCount}
+          )}
+
+          {/* Daily Firebase Writes Counter */}
+          {teacherDailyWritesCount !== undefined && (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-lg p-1.5 flex items-center space-x-2 animate-fade-in hover:shadow-xl transition-all duration-300">
+              <div className="flex items-center space-x-1.5 text-slate-500 font-bold uppercase tracking-wider text-[9px] px-1">
+                <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-500 animate-pulse shrink-0" />
+                <span className="hidden sm:inline">Writes Today</span>
+                <span className="inline sm:hidden">Writes</span>
+              </div>
+              <div className="font-mono font-black text-xs text-slate-800 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded-lg border border-slate-200/60 shadow-xs flex items-center justify-center min-w-[2rem] transition-colors" title="Today's total Firestore database write actions initiated by teachers. Runs on an optimized low-write buffer system.">
+                {teacherDailyWritesCount}
+              </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+
+          {/* Full Screen / Zen Mode Toggle */}
+          {onToggleZenMode && (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-lg p-1.5 flex items-center">
+              <button
+                onClick={onToggleZenMode}
+                className="p-2 rounded-xl text-slate-500 hover:bg-slate-100 flex items-center justify-center transition-all"
+                title="Enter Immersive Full Screen (Zen Mode)"
+              >
+                <Maximize2 className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </>
   );
 }
