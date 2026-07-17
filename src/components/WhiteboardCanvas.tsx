@@ -1397,6 +1397,7 @@ export default function WhiteboardCanvas({
 
     // Snappy UI update
     setElements(updatedElements);
+    elementsRef.current = updatedElements;
 
     // Save fallback cache to localStorage and IndexedDB
     try {
@@ -2194,7 +2195,7 @@ export default function WhiteboardCanvas({
 
   // Delete an element
   const handleDeleteElement = React.useCallback((id: string) => {
-    const target = elements.find((el) => el.id === id);
+    const target = elementsRef.current.find((el) => el.id === id);
     if (target) {
       pushToUndo({ type: "delete", elementId: id, beforeData: target });
     }
@@ -2204,7 +2205,7 @@ export default function WhiteboardCanvas({
         if (selectedId === id) setSelectedId(null);
       })
       .catch((err) => console.error("Error deleting element:", err));
-  }, [elements, pushToUndo, saveElementLocallyAndSync, selectedId, setSelectedId]);
+  }, [pushToUndo, saveElementLocallyAndSync, selectedId, setSelectedId]);
 
   // Undo the last action from the local stack
   const handleUndo = async () => {
