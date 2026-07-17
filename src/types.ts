@@ -138,6 +138,9 @@ export interface Whiteboard {
   studentId?: string; // If assigned to a specific student
   studentName?: string;
   studentsCanWrite?: boolean;
+  teacherDailyWrites?: Record<string, number>;
+  dailyWrites?: Record<string, number>;
+  dailyReads?: Record<string, number>;
 }
 
 export interface UserProfile {

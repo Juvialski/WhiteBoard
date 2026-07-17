@@ -27,6 +27,9 @@
         "studentName": {
           "type": "string",
           "maxLength": 100
+        },
+        "teacherDailyWrites": {
+          "type": "object"
         }
       },
       "required": ["name", "createdAt", "createdBy"]

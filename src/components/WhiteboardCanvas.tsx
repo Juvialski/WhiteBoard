@@ -8,6 +8,8 @@ import {
   deleteDoc,
   doc,
   writeBatch,
+  increment,
+  updateDoc,
 } from "firebase/firestore";
 import { db } from "../firebase";
 import {
@@ -636,6 +638,87 @@ export default function WhiteboardCanvas({
   const pendingSyncElements = useRef<Record<string, { data: any; action: 'set' | 'delete' }>>({});
   const debounceTimer = useRef<any>(null);
 
+  // Daily firebase writes and reads tracking state
+  const pendingTeacherWrites = useRef<number>(0);
+  const pendingAllWrites = useRef<number>(0);
+  const pendingReads = useRef<number>(0);
+  const statsSyncTimer = useRef<any>(null);
+
+  const getTodayDateString = () => {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const triggerStatsSync = React.useCallback(() => {
+    if (statsSyncTimer.current) clearTimeout(statsSyncTimer.current);
+    statsSyncTimer.current = setTimeout(async () => {
+      const teacherCount = pendingTeacherWrites.current;
+      const allCount = pendingAllWrites.current;
+      const readCount = pendingReads.current;
+
+      if (teacherCount <= 0 && allCount <= 0 && readCount <= 0) return;
+
+      pendingTeacherWrites.current = 0;
+      pendingAllWrites.current = 0;
+      pendingReads.current = 0;
+
+      try {
+        const todayStr = getTodayDateString();
+        const boardRef = doc(db, "whiteboards", boardId);
+        
+        const updateData: any = {};
+        if (teacherCount > 0) {
+          updateData[`teacherDailyWrites.${todayStr}`] = increment(teacherCount);
+        }
+        if (allCount > 0) {
+          updateData[`dailyWrites.${todayStr}`] = increment(allCount);
+        }
+        if (readCount > 0) {
+          updateData[`dailyReads.${todayStr}`] = increment(readCount);
+        }
+
+        await updateDoc(boardRef, updateData);
+      } catch (err) {
+        console.error("Error syncing daily stats:", err);
+        // Restore failed values
+        pendingTeacherWrites.current += teacherCount;
+        pendingAllWrites.current += allCount;
+        pendingReads.current += readCount;
+      }
+    }, 4000); // sync stats after 4 seconds of inactivity
+  }, [boardId]);
+
+  const [localTeacherWritesCount, setLocalTeacherWritesCount] = useState<number>(0);
+
+  const incrementStats = React.useCallback((type: 'write' | 'read', count: number) => {
+    const isTeacher = currentUser.role === "teacher";
+    if (type === 'write') {
+      pendingAllWrites.current += count;
+      if (isTeacher) {
+        pendingTeacherWrites.current += count;
+        setLocalTeacherWritesCount((prev) => prev + count);
+      }
+    } else {
+      pendingReads.current += count;
+    }
+    triggerStatsSync();
+  }, [currentUser.role, triggerStatsSync]);
+
+  useEffect(() => {
+    const todayStr = getTodayDateString();
+    const dbWritesCount = boardData?.teacherDailyWrites?.[todayStr] || 0;
+    setLocalTeacherWritesCount(dbWritesCount + pendingTeacherWrites.current);
+  }, [boardData]);
+
+  useEffect(() => {
+    return () => {
+      if (statsSyncTimer.current) clearTimeout(statsSyncTimer.current);
+    };
+  }, []);
+
   // Undo History state
   interface UndoAction {
     type: "add" | "delete" | "update";
@@ -808,6 +891,10 @@ export default function WhiteboardCanvas({
     const q = query(elementsRefColl);
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
+      // Increment reads counter
+      const readCount = snapshot.docChanges().length || snapshot.size || 1;
+      incrementStats('read', readCount);
+
       // Guard: In Solo mode, do not let old/stale cloud states overwrite our fresh local buffer.
       if (hasUnsavedChanges.current && activeUsersCount <= 1) {
         return;
@@ -1344,6 +1431,7 @@ export default function WhiteboardCanvas({
       await batch.commit();
       hasUnsavedChanges.current = false;
       setSyncStatus('synced');
+      incrementStats('write', keys.length);
     } catch (err) {
       console.error("Flush pending changes to cloud failed:", err);
       // Restore failed items back to the queue safely
@@ -1451,6 +1539,7 @@ export default function WhiteboardCanvas({
           await setDoc(docRef, processedData, { merge: isMerge });
         }
         setSyncStatus('synced');
+        incrementStats('write', 1);
       } catch (err) {
         console.error("Direct sync error:", err);
         setSyncStatus('offline');
@@ -1482,6 +1571,7 @@ export default function WhiteboardCanvas({
     const boardRef = doc(db, "whiteboards", boardId);
     const unsubscribe = onSnapshot(boardRef, (snapshot) => {
       if (snapshot.exists()) {
+        incrementStats('read', 1);
         setBoardData({
           id: snapshot.id,
           ...snapshot.data(),
@@ -2364,6 +2454,7 @@ export default function WhiteboardCanvas({
         setSelectedIds(newPasteIds);
         setSelectedId(null);
         setClipboardElements(pastedElements);
+        incrementStats('write', clipboardElements.length);
       } catch (err) {
         console.error("Error pasting elements:", err);
         setSyncStatus('offline');
@@ -2609,6 +2700,7 @@ export default function WhiteboardCanvas({
         });
         await batch.commit();
         setSyncStatus('synced');
+        incrementStats('write', elements.length);
       } catch (err) {
         console.error("Error clearing whiteboard:", err);
         setSyncStatus('offline');
@@ -2627,6 +2719,7 @@ export default function WhiteboardCanvas({
         },
         { merge: true },
       );
+      incrementStats('write', 1);
     } catch (err) {
       console.error("Error toggling student writing permissions:", err);
     }
@@ -3232,6 +3325,7 @@ export default function WhiteboardCanvas({
         onChangeGridMode={setGridMode}
         hasSelection={selectedIds.length > 0 || selectedId !== null}
         isPdfMode={isPdfBoard}
+        teacherDailyWritesCount={localTeacherWritesCount}
       />
 
       {/* Main Interactive Interactive Zoomable & Pannable Canvas Container */}

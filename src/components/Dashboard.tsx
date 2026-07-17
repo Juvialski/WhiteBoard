@@ -278,6 +278,9 @@ export default function Dashboard({
           createdBy: data.createdBy || 'Unknown',
           studentId: data.studentId || '',
           studentName: data.studentName || '',
+          teacherDailyWrites: data.teacherDailyWrites || {},
+          dailyWrites: data.dailyWrites || {},
+          dailyReads: data.dailyReads || {},
         });
       });
       // Sort by newest
@@ -373,6 +376,25 @@ export default function Dashboard({
     // If it's a shared board (no student assigned), only the creator can see it in their dashboard
     // Others must use the direct link to join
     return false;
+  });
+
+  const getTodayDateStr = () => {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const todayStr = getTodayDateStr();
+  let totalWritesToday = 0;
+  let totalReadsToday = 0;
+  let totalTeacherWritesToday = 0;
+
+  boards.forEach((b) => {
+    totalWritesToday += b.dailyWrites?.[todayStr] || 0;
+    totalReadsToday += b.dailyReads?.[todayStr] || 0;
+    totalTeacherWritesToday += b.teacherDailyWrites?.[todayStr] || 0;
   });
 
   return (
@@ -1028,6 +1050,147 @@ export default function Dashboard({
                   <div className="flex items-baseline gap-2 mt-2">
                     <span className="text-3xl font-black text-slate-900">{boards.length}</span>
                     <span className="text-xs text-slate-500 font-medium">collaborative rooms</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Firestore Quotas & Resource Usage Stats */}
+              <div className="bg-white border border-slate-200 rounded-3xl p-6 space-y-6 shadow-xs">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-100">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-900">Firestore Free-Tier Quota & Live Consumption</h3>
+                      <p className="text-[10px] text-slate-500 mt-0.5">Real-time resource tracking and capacity remaining.</p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] bg-slate-100 border border-slate-200 text-slate-600 px-3 py-1 rounded-full font-bold uppercase tracking-wider">
+                    Date: {todayStr}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Writes consumption card */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4 shadow-2xs">
+                    <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2">
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Daily Writes Quota</span>
+                        <h4 className="text-2xl font-black text-slate-800">
+                          {totalWritesToday.toLocaleString()} <span className="text-xs font-semibold text-slate-500">/ 20,000 writes</span>
+                        </h4>
+                      </div>
+                      <div className="bg-blue-50 text-blue-700 font-bold text-[10px] uppercase px-3 py-1.5 rounded-xl border border-blue-100 self-start">
+                        {Math.max(0, 20000 - totalWritesToday).toLocaleString()} Left to consume
+                      </div>
+                    </div>
+
+                    {/* Progress bar */}
+                    <div className="space-y-1.5">
+                      <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                        <div 
+                          className="bg-blue-600 h-2 rounded-full transition-all duration-500"
+                          style={{ width: `${Math.min(100, (totalWritesToday / 20000) * 100)}%` }}
+                        />
+                      </div>
+                      <div className="flex justify-between text-[10px] font-semibold text-slate-500">
+                        <span>{((totalWritesToday / 20000) * 100).toFixed(2)}% consumed</span>
+                        <span>Limit: 20,000/day</span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4 border-t border-slate-200 pt-3 text-xs">
+                      <div>
+                        <span className="text-slate-400 font-medium">Teacher Writes:</span>
+                        <strong className="text-slate-700 block mt-0.5 font-bold">{totalTeacherWritesToday.toLocaleString()} writes</strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 font-medium">Student Writes:</span>
+                        <strong className="text-slate-700 block mt-0.5 font-bold">{Math.max(0, totalWritesToday - totalTeacherWritesToday).toLocaleString()} writes</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Reads consumption card */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4 shadow-2xs">
+                    <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2">
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Daily Reads Quota</span>
+                        <h4 className="text-2xl font-black text-slate-800">
+                          {totalReadsToday.toLocaleString()} <span className="text-xs font-semibold text-slate-500">/ 50,000 reads</span>
+                        </h4>
+                      </div>
+                      <div className="bg-indigo-50 text-indigo-700 font-bold text-[10px] uppercase px-3 py-1.5 rounded-xl border border-indigo-100 self-start">
+                        {Math.max(0, 50000 - totalReadsToday).toLocaleString()} Left to consume
+                      </div>
+                    </div>
+
+                    {/* Progress bar */}
+                    <div className="space-y-1.5">
+                      <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                        <div 
+                          className="bg-indigo-600 h-2 rounded-full transition-all duration-500"
+                          style={{ width: `${Math.min(100, (totalReadsToday / 50000) * 100)}%` }}
+                        />
+                      </div>
+                      <div className="flex justify-between text-[10px] font-semibold text-slate-500">
+                        <span>{((totalReadsToday / 50000) * 100).toFixed(2)}% consumed</span>
+                        <span>Limit: 50,000/day</span>
+                      </div>
+                    </div>
+
+                    <div className="text-[10px] text-slate-500 pt-2 leading-relaxed">
+                      <span>Incurred primarily during real-time document loading and active collaborator heartbeats/presence updates.</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Board-by-board stats list */}
+                <div className="bg-slate-50 rounded-2xl border border-slate-200 p-4.5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Today's Usage Breakdown by Board</h4>
+                    <span className="text-[10px] text-slate-400 font-medium">All figures represent operations logged today</span>
+                  </div>
+                  <div className="max-h-48 overflow-y-auto border border-slate-200 rounded-xl overflow-hidden bg-white">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold text-[10px] uppercase tracking-wider">
+                          <th className="p-3">Board Name</th>
+                          <th className="p-3">Created By</th>
+                          <th className="p-3 text-center">Reads Today</th>
+                          <th className="p-3 text-center">Writes Today</th>
+                          <th className="p-3 text-center">Teacher Writes</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {boards.length === 0 ? (
+                          <tr>
+                            <td colSpan={5} className="p-4 text-center text-slate-400 italic">
+                              No boards deployed yet.
+                            </td>
+                          </tr>
+                        ) : (
+                          boards.map((b) => {
+                            const boardWrites = b.dailyWrites?.[todayStr] || 0;
+                            const boardReads = b.dailyReads?.[todayStr] || 0;
+                            const boardTeacherWrites = b.teacherDailyWrites?.[todayStr] || 0;
+
+                            return (
+                              <tr key={b.id} className="hover:bg-slate-50/40 transition-colors">
+                                <td className="p-3 font-semibold text-slate-800 max-w-[200px] truncate">{b.name}</td>
+                                <td className="p-3 text-slate-500">{b.createdBy}</td>
+                                <td className="p-3 text-center font-mono font-bold text-indigo-600">{boardReads.toLocaleString()}</td>
+                                <td className="p-3 text-center font-mono font-bold text-blue-600">{boardWrites.toLocaleString()}</td>
+                                <td className="p-3 text-center font-mono text-slate-500">{boardTeacherWrites.toLocaleString()}</td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               </div>
