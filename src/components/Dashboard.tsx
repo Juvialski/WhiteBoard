@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { collection, query, onSnapshot, addDoc, deleteDoc, doc, writeBatch, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Whiteboard, UserProfile } from '../types';
-import { Plus, Trash2, ArrowRight, User, BookOpen, GraduationCap, Users, Sparkles, Copy, Check, FileUp, Loader2 } from 'lucide-react';
+import { Plus, Trash2, ArrowRight, User, BookOpen, GraduationCap, Users, Sparkles, Copy, Check, FileUp, Loader2, ChevronDown, ChevronUp, Calendar, BarChart2, List } from 'lucide-react';
 
 interface DashboardProps {
   onSelectBoard: (boardId: string, profile: UserProfile) => void;
@@ -52,6 +52,13 @@ export default function Dashboard({
   const [adminAppEnabled, setAdminAppEnabled] = useState(true);
   const [presenceList, setPresenceList] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Historical stats states
+  const [selectedHistoryBoardId, setSelectedHistoryBoardId] = useState<string>('all');
+  const [historyDaysLimit, setHistoryDaysLimit] = useState<number>(7);
+  const [expandedDates, setExpandedDates] = useState<Record<string, boolean>>({});
+  const [historyTab, setHistoryTab] = useState<'chart' | 'table'>('chart');
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
   // Load presence and settings for admin
   useEffect(() => {
@@ -171,6 +178,9 @@ export default function Dashboard({
         studentId: assignedStudent ? assignedStudent.toLowerCase().replace(/\s+/g, '-') : '',
         studentName: assignedStudent.trim() || 'All Collaborative',
         studentsCanWrite: true,
+        dailyWrites: {},
+        dailyReads: {},
+        teacherDailyWrites: {},
       });
 
       let currentX = 0;
@@ -306,6 +316,9 @@ export default function Dashboard({
         studentId: assignedStudent ? assignedStudent.toLowerCase().replace(/\s+/g, '-') : '',
         studentName: assignedStudent.trim() || 'All Collaborative',
         studentsCanWrite: true,
+        dailyWrites: {},
+        dailyReads: {},
+        teacherDailyWrites: {},
       });
 
       setNewBoardName('');
@@ -395,6 +408,63 @@ export default function Dashboard({
     totalWritesToday += b.dailyWrites?.[todayStr] || 0;
     totalReadsToday += b.dailyReads?.[todayStr] || 0;
     totalTeacherWritesToday += b.teacherDailyWrites?.[todayStr] || 0;
+  });
+
+  // Generate a list of dates for the last N days
+  const getPastDaysList = (numDays: number) => {
+    const list: string[] = [];
+    for (let i = 0; i < numDays; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      list.push(`${year}-${month}-${day}`);
+    }
+    return list; // Newest first
+  };
+
+  const historyDates = getPastDaysList(historyDaysLimit);
+
+  // Compute stats for each date
+  const historicalStats = historyDates.map(dateStr => {
+    let reads = 0;
+    let writes = 0;
+    let teacherWrites = 0;
+
+    // Filter boards based on selection
+    const targetBoards = selectedHistoryBoardId === 'all' 
+      ? boards 
+      : boards.filter(b => b.id === selectedHistoryBoardId);
+
+    const boardBreakdown = targetBoards.map(b => {
+      const bReads = b.dailyReads?.[dateStr] || 0;
+      const bWrites = b.dailyWrites?.[dateStr] || 0;
+      const bTeacherWrites = b.teacherDailyWrites?.[dateStr] || 0;
+      return {
+        id: b.id,
+        name: b.name,
+        reads: bReads,
+        writes: bWrites,
+        teacherWrites: bTeacherWrites,
+        studentWrites: Math.max(0, bWrites - bTeacherWrites)
+      };
+    }).filter(item => item.reads > 0 || item.writes > 0);
+
+    targetBoards.forEach(b => {
+      reads += b.dailyReads?.[dateStr] || 0;
+      writes += b.dailyWrites?.[dateStr] || 0;
+      teacherWrites += b.teacherDailyWrites?.[dateStr] || 0;
+    });
+
+    return {
+      date: dateStr,
+      reads,
+      writes,
+      teacherWrites,
+      studentWrites: Math.max(0, writes - teacherWrites),
+      boardBreakdown
+    };
   });
 
   return (
@@ -745,6 +815,10 @@ export default function Dashboard({
                       createdBy: userName || 'Student',
                       studentId: userName ? userName.toLowerCase().replace(/\s+/g, '-') : '',
                       studentName: userName || 'Student Practice',
+                      studentsCanWrite: true,
+                      dailyWrites: {},
+                      dailyReads: {},
+                      teacherDailyWrites: {},
                     });
                   }
                 }}
@@ -1193,6 +1267,404 @@ export default function Dashboard({
                     </table>
                   </div>
                 </div>
+              </div>
+
+              {/* Historical Resource Usage & Analytics */}
+              <div className="bg-white border border-slate-200 rounded-3xl p-6 space-y-6 shadow-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-100 pb-4">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100">
+                      <Calendar className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-900">Historical Operations Log & Analytics</h3>
+                      <p className="text-[10px] text-slate-500 mt-0.5">Audit previous days' read and write loads across individual rooms.</p>
+                    </div>
+                  </div>
+                  
+                  {/* Controls / Filter row */}
+                  <div className="flex flex-wrap items-center gap-2.5 self-start sm:self-auto">
+                    {/* Board selector */}
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Room:</span>
+                      <select
+                        value={selectedHistoryBoardId}
+                        onChange={(e) => {
+                          setSelectedHistoryBoardId(e.target.value);
+                          setHoveredIndex(null);
+                        }}
+                        className="bg-slate-50 border border-slate-200 rounded-lg text-xs px-2.5 py-1.5 text-slate-700 font-medium focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer max-w-[160px]"
+                      >
+                        <option value="all">All Collaborative Rooms</option>
+                        {boards.map(b => (
+                          <option key={b.id} value={b.id}>{b.name}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Days selector */}
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Range:</span>
+                      <select
+                        value={historyDaysLimit}
+                        onChange={(e) => {
+                          setHistoryDaysLimit(Number(e.target.value));
+                          setHoveredIndex(null);
+                        }}
+                        className="bg-slate-50 border border-slate-200 rounded-lg text-xs px-2.5 py-1.5 text-slate-700 font-medium focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                      >
+                        <option value={7}>7 Days</option>
+                        <option value={14}>14 Days</option>
+                        <option value={30}>30 Days</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Subheader / Tabs */}
+                <div className="flex items-center justify-between">
+                  <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                    <button
+                      onClick={() => setHistoryTab('chart')}
+                      className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                        historyTab === 'chart'
+                          ? 'bg-white text-slate-900 shadow-xs border border-slate-200/50'
+                          : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      <BarChart2 className="w-3.5 h-3.5" />
+                      <span>Visual Trends</span>
+                    </button>
+                    <button
+                      onClick={() => setHistoryTab('table')}
+                      className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                        historyTab === 'table'
+                          ? 'bg-white text-slate-900 shadow-xs border border-slate-200/50'
+                          : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      <List className="w-3.5 h-3.5" />
+                      <span>Detailed Daily Log</span>
+                    </button>
+                  </div>
+                  
+                  <span className="text-[10px] text-slate-400 font-medium italic">
+                    Historical figures reflect archived document syncing logs.
+                  </span>
+                </div>
+
+                {/* Historical Content Area */}
+                {historyTab === 'chart' ? (
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 bg-slate-50/50 border border-slate-200 rounded-2xl p-5">
+                    {/* SVG Chart area */}
+                    <div className="lg:col-span-2 space-y-3 bg-white border border-slate-200 rounded-xl p-4 shadow-2xs">
+                      <div className="flex justify-between items-center pb-2 border-b border-slate-100">
+                        <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Operation Load (Daily)</span>
+                        <div className="flex items-center gap-3 text-[10px] font-bold">
+                          <span className="flex items-center gap-1 text-indigo-600">
+                            <span className="w-2.5 h-2.5 rounded-xs bg-indigo-500 block"></span> Reads
+                          </span>
+                          <span className="flex items-center gap-1 text-blue-600">
+                            <span className="w-2.5 h-2.5 rounded-xs bg-blue-500 block"></span> Writes
+                          </span>
+                        </div>
+                      </div>
+                      
+                      <div className="pt-4 overflow-x-auto">
+                        {(() => {
+                          const chartData = [...historicalStats].reverse();
+                          const maxVal = Math.max(...chartData.map(d => Math.max(d.reads, d.writes)), 10);
+                          
+                          return (
+                            <div className="min-w-[400px]">
+                              <svg viewBox="0 0 500 200" className="w-full h-48 select-none">
+                                {/* Grid lines */}
+                                <line x1="40" y1="20" x2="480" y2="20" stroke="#f1f5f9" strokeWidth="1" strokeDasharray="3 3" />
+                                <line x1="40" y1="70" x2="480" y2="70" stroke="#f1f5f9" strokeWidth="1" strokeDasharray="3 3" />
+                                <line x1="40" y1="120" x2="480" y2="120" stroke="#f1f5f9" strokeWidth="1" strokeDasharray="3 3" />
+                                <line x1="40" y1="170" x2="480" y2="170" stroke="#cbd5e1" strokeWidth="1" />
+                                
+                                {/* Axis Labels */}
+                                <text x="35" y="24" className="text-[9px] fill-slate-400 font-mono font-bold" textAnchor="end">
+                                  {maxVal.toLocaleString()}
+                                </text>
+                                <text x="35" y="99" className="text-[9px] fill-slate-400 font-mono font-bold" textAnchor="end">
+                                  {Math.round(maxVal / 2).toLocaleString()}
+                                </text>
+                                <text x="35" y="174" className="text-[9px] fill-slate-400 font-mono font-bold" textAnchor="end">
+                                  0
+                                </text>
+                                
+                                {/* Bars */}
+                                {chartData.map((d, index) => {
+                                  const totalBars = chartData.length;
+                                  const chartWidth = 440;
+                                  const groupWidth = chartWidth / totalBars;
+                                  const barWidth = Math.max(3, groupWidth * 0.22);
+                                  const gap = groupWidth * 0.08;
+                                  
+                                  const xGroupStart = 40 + (index * groupWidth) + (groupWidth - (barWidth * 2 + gap)) / 2;
+                                  const xReads = xGroupStart;
+                                  const xWrites = xGroupStart + barWidth + gap;
+                                  
+                                  const hReads = (d.reads / maxVal) * 150;
+                                  const hWrites = (d.writes / maxVal) * 150;
+                                  
+                                  const yReads = 170 - hReads;
+                                  const yWrites = 170 - hWrites;
+                                  
+                                  const displayDate = d.date.split('-').slice(1).join('/');
+                                  const isSelected = hoveredIndex === index;
+                                  
+                                  return (
+                                    <g key={d.date} className="group cursor-pointer">
+                                      {/* Background column highlights on hover */}
+                                      <rect
+                                        x={40 + (index * groupWidth)}
+                                        y="10"
+                                        width={groupWidth}
+                                        height="160"
+                                        className={`transition-colors duration-150 ${isSelected ? 'fill-slate-50/70' : 'fill-transparent'}`}
+                                      />
+
+                                      {/* Reads Bar (Indigo) */}
+                                      <rect
+                                        x={xReads}
+                                        y={yReads}
+                                        width={barWidth}
+                                        height={hReads}
+                                        rx={Math.min(2, barWidth / 2)}
+                                        className={`transition-colors duration-200 ${isSelected ? 'fill-indigo-600 shadow-sm' : 'fill-indigo-400/85'}`}
+                                      />
+                                      
+                                      {/* Writes Bar (Blue) */}
+                                      <rect
+                                        x={xWrites}
+                                        y={yWrites}
+                                        width={barWidth}
+                                        height={hWrites}
+                                        rx={Math.min(2, barWidth / 2)}
+                                        className={`transition-colors duration-200 ${isSelected ? 'fill-blue-600 shadow-sm' : 'fill-blue-400/85'}`}
+                                      />
+                                      
+                                      {/* Hover activation hit box */}
+                                      <rect
+                                        x={40 + (index * groupWidth)}
+                                        y="10"
+                                        width={groupWidth}
+                                        height="165"
+                                        className="fill-transparent opacity-0 cursor-pointer"
+                                        onMouseEnter={() => setHoveredIndex(index)}
+                                        onMouseLeave={() => setHoveredIndex(null)}
+                                      />
+                                      
+                                      {/* Date labels on X-axis */}
+                                      <text 
+                                        x={40 + (index * groupWidth) + groupWidth / 2} 
+                                        y="188" 
+                                        className={`text-[9px] font-mono font-bold text-center transition-colors ${
+                                          isSelected ? 'fill-slate-900 font-extrabold' : 'fill-slate-400'
+                                        }`}
+                                        textAnchor="middle"
+                                      >
+                                        {displayDate}
+                                      </text>
+                                    </g>
+                                  );
+                                })}
+                              </svg>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                      
+                      <p className="text-[10px] text-slate-400 text-center font-medium">
+                        ← Move your cursor across the chart bars to inspect individual day breakdowns →
+                      </p>
+                    </div>
+
+                    {/* Interactive breakdown panel */}
+                    <div className="bg-slate-900 text-slate-200 rounded-xl p-5 flex flex-col justify-between border border-slate-800 shadow-md">
+                      {(() => {
+                        const chartData = [...historicalStats].reverse();
+                        const activeIndex = hoveredIndex !== null ? hoveredIndex : chartData.length - 1;
+                        const activeData = chartData[activeIndex];
+
+                        if (!activeData) {
+                          return (
+                            <div className="flex-1 flex flex-col items-center justify-center text-center p-4">
+                              <span className="text-slate-500 font-medium text-xs">No historical records available for this selected scope.</span>
+                            </div>
+                          );
+                        }
+
+                        // Format full string date
+                        const parsedDate = new Date(activeData.date + "T00:00:00");
+                        const fullDateString = parsedDate.toLocaleDateString('en-US', {
+                          weekday: 'long',
+                          month: 'short',
+                          day: 'numeric',
+                          year: 'numeric'
+                        });
+
+                        return (
+                          <div className="space-y-4 flex-1 flex flex-col justify-between">
+                            <div className="space-y-3">
+                              <div className="border-b border-slate-800 pb-2">
+                                <span className="text-[9px] font-bold text-indigo-400 uppercase tracking-widest block">Selected Audit Date</span>
+                                <span className="text-sm font-extrabold text-white block mt-0.5">{fullDateString}</span>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-4">
+                                <div className="bg-slate-850 p-3 rounded-lg border border-slate-800">
+                                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Total Reads</span>
+                                  <strong className="text-lg font-black text-white font-mono block mt-1">{activeData.reads.toLocaleString()}</strong>
+                                  <span className="text-[9px] text-indigo-300 font-bold block mt-0.5">{(activeData.reads / 50000 * 100).toFixed(1)}% of limit</span>
+                                </div>
+
+                                <div className="bg-slate-850 p-3 rounded-lg border border-slate-800">
+                                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Total Writes</span>
+                                  <strong className="text-lg font-black text-white font-mono block mt-1">{activeData.writes.toLocaleString()}</strong>
+                                  <span className="text-[9px] text-blue-300 font-bold block mt-0.5">{(activeData.writes / 20000 * 100).toFixed(1)}% of limit</span>
+                                </div>
+                              </div>
+
+                              <div className="bg-slate-850 rounded-lg p-3 border border-slate-800 space-y-2 text-xs">
+                                <div className="flex justify-between items-center text-slate-300">
+                                  <span className="font-semibold text-slate-400">Teacher Writes:</span>
+                                  <span className="font-mono font-bold text-white">{activeData.teacherWrites.toLocaleString()}</span>
+                                </div>
+                                <div className="flex justify-between items-center text-slate-300">
+                                  <span className="font-semibold text-slate-400">Student Writes:</span>
+                                  <span className="font-mono font-bold text-white">{activeData.studentWrites.toLocaleString()}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="space-y-1.5 pt-3 border-t border-slate-800">
+                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Active Rooms ({activeData.boardBreakdown.length})</span>
+                              {activeData.boardBreakdown.length === 0 ? (
+                                <span className="text-[10px] text-slate-500 italic block">No collaborative activity logged for this date.</span>
+                              ) : (
+                                <div className="max-h-24 overflow-y-auto space-y-1 pr-1 scrollbar-thin">
+                                  {activeData.boardBreakdown.slice(0, 4).map(bb => (
+                                    <div key={bb.id} className="flex justify-between items-center text-[10px] bg-slate-800 px-2 py-1.5 rounded-md">
+                                      <span className="truncate font-semibold text-slate-300 max-w-[120px]">{bb.name}</span>
+                                      <span className="font-mono text-indigo-300 font-bold">R:{bb.reads} / W:{bb.writes}</span>
+                                    </div>
+                                  ))}
+                                  {activeData.boardBreakdown.length > 4 && (
+                                    <span className="text-[9px] text-slate-500 font-medium block text-right">+ {activeData.boardBreakdown.length - 4} more rooms</span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                ) : (
+                  /* Detailed History Table View */
+                  <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-2xs">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold text-[10px] uppercase tracking-wider">
+                            <th className="p-3 w-8"></th>
+                            <th className="p-3">Date</th>
+                            <th className="p-3 text-center">Reads</th>
+                            <th className="p-3 text-center">Writes</th>
+                            <th className="p-3 text-center">Teacher Writes</th>
+                            <th className="p-3 text-center">Student Writes</th>
+                            <th className="p-3 text-right">Active Rooms</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {historicalStats.length === 0 ? (
+                            <tr>
+                              <td colSpan={7} className="p-4 text-center text-slate-400 italic">
+                                No historical entries available.
+                              </td>
+                            </tr>
+                          ) : (
+                            historicalStats.map((hs) => {
+                              const isExpanded = expandedDates[hs.date] || false;
+                              const parsedDate = new Date(hs.date + "T00:00:00");
+                              const formattedDate = parsedDate.toLocaleDateString('en-US', {
+                                weekday: 'short',
+                                month: 'short',
+                                day: 'numeric',
+                                year: 'numeric'
+                              });
+
+                              return (
+                                <React.Fragment key={hs.date}>
+                                  <tr className="hover:bg-slate-50/40 transition-colors">
+                                    <td className="p-3">
+                                      <button
+                                        onClick={() => setExpandedDates(prev => ({ ...prev, [hs.date]: !isExpanded }))}
+                                        className="p-1 rounded hover:bg-slate-100 text-slate-500 hover:text-slate-700 cursor-pointer"
+                                      >
+                                        {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                                      </button>
+                                    </td>
+                                    <td className="p-3 font-semibold text-slate-800">{formattedDate}</td>
+                                    <td className="p-3 text-center font-mono font-bold text-indigo-600">{hs.reads.toLocaleString()}</td>
+                                    <td className="p-3 text-center font-mono font-bold text-blue-600">{hs.writes.toLocaleString()}</td>
+                                    <td className="p-3 text-center font-mono text-slate-500">{hs.teacherWrites.toLocaleString()}</td>
+                                    <td className="p-3 text-center font-mono text-slate-500">{hs.studentWrites.toLocaleString()}</td>
+                                    <td className="p-3 text-right font-medium text-slate-600">{hs.boardBreakdown.length} rooms</td>
+                                  </tr>
+                                  {isExpanded && (
+                                    <tr className="bg-slate-50/50">
+                                      <td colSpan={7} className="p-4 border-t border-b border-slate-100">
+                                        <div className="space-y-3 pl-8">
+                                          <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                                            <span>Breakdown of Rooms used on {hs.date}</span>
+                                          </div>
+                                          
+                                          {hs.boardBreakdown.length === 0 ? (
+                                            <p className="text-xs text-slate-400 italic">No detailed actions recorded on individual rooms.</p>
+                                          ) : (
+                                            <div className="border border-slate-200 rounded-xl overflow-hidden bg-white max-w-2xl">
+                                              <table className="w-full text-[11px] text-left border-collapse">
+                                                <thead>
+                                                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase tracking-wider text-[9px]">
+                                                    <th className="p-2.5">Room Name</th>
+                                                    <th className="p-2.5 text-center">Reads</th>
+                                                    <th className="p-2.5 text-center">Writes</th>
+                                                    <th className="p-2.5 text-center">Teacher Writes</th>
+                                                    <th className="p-2.5 text-center">Student Writes</th>
+                                                  </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-slate-100 font-medium">
+                                                  {hs.boardBreakdown.map((bb) => (
+                                                    <tr key={bb.id} className="hover:bg-slate-50/20">
+                                                      <td className="p-2 text-slate-800 font-bold">{bb.name}</td>
+                                                      <td className="p-2 text-center font-mono text-indigo-600 font-semibold">{bb.reads.toLocaleString()}</td>
+                                                      <td className="p-2 text-center font-mono text-blue-600 font-semibold">{bb.writes.toLocaleString()}</td>
+                                                      <td className="p-2 text-center font-mono text-slate-500">{bb.teacherWrites.toLocaleString()}</td>
+                                                      <td className="p-2 text-center font-mono text-slate-500">{bb.studentWrites.toLocaleString()}</td>
+                                                    </tr>
+                                                  ))}
+                                                </tbody>
+                                              </table>
+                                            </div>
+                                          )}
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  )}
+                                </React.Fragment>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Master Access Control Card */}

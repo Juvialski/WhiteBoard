@@ -31,10 +31,10 @@ service cloud.firestore {
                     && (request.resource.data.get('studentId', '') is string && request.resource.data.get('studentId', '').size() <= 100)
                     && (request.resource.data.get('studentName', '') is string && request.resource.data.get('studentName', '').size() <= 100);
       
-      allow update: if isStringWithLimit(request.resource.data.name, 100)
+      allow update: if (request.resource.data.get('name', '') is string && request.resource.data.get('name', '').size() <= 100)
                     && (request.resource.data.get('description', '') is string && request.resource.data.get('description', '').size() <= 500)
-                    && isNumber(request.resource.data.createdAt)
-                    && isStringWithLimit(request.resource.data.createdBy, 100)
+                    && isNumber(request.resource.data.get('createdAt', 0))
+                    && (request.resource.data.get('createdBy', '') is string && request.resource.data.get('createdBy', '').size() <= 100)
                     && (request.resource.data.get('studentId', '') is string && request.resource.data.get('studentId', '').size() <= 100)
                     && (request.resource.data.get('studentName', '') is string && request.resource.data.get('studentName', '').size() <= 100);
 

@@ -1566,15 +1566,34 @@ export default function WhiteboardCanvas({
     };
   }, []);
 
-  // Fetch board metadata in real time
+  // Fetch board metadata in real time with auto-initialization for stats map fields
+  useEffect(() => {
+    // Count 1 read for the initial load of the board metadata
+    incrementStats('read', 1);
+  }, [boardId, incrementStats]);
+
   useEffect(() => {
     const boardRef = doc(db, "whiteboards", boardId);
-    const unsubscribe = onSnapshot(boardRef, (snapshot) => {
+    const unsubscribe = onSnapshot(boardRef, async (snapshot) => {
       if (snapshot.exists()) {
-        incrementStats('read', 1);
+        const data = snapshot.data();
+        
+        // Auto-initialize stats maps on older boards if they are missing
+        if (!data.dailyWrites || !data.dailyReads || !data.teacherDailyWrites) {
+          try {
+            await updateDoc(boardRef, {
+              dailyWrites: data.dailyWrites || {},
+              dailyReads: data.dailyReads || {},
+              teacherDailyWrites: data.teacherDailyWrites || {}
+            });
+          } catch (e) {
+            console.error("Failed to initialize missing stats maps on board:", e);
+          }
+        }
+
         setBoardData({
           id: snapshot.id,
-          ...snapshot.data(),
+          ...data,
         } as Whiteboard);
       }
     });
