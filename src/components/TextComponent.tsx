@@ -230,8 +230,8 @@ export default function TextComponent({
       {/* Resize handles */}
       {isSelected && canWrite && !element.locked && (
         <div
-          className="absolute bottom-0 right-0 w-3 h-3 cursor-se-resize flex items-end justify-end pointer-events-auto"
-          onMouseDown={(e) => {
+          className="absolute -bottom-2 -right-2 w-8 h-8 cursor-se-resize flex items-center justify-center pointer-events-auto z-30"
+          onPointerDown={(e) => {
             e.stopPropagation();
             const canvasEvent = new CustomEvent('init-resize', {
               detail: { elementId: element.id, originalEvent: { clientX: e.clientX, clientY: e.clientY } }
@@ -239,7 +239,7 @@ export default function TextComponent({
             window.dispatchEvent(canvasEvent);
           }}
         >
-          <div className="w-1.5 h-1.5 rounded-full bg-blue-600 mr-0.5 mb-0.5" />
+          <div className="w-2.5 h-2.5 rounded-full bg-blue-600 border border-white shadow-sm" />
         </div>
       )}
     </div>

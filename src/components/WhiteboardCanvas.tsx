@@ -765,7 +765,7 @@ export default function WhiteboardCanvas({
 
   // Active Tool state
   const [activeTool, setActiveTool] = useState<Tool>("select");
-  const [activeColor, setActiveColor] = useState("#fef08a"); // default yellow sticky color
+  const [activeColor, setActiveColor] = useState("#000000"); // default black color
   const [activeShape, setActiveShape] = useState<ShapeType>("rect");
   const [strokeWidth, setStrokeWidth] = useState(4);
   const [gridMode, setGridMode] = useState<"dots" | "math" | "none">("dots");
@@ -3290,40 +3290,54 @@ export default function WhiteboardCanvas({
       )}
 
       {/* Floating vertical sidebar toolbar */}
-      <Toolbar
-        activeTool={activeTool}
-        onChangeTool={(tool) => {
-          if (!canWrite && tool !== "select" && tool !== "pan") {
-            triggerReadOnlyAlert();
-            return;
+      {(() => {
+        const selectedElements = elements.filter(el => selectedIds.includes(el.id) || el.id === selectedId);
+        const hasColorableSelection = selectedElements.length > 0 && selectedElements.some(el => {
+          if (el.type === "image") return false;
+          if (el.type === "shape") {
+            const st = el.shapeType;
+            if (st === "cartesian" || st === "advanced-cartesian" || st === "numberline") return false;
           }
-          setActiveTool(tool);
-        }}
-        activeColor={activeColor}
-        onChangeColor={handleColorChange}
-        activeShape={activeShape}
-        onChangeShape={setActiveShape}
-        onClearBoard={() => {
-          if (!canWrite) {
-            triggerReadOnlyAlert();
-            return;
-          }
-          setShowClearConfirm(true);
-        }}
-        zoom={zoom}
-        onZoomIn={handleZoomIn}
-        onZoomOut={handleZoomOut}
-        onZoomReset={handleZoomReset}
-        strokeWidth={strokeWidth}
-        onChangeStrokeWidth={setStrokeWidth}
-        gridMode={gridMode}
-        onChangeGridMode={setGridMode}
-        hasSelection={selectedIds.length > 0 || selectedId !== null}
-        isPdfMode={isPdfBoard}
-        teacherDailyWritesCount={localTeacherWritesCount}
-        isZenMode={isZenMode}
-        onToggleZenMode={handleToggleZenMode}
-      />
+          return true;
+        });
+        return (
+          <Toolbar
+            activeTool={activeTool}
+            onChangeTool={(tool) => {
+              if (!canWrite && tool !== "select" && tool !== "pan") {
+                triggerReadOnlyAlert();
+                return;
+              }
+              setActiveTool(tool);
+            }}
+            activeColor={activeColor}
+            onChangeColor={handleColorChange}
+            activeShape={activeShape}
+            onChangeShape={setActiveShape}
+            onClearBoard={() => {
+              if (!canWrite) {
+                triggerReadOnlyAlert();
+                return;
+              }
+              setShowClearConfirm(true);
+            }}
+            zoom={zoom}
+            onZoomIn={handleZoomIn}
+            onZoomOut={handleZoomOut}
+            onZoomReset={handleZoomReset}
+            strokeWidth={strokeWidth}
+            onChangeStrokeWidth={setStrokeWidth}
+            gridMode={gridMode}
+            onChangeGridMode={setGridMode}
+            hasSelection={selectedIds.length > 0 || selectedId !== null}
+            hasColorableSelection={hasColorableSelection}
+            isPdfMode={isPdfBoard}
+            teacherDailyWritesCount={localTeacherWritesCount}
+            isZenMode={isZenMode}
+            onToggleZenMode={handleToggleZenMode}
+          />
+        );
+      })()}
 
       {/* Main Interactive Interactive Zoomable & Pannable Canvas Container */}
       <div

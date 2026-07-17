@@ -55,6 +55,7 @@ interface ToolbarProps {
   gridMode: "dots" | "math" | "none";
   onChangeGridMode: (mode: "dots" | "math" | "none") => void;
   hasSelection?: boolean;
+  hasColorableSelection?: boolean;
   isPdfMode?: boolean;
   teacherDailyWritesCount?: number;
   isZenMode?: boolean;
@@ -195,6 +196,7 @@ export default function Toolbar({
   gridMode,
   onChangeGridMode,
   hasSelection = false,
+  hasColorableSelection = false,
   isPdfMode = false,
   teacherDailyWritesCount,
   isZenMode = false,
@@ -206,10 +208,10 @@ export default function Toolbar({
   const [hideColorMenuOverride, setHideColorMenuOverride] = useState(false);
 
   useEffect(() => {
-    if (hasSelection) {
+    if (hasColorableSelection) {
       setHideColorMenuOverride(false);
     }
-  }, [hasSelection]);
+  }, [hasColorableSelection]);
 
   const isGraphTool =
     activeTool === "cartesian" ||
@@ -420,7 +422,7 @@ export default function Toolbar({
         {/* Color Picker Panel */}
         {(showColorMenu ||
           (activeTool === "select" &&
-            hasSelection &&
+            hasColorableSelection &&
             !hideColorMenuOverride)) && (
           <div className="bg-white rounded-2xl border border-slate-200 shadow-lg p-3 flex flex-col space-y-2.5 absolute left-18 top-12 w-48 animate-fade-in">
             <div className="flex items-center justify-between border-b border-slate-100 pb-1">
@@ -512,7 +514,7 @@ export default function Toolbar({
 
       {/* Floating Bottom Left Controls */}
       {!isZenMode && (
-        <div className="fixed bottom-6 left-6 z-30 flex items-center space-x-4">
+        <div className="fixed bottom-4 left-4 right-4 z-30 flex flex-wrap items-center gap-2 sm:bottom-6 sm:left-6 sm:right-auto sm:space-x-4 sm:gap-0">
           {/* Zoom Controls */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-lg p-1.5 flex items-center space-x-1">
             <button

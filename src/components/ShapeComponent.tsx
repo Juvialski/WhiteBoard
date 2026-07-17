@@ -1769,8 +1769,8 @@ export default function ShapeComponent({
       {/* Resize handle */}
       {isSelected && canWrite && !element.locked && (
         <div
-          className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize flex items-end justify-end p-0.5 pointer-events-auto z-20"
-          onMouseDown={(e) => {
+          className="absolute -bottom-2 -right-2 w-8 h-8 cursor-se-resize flex items-center justify-center pointer-events-auto z-20"
+          onPointerDown={(e) => {
             e.stopPropagation();
             const canvasEvent = new CustomEvent("init-resize", {
               detail: {
@@ -1781,7 +1781,7 @@ export default function ShapeComponent({
             window.dispatchEvent(canvasEvent);
           }}
         >
-          <div className="w-2 h-2 rounded-full bg-blue-600 mr-0.5 mb-0.5 shadow-xs" />
+          <div className="w-2.5 h-2.5 rounded-full bg-blue-600 border border-white shadow-sm" />
         </div>
       )}
 
