@@ -146,4 +146,5 @@ export interface UserProfile {
   color: string;
   role?: "student" | "teacher";
   photoURL?: string;
+  email?: string;
 }

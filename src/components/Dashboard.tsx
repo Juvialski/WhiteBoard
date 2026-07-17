@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { collection, query, onSnapshot, addDoc, deleteDoc, doc, writeBatch } from 'firebase/firestore';
+import { collection, query, onSnapshot, addDoc, deleteDoc, doc, writeBatch, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Whiteboard, UserProfile } from '../types';
 import { Plus, Trash2, ArrowRight, User, BookOpen, GraduationCap, Users, Sparkles, Copy, Check, FileUp, Loader2 } from 'lucide-react';
@@ -46,6 +46,93 @@ export default function Dashboard({
   } | null>(null);
 
   const [isUploadingPdf, setIsUploadingPdf] = useState(false);
+
+  // Admin Panel states
+  const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
+  const [adminAppEnabled, setAdminAppEnabled] = useState(true);
+  const [presenceList, setPresenceList] = useState<any[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Load presence and settings for admin
+  useEffect(() => {
+    const isAdmin = currentUserProfile?.email === 'al.matubis17@gmail.com';
+    if (!isAdmin) return;
+
+    // Listen to admin settings
+    const settingsRef = doc(db, 'admin_settings', 'global');
+    const unsubscribeSettings = onSnapshot(settingsRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (typeof data.appEnabled === 'boolean') {
+          setAdminAppEnabled(data.appEnabled);
+        }
+      }
+    }, (err) => {
+      console.error('Settings snapshot error:', err);
+    });
+
+    // Listen to users presence
+    const presenceRef = collection(db, 'presence');
+    const q = query(presenceRef);
+    const unsubscribePresence = onSnapshot(q, (snapshot) => {
+      const list: any[] = [];
+      snapshot.forEach((docSnap) => {
+        list.push({
+          uid: docSnap.id,
+          ...docSnap.data()
+        });
+      });
+      // Sort: online first, then by lastActive descending
+      list.sort((a, b) => {
+        if (a.isOnline && !b.isOnline) return -1;
+        if (!a.isOnline && b.isOnline) return 1;
+        return (b.lastActive || 0) - (a.lastActive || 0);
+      });
+      setPresenceList(list);
+    }, (err) => {
+      console.error('Presence snapshot error:', err);
+    });
+
+    return () => {
+      unsubscribeSettings();
+      unsubscribePresence();
+    };
+  }, [currentUserProfile]);
+
+  const handleToggleAppEnabled = async () => {
+    try {
+      const settingsRef = doc(db, 'admin_settings', 'global');
+      await setDoc(settingsRef, {
+        appEnabled: !adminAppEnabled,
+        updatedAt: Date.now(),
+        updatedBy: currentUserProfile?.email || 'Admin'
+      }, { merge: true });
+    } catch (err) {
+      console.error('Error toggling app access:', err);
+      alert('Failed to update app access: ' + (err instanceof Error ? err.message : String(err)));
+    }
+  };
+
+  const handleRemovePresence = async (uid: string) => {
+    try {
+      await deleteDoc(doc(db, 'presence', uid));
+    } catch (err) {
+      console.error('Error removing presence document:', err);
+      alert('Failed to remove presence: ' + (err instanceof Error ? err.message : String(err)));
+    }
+  };
+
+  const formatLastActive = (timestamp: number) => {
+    if (!timestamp) return 'Never';
+    const diff = Date.now() - timestamp;
+    if (diff < 30000) return 'Just now';
+    if (diff < 60000) return '30s ago';
+    const mins = Math.floor(diff / 60000);
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    return new Date(timestamp).toLocaleDateString();
+  };
 
   const handlePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -447,6 +534,45 @@ export default function Dashboard({
             </div>
           </div>
 
+          {/* Admin Control Entry */}
+          {currentUserProfile?.email === 'al.matubis17@gmail.com' && (
+            <div className="bg-gradient-to-br from-slate-900 to-slate-800 p-6 rounded-xl border border-slate-700 shadow-md relative overflow-hidden text-white mt-4">
+              <div className="absolute top-0 right-0 w-24 h-24 bg-red-500/10 rounded-full blur-2xl -mr-6 -mt-6"></div>
+              
+              <div className="flex items-center space-x-2.5 mb-2">
+                <div className="p-1.5 bg-red-500 rounded text-white shadow-sm animate-pulse">
+                  <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m0-6v2m0-5a7 7 0 110 14 7 7 0 010-14z" />
+                  </svg>
+                </div>
+                <h2 className="text-sm font-bold tracking-wide">Admin Control Deck</h2>
+              </div>
+              <p className="text-[11px] text-slate-300 mb-4 leading-relaxed">
+                As the master administrator, you have permission to monitor active users, view board usage stats, and control global system access.
+              </p>
+
+              <div className="flex items-center justify-between mb-4 bg-slate-800/60 p-2.5 rounded-lg border border-slate-700">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">System Status:</span>
+                <span className={`inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded uppercase ${
+                  adminAppEnabled 
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
+                    : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                }`}>
+                  {adminAppEnabled ? '● Fully Operational' : '● System Locked'}
+                </span>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsAdminPanelOpen(true)}
+                className="w-full bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-bold py-2.5 rounded-lg transition-all text-xs flex items-center justify-center space-x-2 cursor-pointer shadow-md shadow-red-900/20"
+              >
+                <span>Launch Admin Console</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
           {/* PDF Upload Mode Tool */}
           {role === 'teacher' && (
             <div className="bg-white p-6 rounded-xl border border-indigo-200 shadow-sm relative overflow-hidden">
@@ -839,6 +965,256 @@ export default function Dashboard({
                 className="w-full bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 font-bold py-3 rounded-xl transition-all cursor-pointer"
               >
                 Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Admin Panel Modal */}
+      {isAdminPanelOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4 animate-in fade-in duration-200" id="admin-panel-overlay">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200 border border-slate-100">
+            {/* Modal Header */}
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-xl bg-red-600 text-white flex items-center justify-center shadow-md shadow-red-200">
+                  <svg className="w-5 h-5 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m0-6v2m0-5a7 7 0 110 14 7 7 0 010-14z" />
+                  </svg>
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-slate-900">Admin Control Console</h2>
+                  <p className="text-[11px] text-slate-500 font-medium">Exclusively authorized for al.matubis17@gmail.com</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setIsAdminPanelOpen(false)}
+                className="p-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-8 bg-white">
+              {/* Quick Stats Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="bg-slate-50 border border-slate-200 p-5 rounded-2xl flex flex-col justify-between">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Active Cursors / Online Now</span>
+                  <div className="flex items-baseline gap-2 mt-2">
+                    <span className="text-3xl font-black text-slate-900">
+                      {presenceList.filter(u => u.isOnline && (Date.now() - (u.lastActive || 0) < 60000)).length}
+                    </span>
+                    <span className="text-xs text-emerald-600 font-bold flex items-center">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 mr-1 animate-pulse"></span>
+                      live users
+                    </span>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-200 p-5 rounded-2xl flex flex-col justify-between">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total Registered Accounts</span>
+                  <div className="flex items-baseline gap-2 mt-2">
+                    <span className="text-3xl font-black text-slate-900">{presenceList.length}</span>
+                    <span className="text-xs text-slate-500 font-medium">unique sessions</span>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-200 p-5 rounded-2xl flex flex-col justify-between">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total Deployed Boards</span>
+                  <div className="flex items-baseline gap-2 mt-2">
+                    <span className="text-3xl font-black text-slate-900">{boards.length}</span>
+                    <span className="text-xs text-slate-500 font-medium">collaborative rooms</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Master Access Control Card */}
+              <div className="bg-slate-50 rounded-2xl border border-slate-200 p-6 space-y-4">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                      <svg className="w-4 h-4 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m0-6v2m0-5a7 7 0 110 14 7 7 0 010-14z" />
+                      </svg>
+                      <span>Global Application Access Kill-Switch</span>
+                    </h3>
+                    <p className="text-xs text-slate-500 leading-relaxed max-w-xl">
+                      Instantly toggle whether the whiteboard application is available for other students and teachers. 
+                      Your email <strong className="text-red-600">al.matubis17@gmail.com</strong> will always bypass this lock to prevent lockout.
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={handleToggleAppEnabled}
+                    className={`px-5 py-3 rounded-xl font-bold text-xs transition-all flex items-center gap-2 shrink-0 cursor-pointer shadow-sm ${
+                      adminAppEnabled 
+                        ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-200' 
+                        : 'bg-red-600 hover:bg-red-700 text-white shadow-red-200 animate-pulse'
+                    }`}
+                  >
+                    <span className="w-2.5 h-2.5 rounded-full bg-white block"></span>
+                    <span>{adminAppEnabled ? 'ALLOW ACCESS (Enabled)' : 'BLOCK ACCESS (Disabled)'}</span>
+                  </button>
+                </div>
+
+                <div className={`border rounded-xl p-4 flex gap-3 text-xs leading-relaxed ${
+                  adminAppEnabled 
+                    ? 'bg-emerald-50/40 border-emerald-100 text-emerald-800' 
+                    : 'bg-rose-50/40 border-rose-100 text-rose-800'
+                }`}>
+                  <div className={`p-1.5 rounded-lg shrink-0 h-fit ${
+                    adminAppEnabled ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'
+                  }`}>
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <span className="font-bold block mb-0.5">
+                      {adminAppEnabled ? 'System Status: Active' : 'System Status: Restricted'}
+                    </span>
+                    <span>
+                      {adminAppEnabled 
+                        ? 'The application is fully public. Any user can create private or shared board environments, sync edits, and interact live.' 
+                        : 'The app is locked. Any user other than you attempting to use the workspace will be greeted by a locked suspension screen.'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Real-time Usage Monitor / Collaborators Directory */}
+              <div className="space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900">Live Collaborators & Usage Monitor</h3>
+                    <p className="text-xs text-slate-500 mt-0.5">Real-time presence database records and heartbeats.</p>
+                  </div>
+
+                  <div className="relative w-full sm:w-72">
+                    <input
+                      type="text"
+                      placeholder="Filter by name or email..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-9 pr-4 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600 transition-colors"
+                    />
+                    <div className="absolute left-3 top-2.5 text-slate-400">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                      </svg>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold">
+                          <th className="p-4">Collaborator</th>
+                          <th className="p-4">Role</th>
+                          <th className="p-4">Current Board Location</th>
+                          <th className="p-4">Last Event</th>
+                          <th className="p-4">Status</th>
+                          <th className="p-4 text-center">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {presenceList.filter(u => {
+                          const query = searchQuery.toLowerCase();
+                          return (
+                            (u.name || '').toLowerCase().includes(query) ||
+                            (u.email || '').toLowerCase().includes(query)
+                          );
+                        }).length === 0 ? (
+                          <tr>
+                            <td colSpan={6} className="p-8 text-center text-slate-400 italic">
+                              No active presence sessions found matching criteria.
+                            </td>
+                          </tr>
+                        ) : (
+                          presenceList
+                            .filter(u => {
+                              const query = searchQuery.toLowerCase();
+                              return (
+                                (u.name || '').toLowerCase().includes(query) ||
+                                (u.email || '').toLowerCase().includes(query)
+                              );
+                            })
+                            .map((u) => {
+                              const isActuallyOnline = u.isOnline && (Date.now() - (u.lastActive || 0) < 60000);
+                              return (
+                                <tr key={u.uid} className="hover:bg-slate-50/50 transition-colors">
+                                  <td className="p-4">
+                                    <div className="flex flex-col">
+                                      <span className="font-semibold text-slate-800">{u.name || 'Anonymous'}</span>
+                                      <span className="text-[10px] text-slate-400 font-mono">{u.email || 'guest-session'}</span>
+                                    </div>
+                                  </td>
+                                  <td className="p-4">
+                                    <span className={`inline-flex px-2 py-0.5 rounded-[4px] text-[10px] font-bold uppercase tracking-wider ${
+                                      u.role === 'teacher' 
+                                        ? 'bg-indigo-50 text-indigo-700 border border-indigo-100' 
+                                        : 'bg-slate-100 text-slate-600'
+                                    }`}>
+                                      {u.role || 'student'}
+                                    </span>
+                                  </td>
+                                  <td className="p-4">
+                                    {u.currentBoardId ? (
+                                      <div className="flex flex-col">
+                                        <span className="font-medium text-slate-700 line-clamp-1">{u.currentBoardName || 'Active Board'}</span>
+                                        <span className="text-[9px] text-slate-400 font-mono line-clamp-1">{u.currentBoardId}</span>
+                                      </div>
+                                    ) : (
+                                      <span className="text-slate-400 italic font-medium">In Dashboard</span>
+                                    )}
+                                  </td>
+                                  <td className="p-4 font-medium text-slate-500">
+                                    {formatLastActive(u.lastActive)}
+                                  </td>
+                                  <td className="p-4">
+                                    <span className={`inline-flex items-center gap-1.5 font-bold uppercase text-[9px] px-2 py-0.5 rounded-full ${
+                                      isActuallyOnline 
+                                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' 
+                                        : 'bg-slate-50 text-slate-400 border border-slate-100'
+                                    }`}>
+                                      <span className={`w-1.5 h-1.5 rounded-full ${isActuallyOnline ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`}></span>
+                                      <span>{isActuallyOnline ? 'Online' : 'Offline'}</span>
+                                    </span>
+                                  </td>
+                                  <td className="p-4 text-center">
+                                    <button
+                                      disabled={u.email === 'al.matubis17@gmail.com'}
+                                      onClick={() => handleRemovePresence(u.uid)}
+                                      className="p-1.5 hover:bg-rose-50 rounded text-slate-400 hover:text-rose-600 transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:text-slate-200 cursor-pointer"
+                                      title="Clear presence document"
+                                    >
+                                      <Trash2 className="w-4 h-4 mx-auto" />
+                                    </button>
+                                  </td>
+                                </tr>
+                              );
+                            })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-100 bg-slate-50 text-right">
+              <button 
+                onClick={() => setIsAdminPanelOpen(false)}
+                className="px-5 py-2 text-xs font-bold bg-white border border-slate-200 text-slate-700 hover:text-slate-900 hover:bg-slate-50 rounded-xl transition-all cursor-pointer shadow-xs"
+              >
+                Close Panel
               </button>
             </div>
           </div>

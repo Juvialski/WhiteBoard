@@ -67,5 +67,31 @@ service cloud.firestore {
         allow delete: if true;
       }
     }
+
+    // Global User Presence rules
+    match /presence/{userId} {
+      allow read: if request.auth != null 
+                  && request.auth.token.email == 'al.matubis17@gmail.com' 
+                  && request.auth.token.email_verified == true;
+      
+      allow create, update: if isValidId(userId)
+                            && request.resource.data.id == userId
+                            && isStringWithLimit(request.resource.data.name, 100)
+                            && (request.resource.data.get('email', '') is string && request.resource.data.get('email', '').size() <= 150)
+                            && isNumber(request.resource.data.lastActive)
+                            && request.resource.data.isOnline is bool;
+      
+      allow delete: if request.auth != null 
+                    && request.auth.token.email == 'al.matubis17@gmail.com' 
+                    && request.auth.token.email_verified == true;
+    }
+
+    // Admin Settings rules
+    match /admin_settings/{settingId} {
+      allow read: if true;
+      allow write: if request.auth != null 
+                    && request.auth.token.email == 'al.matubis17@gmail.com' 
+                    && request.auth.token.email_verified == true;
+    }
   }
 }

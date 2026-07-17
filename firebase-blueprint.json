@@ -94,6 +94,62 @@
         }
       },
       "required": ["name", "color", "x", "y", "lastActive"]
+    },
+    "UserPresence": {
+      "title": "UserPresence",
+      "description": "User online presence and active board session details",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 150
+        },
+        "lastActive": {
+          "type": "integer"
+        },
+        "isOnline": {
+          "type": "boolean"
+        },
+        "role": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "currentBoardId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "currentBoardName": {
+          "type": "string",
+          "maxLength": 200
+        }
+      },
+      "required": ["id", "name", "lastActive", "isOnline"]
+    },
+    "AdminSettings": {
+      "title": "AdminSettings",
+      "description": "Global configuration settings for the app",
+      "type": "object",
+      "properties": {
+        "appEnabled": {
+          "type": "boolean"
+        },
+        "updatedAt": {
+          "type": "integer"
+        },
+        "updatedBy": {
+          "type": "string",
+          "maxLength": 100
+        }
+      },
+      "required": ["appEnabled"]
     }
   },
   "firestore": {
@@ -108,6 +164,14 @@
     "/whiteboards/{boardId}/cursors/{cursorId}": {
       "schema": "Cursor",
       "description": "Live transient user cursors inside a specific whiteboard"
+    },
+    "/presence/{userId}": {
+      "schema": "UserPresence",
+      "description": "Online presence and session status for all active users"
+    },
+    "/admin_settings/{settingId}": {
+      "schema": "AdminSettings",
+      "description": "Global administration and operation parameters"
     }
   }
 }
