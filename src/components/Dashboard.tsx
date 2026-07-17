@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { collection, query, onSnapshot, addDoc, deleteDoc, doc, writeBatch, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Whiteboard, UserProfile } from '../types';
-import { Plus, Trash2, ArrowRight, User, BookOpen, GraduationCap, Users, Sparkles, Copy, Check, FileUp, Loader2, ChevronDown, ChevronUp, Calendar, BarChart2, List } from 'lucide-react';
+import { Plus, Trash2, ArrowRight, User, BookOpen, GraduationCap, Users, Sparkles, Copy, Check, FileUp, Loader2, ChevronDown, ChevronUp, Calendar, BarChart2, List, RefreshCw } from 'lucide-react';
 
 interface DashboardProps {
   onSelectBoard: (boardId: string, profile: UserProfile) => void;
@@ -59,6 +59,8 @@ export default function Dashboard({
   const [expandedDates, setExpandedDates] = useState<Record<string, boolean>>({});
   const [historyTab, setHistoryTab] = useState<'chart' | 'table'>('chart');
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   // Load presence and settings for admin
   useEffect(() => {
@@ -78,33 +80,36 @@ export default function Dashboard({
       console.error('Settings snapshot error:', err);
     });
 
-    // Listen to users presence
-    const presenceRef = collection(db, 'presence');
-    const q = query(presenceRef);
-    const unsubscribePresence = onSnapshot(q, (snapshot) => {
-      const list: any[] = [];
-      snapshot.forEach((docSnap) => {
-        list.push({
-          uid: docSnap.id,
-          ...docSnap.data()
+    // Fetch users presence
+    const fetchPresence = async () => {
+      try {
+        const presenceRef = collection(db, 'presence');
+        const snapshot = await import('firebase/firestore').then(m => m.getDocs(query(presenceRef)));
+        const list: any[] = [];
+        snapshot.forEach((docSnap) => {
+          list.push({
+            uid: docSnap.id,
+            ...docSnap.data()
+          });
         });
-      });
-      // Sort: online first, then by lastActive descending
-      list.sort((a, b) => {
-        if (a.isOnline && !b.isOnline) return -1;
-        if (!a.isOnline && b.isOnline) return 1;
-        return (b.lastActive || 0) - (a.lastActive || 0);
-      });
-      setPresenceList(list);
-    }, (err) => {
-      console.error('Presence snapshot error:', err);
-    });
+        // Sort: online first, then by lastActive descending
+        list.sort((a, b) => {
+          if (a.isOnline && !b.isOnline) return -1;
+          if (!a.isOnline && b.isOnline) return 1;
+          return (b.lastActive || 0) - (a.lastActive || 0);
+        });
+        setPresenceList(list);
+      } catch (err) {
+        console.error('Presence fetch error:', err);
+      }
+    };
+    
+    fetchPresence();
 
     return () => {
       unsubscribeSettings();
-      unsubscribePresence();
     };
-  }, [currentUserProfile]);
+  }, [currentUserProfile, refreshTrigger]);
 
   const handleToggleAppEnabled = async () => {
     try {
@@ -273,10 +278,11 @@ export default function Dashboard({
     }
   }, []);
 
-  // Fetch whiteboards in real time
-  useEffect(() => {
-    const q = query(collection(db, 'whiteboards'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+  // Fetch whiteboards
+  const loadWhiteboards = async () => {
+    try {
+      const q = query(collection(db, 'whiteboards'));
+      const snapshot = await import('firebase/firestore').then(m => m.getDocs(q));
       const loadedBoards: Whiteboard[] = [];
       snapshot.forEach((docSnap) => {
         const data = docSnap.data();
@@ -296,10 +302,14 @@ export default function Dashboard({
       // Sort by newest
       loadedBoards.sort((a, b) => b.createdAt - a.createdAt);
       setBoards(loadedBoards);
-    });
+    } catch (err) {
+      console.error("Error loading whiteboards:", err);
+    }
+  };
 
-    return () => unsubscribe();
-  }, []);
+  useEffect(() => {
+    loadWhiteboards();
+  }, [refreshTrigger]);
 
   const handleCreateBoard = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -794,12 +804,22 @@ export default function Dashboard({
         {/* Board Listings */}
         <div className="lg:col-span-8 space-y-6">
           <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-bold text-slate-900 flex items-center space-x-2">
-                <Users className="w-5 h-5 text-blue-600" />
-                <span>Active Whiteboard Rooms</span>
-              </h2>
-              <p className="text-xs text-slate-500 mt-0.5">Select a digital whiteboard to join real-time collaboration.</p>
+            <div className="flex items-center space-x-4">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900 flex items-center space-x-2">
+                  <Users className="w-5 h-5 text-blue-600" />
+                  <span>Active Whiteboard Rooms</span>
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">Select a digital whiteboard to join real-time collaboration.</p>
+              </div>
+              <button
+                onClick={() => setRefreshTrigger(prev => prev + 1)}
+                className="px-2 py-1 text-xs font-medium bg-white border border-slate-200 text-slate-600 rounded hover:bg-slate-50 hover:text-slate-900 flex items-center space-x-1 shadow-sm transition-all"
+                title="Refresh Boards"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Refresh</span>
+              </button>
             </div>
             
             {/* Quick Create option for Students */}

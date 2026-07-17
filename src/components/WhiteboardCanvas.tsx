@@ -57,9 +57,11 @@ import {
   EyeOff,
   Zap,
   ZapOff,
+  Download,
 } from "lucide-react";
 import Markdown from "react-markdown";
 import { secureEncrypt, secureDecrypt } from "../utils/crypto";
+import { exportPdfWithDrawings } from "../utils/pdf";
 
 // Client-side image compression utility to handle high volumes of pasted images safely
 // within Firestore documents without needing Firebase Storage.
@@ -860,6 +862,21 @@ export default function WhiteboardCanvas({
 
   // Copy share button state
   const [copiedLink, setCopiedLink] = useState(false);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+
+  const handleDownloadPdfWithDrawings = async () => {
+    if (isGeneratingPdf) return;
+    setIsGeneratingPdf(true);
+    try {
+      await exportPdfWithDrawings(elements, boardName);
+    } catch (err) {
+      console.error("Error exporting PDF:", err);
+      alert("Failed to export PDF: " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  };
+
   const [isShortcutsExpanded, setIsShortcutsExpanded] = useState(true);
 
   // AI Classroom Assistant States
@@ -1616,9 +1633,9 @@ export default function WhiteboardCanvas({
     const now = Date.now();
     const isSolo = activeUsersCount <= 1;
 
-    // High performance WebSocket throttle: 50ms. If offline/solo fallback, use 30 seconds or 1 second.
+    // High performance WebSocket throttle: 50ms. If offline/solo fallback, use 30 seconds or 3 seconds.
     const isWsActive = wsRef.current && wsRef.current.readyState === WebSocket.OPEN;
-    const throttleLimit = isWsActive ? 50 : (isSolo ? 30000 : 1000);
+    const throttleLimit = isWsActive ? 50 : (isSolo ? 30000 : 3000);
     if (now - lastCursorUpdate.current < throttleLimit) return;
 
     if (!containerRef.current) return;
@@ -1630,13 +1647,13 @@ export default function WhiteboardCanvas({
     const canvasX = (mouseX - panX) / zoom;
     const canvasY = (mouseY - panY) / zoom;
 
-    // If collaborating (without WS), only sync if moved at least 15 pixels to save quota
+    // If collaborating (without WS), only sync if moved at least 50 pixels to save quota
     if (!isWsActive && !isSolo) {
       const dist = Math.sqrt(
         Math.pow(canvasX - lastSyncedCursorPos.current.x, 2) +
         Math.pow(canvasY - lastSyncedCursorPos.current.y, 2)
       );
-      if (dist < 15) return;
+      if (dist < 50) return;
     }
 
     lastCursorUpdate.current = now;
@@ -2310,6 +2327,9 @@ export default function WhiteboardCanvas({
 
   // Delete an element
   const handleDeleteElement = React.useCallback((id: string) => {
+    if (id.startsWith("pdf-page-")) {
+      return; // PDF pages are not deletable!
+    }
     const target = elementsRef.current.find((el) => el.id === id);
     if (target) {
       pushToUndo({ type: "delete", elementId: id, beforeData: target });
@@ -2684,10 +2704,13 @@ export default function WhiteboardCanvas({
 
   // Clear all items on the board
   const handleClearBoard = async () => {
+    const elementsToKeep = elements.filter(el => el.id.startsWith("pdf-page-"));
+    const elementsToDelete = elements.filter(el => !el.id.startsWith("pdf-page-"));
+
     // Immediate state and local storage clean
-    setElements([]);
+    setElements(elementsToKeep);
     try {
-      localStorage.removeItem(`whiteboard_elements_${boardId}`);
+      localStorage.setItem(`whiteboard_elements_${boardId}`, JSON.stringify(elementsToKeep));
     } catch (e) {
       console.error(e);
     }
@@ -2700,7 +2723,7 @@ export default function WhiteboardCanvas({
 
     if (isSolo) {
       // Add all currently loaded elements to pendingSync as deletions
-      elements.forEach((el) => {
+      elementsToDelete.forEach((el) => {
         pendingSyncElements.current[el.id] = { data: null, action: 'delete' };
       });
       hasUnsavedChanges.current = true;
@@ -2713,13 +2736,13 @@ export default function WhiteboardCanvas({
       setSyncStatus('saving-cloud');
       try {
         const batch = writeBatch(db);
-        elements.forEach((el) => {
+        elementsToDelete.forEach((el) => {
           const docRef = doc(db, "whiteboards", boardId, "elements", el.id);
           batch.delete(docRef);
         });
         await batch.commit();
         setSyncStatus('synced');
-        incrementStats('write', elements.length);
+        incrementStats('write', elementsToDelete.length);
       } catch (err) {
         console.error("Error clearing whiteboard:", err);
         setSyncStatus('offline');
@@ -3290,6 +3313,26 @@ export default function WhiteboardCanvas({
             <span>AI Assistant</span>
           </button>
 
+          {isPdfBoard && (
+            <button
+              onClick={handleDownloadPdfWithDrawings}
+              disabled={isGeneratingPdf}
+              className="px-3.5 py-1.5 rounded text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm flex items-center space-x-1.5 transition-all cursor-pointer disabled:opacity-50"
+            >
+              {isGeneratingPdf ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Exporting...</span>
+                </>
+              ) : (
+                <>
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download PDF</span>
+                </>
+              )}
+            </button>
+          )}
+
           <button
             onClick={copyBoardLink}
             className={`px-3.5 py-1.5 rounded text-xs font-medium flex items-center space-x-1.5 transition-all cursor-pointer ${
@@ -3354,12 +3397,26 @@ export default function WhiteboardCanvas({
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
-        className={`w-full h-full relative outline-none select-none ${
-          activeTool === "pan"
-            ? "cursor-grab active:cursor-grabbing"
-            : "cursor-default"
-        }`}
+        className="w-full h-full relative outline-none select-none"
         style={{
+          cursor:
+            activeTool === "pan"
+              ? isPanning
+                ? "grabbing"
+                : "grab"
+              : activeTool === "pencil"
+                ? `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%232563eb' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 20h9'/><path d='M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z'/></svg>") 0 24, crosshair`
+                : activeTool === "highlighter"
+                  ? `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23ca8a04' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m15 5 4 4'/><path d='M19 17V5a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2Z'/></svg>") 0 24, crosshair`
+                  : activeTool === "eraser"
+                    ? `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23dc2626' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21Z'/><path d='M22 21H7'/></svg>") 0 24, pointer`
+                    : activeTool === "text"
+                      ? "text"
+                      : activeTool === "sticky"
+                        ? "cell"
+                        : activeTool === "shape" || activeTool === "cartesian"
+                          ? "crosshair"
+                          : "default",
           // Grid dot, math grid, or plain background pattern that scales and translates correctly
           backgroundImage:
             isPdfBoard || gridMode === "none"
