@@ -10,6 +10,7 @@ import {
   writeBatch,
   increment,
   updateDoc,
+  deleteField,
 } from "firebase/firestore";
 import { db } from "../firebase";
 import {
@@ -932,49 +933,96 @@ export default function WhiteboardCanvas({
     const elementsRefColl = collection(db, "whiteboards", boardId, "elements");
     const q = query(elementsRefColl);
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      // Increment reads counter
+    let initialUnsubscribe: any;
+    let isInitialLoad = true;
+    let fallbackUnsubscribe: any;
+
+    initialUnsubscribe = onSnapshot(q, (snapshot) => {
+      if (!isInitialLoad) return;
       const readCount = snapshot.docChanges().length || snapshot.size || 1;
       incrementStats('read', readCount);
-
-      // Guard: In Solo mode, do not let old/stale cloud states overwrite our fresh local buffer.
-      if (hasUnsavedChanges.current && activeUsersCount <= 1) {
-        return;
-      }
 
       const loaded: BoardElement[] = [];
       snapshot.forEach((docSnap) => {
         const id = docSnap.id;
-        const data = docSnap.data();
-        if (id === "drawings_blob") {
-          if (data && Array.isArray(data.drawings)) {
-            loaded.push(...data.drawings);
+        const docData = docSnap.data();
+        if (id === "elements_blob" || id === "drawings_blob") {
+          if (docData && docData.data) {
+            Object.keys(docData.data).forEach(elId => {
+              loaded.push({ id: elId, ...docData.data[elId] } as BoardElement);
+            });
+          } else if (id === "drawings_blob" && docData && Array.isArray(docData.drawings)) {
+            loaded.push(...docData.drawings);
           }
         } else {
-          loaded.push({
-            id,
-            ...data,
-          } as BoardElement);
+          loaded.push({ id, ...docData } as BoardElement);
         }
       });
       setElements(loaded);
 
-      // Save latest cloud truth to localStorage as an offline/recovery fallback cache
       try {
         localStorage.setItem(`whiteboard_elements_${boardId}`, JSON.stringify(loaded));
-        
-        // Save latest drawings to IndexedDB for offline resilience and faster loading
         const drawings = loaded.filter(el => el.type === "drawing") as DrawingElement[];
         idbSet(`drawings_${boardId}`, drawings).catch(e => console.error("IDB save error:", e));
       } catch (e) {
-        console.error("Local storage sync error:", e);
+        console.error("Local storage error:", e);
       }
     }, (error) => {
       console.error("Snapshot connection error:", error);
       setSyncStatus('offline');
     });
 
-    return () => unsubscribe();
+    const timeout = setTimeout(() => {
+      isInitialLoad = false;
+      
+      // CRITICAL QUOTA OPTIMIZATION:
+      // If WebSocket is successfully connected, unsubscribe the Firestore listener to prevent continuous read billing!
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        if (initialUnsubscribe) initialUnsubscribe();
+        return;
+      }
+      
+      fallbackUnsubscribe = onSnapshot(q, (snapshot) => {
+        const readCount = snapshot.docChanges().length || snapshot.size || 1;
+        incrementStats('read', readCount);
+
+        if (hasUnsavedChanges.current && activeUsersCount <= 1) {
+          return;
+        }
+
+        const loaded: BoardElement[] = [];
+        snapshot.forEach((docSnap) => {
+          const id = docSnap.id;
+          const docData = docSnap.data();
+          if (id === "elements_blob" || id === "drawings_blob") {
+            if (docData && docData.data) {
+              Object.keys(docData.data).forEach(elId => {
+                loaded.push({ id: elId, ...docData.data[elId] } as BoardElement);
+              });
+            } else if (id === "drawings_blob" && docData && Array.isArray(docData.drawings)) {
+              loaded.push(...docData.drawings);
+            }
+          } else {
+            loaded.push({ id, ...docData } as BoardElement);
+          }
+        });
+        setElements(loaded);
+
+        try {
+          localStorage.setItem(`whiteboard_elements_${boardId}`, JSON.stringify(loaded));
+          const drawings = loaded.filter(el => el.type === "drawing") as DrawingElement[];
+          idbSet(`drawings_${boardId}`, drawings).catch(e => console.error("IDB save error:", e));
+        } catch (e) {
+          console.error("Local storage error:", e);
+        }
+      });
+    }, 4000);
+
+    return () => {
+      clearTimeout(timeout);
+      if (initialUnsubscribe) initialUnsubscribe();
+      if (fallbackUnsubscribe) fallbackUnsubscribe();
+    };
   }, [boardId, activeUsersCount]);
 
   // Monitor active cursors to determine Solo User Mode (Solo) vs Collaborative Mode (Multiplayer)
@@ -1188,16 +1236,43 @@ export default function WhiteboardCanvas({
 
     try {
       const batch = writeBatch(db);
+      const elementsBlobRef = doc(db, "whiteboards", boardId, "elements", "elements_blob");
+      const drawingsBlobRef = doc(db, "whiteboards", boardId, "elements", "drawings_blob");
+      
+      const elementsBlobData: Record<string, any> = {};
+      const drawingsBlobData: Record<string, any> = {};
+      
+      let hasElementUpdates = false;
+      let hasDrawingUpdates = false;
+
       keys.forEach((id) => {
         const item = queue[id];
-        const docRef = doc(db, "whiteboards", boardId, "elements", id);
+        const isDraw = item.data?.type === 'drawing' || id.startsWith('draw-');
+        
+        // Clean up old individual docs to save reads over time!
+        const oldDocRef = doc(db, "whiteboards", boardId, "elements", id);
+        batch.delete(oldDocRef);
+
         if (item.action === 'delete') {
-          batch.delete(docRef);
+          if (isDraw) drawingsBlobData[id] = deleteField();
+          else elementsBlobData[id] = deleteField();
         } else {
           const { id: _, ...data } = item.data;
-          batch.set(docRef, data, { merge: true });
+          if (isDraw) drawingsBlobData[id] = data;
+          else elementsBlobData[id] = data;
         }
+        
+        if (isDraw) hasDrawingUpdates = true;
+        else hasElementUpdates = true;
       });
+
+      if (hasElementUpdates) {
+        batch.set(elementsBlobRef, { data: elementsBlobData }, { merge: true });
+      }
+      if (hasDrawingUpdates) {
+        batch.set(drawingsBlobRef, { data: drawingsBlobData }, { merge: true });
+      }
+
       await batch.commit();
       hasUnsavedChanges.current = false;
       setSyncStatus('synced');
@@ -1281,8 +1356,10 @@ export default function WhiteboardCanvas({
     }
 
     const isSolo = activeUsersCount <= 1;
+    const isWebSocketOpen = wsRef.current && wsRef.current.readyState === WebSocket.OPEN;
+    const useDebouncedQueue = isSolo || isWebSocketOpen;
 
-    if (isSolo) {
+    if (useDebouncedQueue) {
       hasUnsavedChanges.current = true;
       setSyncStatus('saved-local');
 
@@ -1302,11 +1379,19 @@ export default function WhiteboardCanvas({
     } else {
       setSyncStatus('saving-cloud');
       try {
+        const isDrawingEl = isDrawing;
+        const blobRefId = isDrawingEl ? "drawings_blob" : "elements_blob";
+        const blobRef = doc(db, "whiteboards", boardId, "elements", blobRefId);
+        
+        // Always delete any stray individual documents just in case to keep things clean!
         const docRef = doc(db, "whiteboards", boardId, "elements", elementId);
+        deleteDoc(docRef).catch(e => {});
+
         if (actionType === 'delete') {
-          await deleteDoc(docRef);
+          // Use dynamic import for deleteField or just assume it's available
+          await setDoc(blobRef, { data: { [elementId]: deleteField() } }, { merge: true });
         } else {
-          await setDoc(docRef, processedData, { merge: isMerge });
+          await setDoc(blobRef, { data: { [elementId]: processedData } }, { merge: true });
         }
         setSyncStatus('synced');
         incrementStats('write', 1);
@@ -2214,6 +2299,13 @@ export default function WhiteboardCanvas({
     } else {
       setSyncStatus('saving-cloud');
       const batch = writeBatch(db);
+      const elementsBlobRef = doc(db, "whiteboards", boardId, "elements", "elements_blob");
+      const drawingsBlobRef = doc(db, "whiteboards", boardId, "elements", "drawings_blob");
+      
+      const elementsBlobData: Record<string, any> = {};
+      const drawingsBlobData: Record<string, any> = {};
+      let hasElementUpdates = false;
+      let hasDrawingUpdates = false;
 
       for (let i = 0; i < clipboardElements.length; i++) {
         const el = clipboardElements[i];
@@ -2234,12 +2326,25 @@ export default function WhiteboardCanvas({
         }
 
         const { id, ...data } = newEl;
-        const elementRef = doc(db, "whiteboards", boardId, "elements", newId);
-        batch.set(elementRef, data);
+        if (newEl.type === 'drawing') {
+          drawingsBlobData[newId] = data;
+          hasDrawingUpdates = true;
+        } else {
+          elementsBlobData[newId] = data;
+          hasElementUpdates = true;
+        }
+        
         newPasteIds.push(newId);
         pastedElements.push(newEl);
         
         pushToUndo({ type: "add", elementId: newId, afterData: newEl });
+      }
+
+      if (hasElementUpdates) {
+        batch.set(elementsBlobRef, { data: elementsBlobData }, { merge: true });
+      }
+      if (hasDrawingUpdates) {
+        batch.set(drawingsBlobRef, { data: drawingsBlobData }, { merge: true });
       }
 
       try {
@@ -2491,10 +2596,17 @@ export default function WhiteboardCanvas({
       setSyncStatus('saving-cloud');
       try {
         const batch = writeBatch(db);
+        const elementsBlobRef = doc(db, "whiteboards", boardId, "elements", "elements_blob");
+        const drawingsBlobRef = doc(db, "whiteboards", boardId, "elements", "drawings_blob");
+        
+        batch.delete(elementsBlobRef);
+        batch.delete(drawingsBlobRef);
+
         elementsToDelete.forEach((el) => {
           const docRef = doc(db, "whiteboards", boardId, "elements", el.id);
           batch.delete(docRef);
         });
+
         await batch.commit();
         setSyncStatus('synced');
         incrementStats('write', elementsToDelete.length);
