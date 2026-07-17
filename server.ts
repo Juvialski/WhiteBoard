@@ -180,7 +180,7 @@ Your job is to analyze the shape and path of this stroke and determine:
 1. Is it a hand-drawn geometric shape? (Must be one of: 'rect', 'circle', 'triangle', 'diamond', 'star', 'hexagon', 'pentagon', 'parallelogram', 'right-triangle', or 'line').
 2. Is it a handwritten letter, word, number, or basic math symbol?
 3. If it is a shape, classify it as 'shape' and specify the 'shapeType'.
-4. If it is writing/text, classify it as 'text' and write the recognized alphanumeric characters or mathematical equation in 'text'.
+4. If it is writing/text, classify it as 'text'. Carefully analyze the coordinate path, heights, widths, and stroke patterns to determine if the characters are UPPERCASE or lowercase. Write the recognized alphanumeric characters, words, or mathematical equations in 'text', strictly preserving the exact capitalization and casing (e.g., if the user wrote capital letters like 'A', 'B', 'MATH', return 'A', 'B', 'MATH'; do not lowercase them. If the user wrote 'a', 'b', 'hello', return 'a', 'b', 'hello').
 5. If it's a general doodle or scribble that doesn't clearly represent a standard shape or text, classify it as 'original'.
 
 Calculate the bounding box of the stroke based on the coordinates given, and return it.`;
@@ -191,7 +191,7 @@ ${pointsStr}
 Provide your classification and bounding box coordinates matching the drawing's dimensions.`;
 
     const response = await activeAi.models.generateContent({
-      model: "gemini-3.1-flash-lite",
+      model: "gemini-3.5-flash",
       contents: prompt,
       config: {
         systemInstruction,
@@ -201,7 +201,7 @@ Provide your classification and bounding box coordinates matching the drawing's 
           properties: {
             type: { type: Type.STRING, description: "Must be 'shape', 'text', or 'original'" },
             shapeType: { type: Type.STRING, description: "If type is 'shape', specifies the geometric type (rect, circle, triangle, diamond, line, star, hexagon, pentagon, parallelogram, right-triangle)." },
-            text: { type: Type.STRING, description: "If type is 'text', specifies the recognized handwriting characters or equations." },
+            text: { type: Type.STRING, description: "If type is 'text', specifies the recognized handwriting characters or equations. CRITICAL: Strictly preserve the exact capitalization, uppercase, and lowercase characters written by the user. Do not convert uppercase letters to lowercase." },
             bounds: {
               type: Type.OBJECT,
               properties: {

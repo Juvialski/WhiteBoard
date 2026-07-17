@@ -126,7 +126,7 @@ export default function TextComponent({
               setIsEditing(true);
             }}
             className="w-full h-full text-left font-bold break-words overflow-y-auto select-text cursor-text p-1"
-            style={{ fontSize: `${element.fontSize || 16}px`, color: element.color }}
+            style={{ fontSize: `${element.fontSize || 16}px`, color: element.color, whiteSpace: 'pre-wrap' }}
           >
             {element.text || (canWrite ? <span className="opacity-30 italic text-xs font-normal">Double click to type text</span> : '')}
           </div>

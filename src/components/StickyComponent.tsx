@@ -132,6 +132,7 @@ export default function StickyComponent({
               setIsEditing(true);
             }}
             className={`w-full h-full text-center flex items-center justify-center font-semibold text-sm overflow-auto select-text break-words cursor-text p-1 ${textColorClass}`}
+            style={{ whiteSpace: 'pre-wrap' }}
           >
             {element.text || (canWrite ? <span className="opacity-30 italic text-xs">Double click to type</span> : '')}
           </div>

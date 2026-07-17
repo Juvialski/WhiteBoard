@@ -2061,13 +2061,18 @@ export default function WhiteboardCanvas({
 
       const points = drawingPointsRef.current;
 
-      if (points.length > 1) {
+      if (points.length >= 1) {
+        // For a single point, duplicate it with a tiny offset so it renders as a beautiful round dot on canvas
+        const finalPoints = points.length === 1
+          ? [points[0], { x: points[0].x + 0.1, y: points[0].y + 0.1 }]
+          : points;
+
         const id = "draw-" + Date.now() + Math.floor(Math.random() * 100);
         const isHighlighter = activeTool === "highlighter";
         const newStroke: DrawingElement = {
           id,
           type: "drawing",
-          points,
+          points: finalPoints,
           color: isHighlighter ? `${activeColor}80` : activeColor, // add alpha opacity for highlighter
           width: isHighlighter ? strokeWidth * 2.5 : strokeWidth,
           isHighlighter,
@@ -2078,7 +2083,8 @@ export default function WhiteboardCanvas({
           await saveElementLocallyAndSync(id, newStroke);
           pushToUndo({ type: "add", elementId: id, afterData: newStroke });
 
-          if (autoCorrectHandwriting && !isHighlighter) {
+          // Only trigger AI beautification if it's not a highlighter and it actually has more than 2 points (e.g. drawn letters/words)
+          if (autoCorrectHandwriting && !isHighlighter && points.length > 2) {
             triggerAiBeautification(newStroke);
           }
         } catch (err) {
@@ -2627,18 +2633,74 @@ export default function WhiteboardCanvas({
   };
 
   // --- AI CLASSROOM ASSISTANT HELPER FUNCTIONS ---
+  // Renders drawings on a temporary client-side high-contrast canvas to feed to Gemini
+  const renderStrokesToImage = (strokes: Point[][], strokeColor: string = "#1e293b", strokeWidthValue: number = 4): string => {
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    let hasPoints = false;
+
+    for (const stroke of strokes) {
+      for (const pt of stroke) {
+        if (pt.x < minX) minX = pt.x;
+        if (pt.x > maxX) maxX = pt.x;
+        if (pt.y < minY) minY = pt.y;
+        if (pt.y > maxY) maxY = pt.y;
+        hasPoints = true;
+      }
+    }
+
+    if (!hasPoints) return "";
+
+    const padding = 24;
+    const width = Math.max(50, (maxX - minX) + padding * 2);
+    const height = Math.max(50, (maxY - minY) + padding * 2);
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return "";
+
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = strokeWidthValue;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
+    for (const stroke of strokes) {
+      if (stroke.length === 0) continue;
+      ctx.beginPath();
+      ctx.moveTo(stroke[0].x - minX + padding, stroke[0].y - minY + padding);
+      for (let i = 1; i < stroke.length; i++) {
+        ctx.lineTo(stroke[i].x - minX + padding, stroke[i].y - minY + padding);
+      }
+      ctx.stroke();
+    }
+
+    return canvas.toDataURL("image/png");
+  };
+
   const triggerAiBeautification = async (stroke: DrawingElement) => {
     if (!userApiKey || !userApiKey.trim()) {
       return; // Do nothing silently if user has not provided their own API key
     }
     try {
+      const strokeImage = renderStrokesToImage([stroke.points], "#1e293b", 4);
+
       const res = await fetch("/api/ai/beautify", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "x-user-api-key": userApiKey,
         },
-        body: JSON.stringify({ points: stroke.points }),
+        body: JSON.stringify({ 
+          points: stroke.points,
+          image: strokeImage
+        }),
       });
       if (!res.ok) {
         const errData = await res.json();
@@ -2718,9 +2780,9 @@ export default function WhiteboardCanvas({
 
     setIsAiLoading(true);
     try {
-      const allPoints = selectedDrawings
-        .sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0))
-        .flatMap((d) => d.points);
+      const sortedDrawings = [...selectedDrawings].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
+      const allPoints = sortedDrawings.flatMap((d) => d.points);
+      const strokeImage = renderStrokesToImage(sortedDrawings.map((d) => d.points), "#1e293b", 4);
 
       const res = await fetch("/api/ai/beautify", {
         method: "POST",
@@ -2728,7 +2790,10 @@ export default function WhiteboardCanvas({
           "Content-Type": "application/json",
           "x-user-api-key": userApiKey,
         },
-        body: JSON.stringify({ points: allPoints }),
+        body: JSON.stringify({ 
+          points: allPoints,
+          image: strokeImage
+        }),
       });
       if (!res.ok) {
         const errData = await res.json();

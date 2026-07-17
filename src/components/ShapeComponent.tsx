@@ -1573,6 +1573,7 @@ export default function ShapeComponent({
                 setIsEditing(true);
               }}
               className={`w-full h-full text-center flex items-center justify-center font-bold text-sm overflow-auto select-text break-words cursor-text ${textColorClass}`}
+              style={{ whiteSpace: "pre-wrap" }}
             >
               {element.text ||
                 (canWrite ? (
