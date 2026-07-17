@@ -25,6 +25,7 @@ import {
   ImageElement,
   Whiteboard,
   Collaborator,
+  ConnectorElement,
 } from "../types";
 
 import Toolbar, { Tool } from "./Toolbar";
@@ -61,6 +62,8 @@ import {
   Download,
   Maximize2,
   Minimize2,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 import Markdown from "react-markdown";
 import { secureEncrypt, secureDecrypt } from "../utils/crypto";
@@ -132,6 +135,63 @@ function getSvgPathFromPoints(points: Point[]): string {
   }
   d += ` L ${points[points.length - 1].x} ${points[points.length - 1].y}`;
   return d;
+}
+
+// Helpers for smart connection lines / connectors between shapes
+function getElementSocketCoords(el: BoardElement, socket: "top" | "right" | "bottom" | "left"): Point {
+  const bounded = el as any;
+  const w = bounded.width || 150;
+  const h = bounded.height || 150;
+  switch (socket) {
+    case "top":
+      return { x: bounded.x + w / 2, y: bounded.y };
+    case "right":
+      return { x: bounded.x + w, y: bounded.y + h / 2 };
+    case "bottom":
+      return { x: bounded.x + w / 2, y: bounded.y + h };
+    case "left":
+      return { x: bounded.x, y: bounded.y + h / 2 };
+  }
+}
+
+function getConnectorPath(start: Point, end: Point, fromSocket: string, toSocket?: string): string {
+  if (!toSocket) {
+    // Smooth Bezier path to user mouse/cursor during dragging
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    let cp1 = { x: start.x, y: start.y };
+    const strength = Math.min(100, Math.max(30, Math.hypot(dx, dy) * 0.3));
+    switch (fromSocket) {
+      case "top": cp1.y -= strength; break;
+      case "right": cp1.x += strength; break;
+      case "bottom": cp1.y += strength; break;
+      case "left": cp1.x -= strength; break;
+    }
+    return `M ${start.x} ${start.y} Q ${cp1.x} ${cp1.y} ${end.x} ${end.y}`;
+  }
+  
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  let cp1 = { x: start.x, y: start.y };
+  let cp2 = { x: end.x, y: end.y };
+  
+  const strength = Math.min(100, Math.max(30, Math.hypot(dx, dy) * 0.3));
+  
+  switch (fromSocket) {
+    case "top": cp1.y -= strength; break;
+    case "right": cp1.x += strength; break;
+    case "bottom": cp1.y += strength; break;
+    case "left": cp1.x -= strength; break;
+  }
+  
+  switch (toSocket) {
+    case "top": cp2.y -= strength; break;
+    case "right": cp2.x += strength; break;
+    case "bottom": cp2.y += strength; break;
+    case "left": cp2.x -= strength; break;
+  }
+  
+  return `M ${start.x} ${start.y} C ${cp1.x} ${cp1.y}, ${cp2.x} ${cp2.y}, ${end.x} ${end.y}`;
 }
 
 // High-performance point simplification/downsampling to shrink stroke coordinate sizes
@@ -667,6 +727,21 @@ export default function WhiteboardCanvas({
   const pendingSyncElements = useRef<Record<string, { data: any; action: 'set' | 'delete' }>>({});
   const debounceTimer = useRef<any>(null);
 
+  const [syncNotification, setSyncNotification] = useState<{
+    message: string;
+    type: 'success' | 'info' | 'warning' | 'error';
+    visible: boolean;
+  }>({ message: '', type: 'info', visible: false });
+  const syncNotificationTimeoutRef = useRef<any>(null);
+
+  const showSyncToast = React.useCallback((message: string, type: 'success' | 'info' | 'warning' | 'error' = 'info', duration: number = 4000) => {
+    if (syncNotificationTimeoutRef.current) clearTimeout(syncNotificationTimeoutRef.current);
+    setSyncNotification({ message, type, visible: true });
+    syncNotificationTimeoutRef.current = setTimeout(() => {
+      setSyncNotification(prev => ({ ...prev, visible: false }));
+    }, duration);
+  }, []);
+
   // Daily firebase writes and reads tracking state
   const pendingTeacherWrites = useRef<number>(0);
   const pendingAllWrites = useRef<number>(0);
@@ -776,6 +851,13 @@ export default function WhiteboardCanvas({
   const [isDragging, setIsDragging] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
   const [dragStart, setDragStart] = useState<Point>({ x: 0, y: 0 });
+  const [tempConnector, setTempConnector] = useState<{
+    fromId: string;
+    fromSocket: "top" | "right" | "bottom" | "left";
+    startPoint: Point;
+    currentPoint: Point;
+  } | null>(null);
+  const [snapLines, setSnapLines] = useState<{ x?: number; y?: number } | null>(null);
   const [elementStartPos, setElementStartPos] = useState<Point>({ x: 0, y: 0 });
   const [elementStartSize, setElementStartSize] = useState<{
     w: number;
@@ -1312,6 +1394,7 @@ export default function WhiteboardCanvas({
       hasUnsavedChanges.current = false;
       setSyncStatus('synced');
       incrementStats('write', keys.length);
+      showSyncToast("All offline changes synchronized successfully with cloud!", "success");
     } catch (err) {
       console.error("Flush pending changes to cloud failed:", err);
       // Restore failed items back to the queue safely
@@ -1322,8 +1405,9 @@ export default function WhiteboardCanvas({
       });
       hasUnsavedChanges.current = true;
       setSyncStatus('offline');
+      showSyncToast("Sync failed. Device is offline or permission was denied.", "error");
     }
-  }, [boardId]);
+  }, [boardId, incrementStats, showSyncToast]);
 
   // Centralized write-minimizer dispatcher handling local-first updates + debounced/immediate syncing
   const saveElementLocallyAndSync = React.useCallback(async (
@@ -1438,7 +1522,7 @@ export default function WhiteboardCanvas({
   }, [boardId, activeUsersCount, currentUser, setElements, setSyncStatus, flushPendingChanges]);
 
 
-  // Synchronize unsaved changes on tab close or navigation away
+  // Synchronize unsaved changes on tab close or navigation away, and handle instant online/offline syncing
   useEffect(() => {
     const handleBeforeUnload = () => {
       if (hasUnsavedChanges.current) {
@@ -1446,15 +1530,34 @@ export default function WhiteboardCanvas({
       }
     };
 
+    const handleOnline = () => {
+      console.log("Device back online. Synchronizing offline progress...");
+      showSyncToast("Back Online! Synchronizing offline progress...", "info");
+      if (hasUnsavedChanges.current) {
+        flushPendingChanges();
+      }
+    };
+
+    const handleOffline = () => {
+      console.log("Device went offline.");
+      setSyncStatus('offline');
+      showSyncToast("You are offline. Progress is saved locally in buffer.", "warning");
+    };
+
     window.addEventListener("beforeunload", handleBeforeUnload);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
     return () => {
       window.removeEventListener("beforeunload", handleBeforeUnload);
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
       if (hasUnsavedChanges.current) {
         flushPendingChanges();
       }
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
     };
-  }, []);
+  }, [flushPendingChanges, showSyncToast]);
 
   // Fetch board metadata in real time with auto-initialization for stats map fields
   useEffect(() => {
@@ -1593,13 +1696,14 @@ export default function WhiteboardCanvas({
       const customEvent = e as CustomEvent;
       const { elementId, originalEvent } = customEvent.detail;
       const targetElement = elements.find((el) => el.id === elementId);
-      if (!targetElement || targetElement.type === "drawing" || (targetElement as any).locked) return;
+      if (!targetElement || targetElement.type === "drawing" || targetElement.type === "connector" || (targetElement as any).locked) return;
 
       setSelectedId(elementId);
       setIsResizing(true);
       setDragStart({ x: originalEvent.clientX, y: originalEvent.clientY });
-      setElementStartSize({ w: targetElement.width, h: targetElement.height });
-      setElementStartPos({ x: targetElement.x, y: targetElement.y });
+      const bounded = targetElement as any;
+      setElementStartSize({ w: bounded.width, h: bounded.height });
+      setElementStartPos({ x: bounded.x, y: bounded.y });
     };
 
     window.addEventListener("init-resize", handleResizeStart);
@@ -1869,6 +1973,16 @@ export default function WhiteboardCanvas({
   const handleMouseMove = (e: React.PointerEvent) => {
     updateCursorPosition(e.clientX, e.clientY);
 
+    // Update connector drawing state
+    if (tempConnector) {
+      const coords = screenToCanvasCoords(e.clientX, e.clientY);
+      setTempConnector({
+        ...tempConnector,
+        currentPoint: coords,
+      });
+      return;
+    }
+
     // 1. Panning canvas background
     if (isPanning) {
       const dx = e.clientX - dragStart.x;
@@ -1970,6 +2084,142 @@ export default function WhiteboardCanvas({
       const dx = (e.clientX - dragStart.x) / zoom;
       const dy = (e.clientY - dragStart.y) / zoom;
 
+      // Determine the reference element (first element in selection that is not a drawing)
+      const refId = selectedIds[0];
+      const refEl = elementsRef.current.find((el) => el.id === refId);
+      const refStartPos = elementStartPositions[refId];
+
+      let snapOffsetX = dx;
+      let snapOffsetY = dy;
+      let lineX: number | undefined = undefined;
+      let lineY: number | undefined = undefined;
+
+      if (refEl && refEl.type !== "drawing" && refStartPos) {
+        // Unsnapped coordinate of reference element
+        const targetX = refStartPos.x + dx;
+        const targetY = refStartPos.y + dy;
+        const refW = (refEl as any).width || 150;
+        const refH = (refEl as any).height || 150;
+
+        let finalX = targetX;
+        let finalY = targetY;
+
+        let xSnapped = false;
+        let ySnapped = false;
+
+        // 1. Smart Alignment Snapping with other elements
+        const threshold = 8; // snap threshold in canvas pixels
+
+        // Find other elements (not in current selection) to align with
+        const otherEls = elementsRef.current.filter(
+          (el) =>
+            !selectedIds.includes(el.id) &&
+            el.type !== "drawing" &&
+            el.type !== "connector",
+        );
+
+        for (const other of otherEls) {
+          const o = other as any;
+          const oW = o.width || 150;
+          const oH = o.height || 150;
+
+          // X alignments (Left edge, Center, Right edge)
+          const targetLeft = targetX;
+          const targetCenter = targetX + refW / 2;
+          const targetRight = targetX + refW;
+
+          const oLeft = o.x;
+          const oCenter = o.x + oW / 2;
+          const oRight = o.x + oW;
+
+          if (!xSnapped) {
+            if (Math.abs(targetLeft - oLeft) < threshold) {
+              finalX = oLeft;
+              xSnapped = true;
+              lineX = oLeft;
+            } else if (Math.abs(targetCenter - oCenter) < threshold) {
+              finalX = oCenter - refW / 2;
+              xSnapped = true;
+              lineX = oCenter;
+            } else if (Math.abs(targetRight - oRight) < threshold) {
+              finalX = oRight - refW;
+              xSnapped = true;
+              lineX = oRight;
+            } else if (Math.abs(targetLeft - oRight) < threshold) {
+              finalX = oRight;
+              xSnapped = true;
+              lineX = oRight;
+            } else if (Math.abs(targetRight - oLeft) < threshold) {
+              finalX = oLeft - refW;
+              xSnapped = true;
+              lineX = oLeft;
+            }
+          }
+
+          // Y alignments (Top edge, Middle, Bottom edge)
+          const targetTop = targetY;
+          const targetMiddle = targetY + refH / 2;
+          const targetBottom = targetY + refH;
+
+          const oTop = o.y;
+          const oMiddle = o.y + oH / 2;
+          const oBottom = o.y + oH;
+
+          if (!ySnapped) {
+            if (Math.abs(targetTop - oTop) < threshold) {
+              finalY = oTop;
+              ySnapped = true;
+              lineY = oTop;
+            } else if (Math.abs(targetMiddle - oMiddle) < threshold) {
+              finalY = oMiddle - refH / 2;
+              ySnapped = true;
+              lineY = oMiddle;
+            } else if (Math.abs(targetBottom - oBottom) < threshold) {
+              finalY = oBottom - refH;
+              ySnapped = true;
+              lineY = oBottom;
+            } else if (Math.abs(targetTop - oBottom) < threshold) {
+              finalY = oBottom;
+              ySnapped = true;
+              lineY = oBottom;
+            } else if (Math.abs(targetBottom - oTop) < threshold) {
+              finalY = oTop - refH;
+              ySnapped = true;
+              lineY = oTop;
+            }
+          }
+
+          if (xSnapped && ySnapped) break;
+        }
+
+        // 2. Grid Snapping fallback (if not aligned to other elements and grid is active)
+        if (gridMode !== "none") {
+          if (!xSnapped) {
+            const snappedX = Math.round(targetX / 20) * 20;
+            if (Math.abs(snappedX - targetX) < 10) {
+              finalX = snappedX;
+              xSnapped = true;
+            }
+          }
+          if (!ySnapped) {
+            const snappedY = Math.round(targetY / 20) * 20;
+            if (Math.abs(snappedY - targetY) < 10) {
+              finalY = snappedY;
+              ySnapped = true;
+            }
+          }
+        }
+
+        snapOffsetX = finalX - refStartPos.x;
+        snapOffsetY = finalY - refStartPos.y;
+      }
+
+      if (lineX !== undefined || lineY !== undefined) {
+        setSnapLines({ x: lineX, y: lineY });
+      } else {
+        setSnapLines(null);
+      }
+
       // Update locally first for instantaneous rendering smoothness
       setElements((prev) =>
         prev.map((el) => {
@@ -1979,15 +2229,15 @@ export default function WhiteboardCanvas({
               if (el.type !== "drawing") {
                 return {
                   ...el,
-                  x: startPos.x + dx,
-                  y: startPos.y + dy,
+                  x: startPos.x + snapOffsetX,
+                  y: startPos.y + snapOffsetY,
                 };
               } else {
                 return {
                   ...el,
                   points: startPos.points.map((p: any) => ({
-                    x: p.x + dx,
-                    y: p.y + dy,
+                    x: p.x + snapOffsetX,
+                    y: p.y + snapOffsetY,
                   })),
                 };
               }
@@ -2034,6 +2284,83 @@ export default function WhiteboardCanvas({
 
   const handleMouseUp = async (e: React.PointerEvent) => {
     containerRectRef.current = null;
+    setSnapLines(null);
+
+    // Handle Connector tool release gesture
+    if (tempConnector) {
+      const coords = screenToCanvasCoords(e.clientX, e.clientY);
+      const targetEl = elementsRef.current.find((el) => {
+        if (el.id === tempConnector.fromId || el.type === "drawing" || el.type === "connector") return false;
+        const bounded = el as any;
+        const w = bounded.width || 150;
+        const h = bounded.height || 150;
+        return (
+          coords.x >= bounded.x &&
+          coords.x <= bounded.x + w &&
+          coords.y >= bounded.y &&
+          coords.y <= bounded.y + h
+        );
+      });
+
+      const id = "connector-" + Date.now() + Math.floor(Math.random() * 100);
+      let newConnector: ConnectorElement;
+
+      if (targetEl) {
+        // Find closest target socket
+        let toSocket: "top" | "right" | "bottom" | "left" = "top";
+        const bounded = targetEl as any;
+        const w = bounded.width || 150;
+        const h = bounded.height || 150;
+        const relX = (coords.x - bounded.x) / w;
+        const relY = (coords.y - bounded.y) / h;
+        
+        const distToLeft = relX;
+        const distToRight = 1 - relX;
+        const distToTop = relY;
+        const distToBottom = 1 - relY;
+        
+        const minDist = Math.min(distToLeft, distToRight, distToTop, distToBottom);
+        if (minDist === distToTop) toSocket = "top";
+        else if (minDist === distToRight) toSocket = "right";
+        else if (minDist === distToBottom) toSocket = "bottom";
+        else toSocket = "left";
+
+        newConnector = {
+          id,
+          type: "connector",
+          fromId: tempConnector.fromId,
+          toId: targetEl.id,
+          fromSocket: tempConnector.fromSocket,
+          toSocket,
+          color: activeColor,
+          zIndex: elements.length + 1,
+        };
+      } else {
+        // Connect to the free-floating coordinate point
+        newConnector = {
+          id,
+          type: "connector",
+          fromId: tempConnector.fromId,
+          fromSocket: tempConnector.fromSocket,
+          endPoint: coords,
+          color: activeColor,
+          zIndex: elements.length + 1,
+        };
+      }
+
+      try {
+        await saveElementLocallyAndSync(id, newConnector);
+        pushToUndo({ type: "add", elementId: id, afterData: newConnector });
+        setActiveTool("select");
+        setSelectedId(id);
+      } catch (err) {
+        console.error("Error saving connector:", err);
+      }
+
+      setTempConnector(null);
+      return;
+    }
+
     // 0. Finish drag selection box
     if (dragSelectStart) {
       setDragSelectStart(null);
@@ -2170,9 +2497,10 @@ export default function WhiteboardCanvas({
     if (isResizing && selectedId) {
       setIsResizing(false);
       const el = elements.find((e) => e.id === selectedId);
-      if (el && el.type !== "drawing") {
+      if (el && el.type !== "drawing" && el.type !== "connector") {
+        const bounded = el as any;
         const hasResized =
-          el.width !== elementStartSize.w || el.height !== elementStartSize.h;
+          bounded.width !== elementStartSize.w || bounded.height !== elementStartSize.h;
         if (hasResized) {
           pushToUndo({
             type: "update",
@@ -2182,15 +2510,15 @@ export default function WhiteboardCanvas({
               height: elementStartSize.h,
             },
             afterData: {
-              width: el.width,
-              height: el.height,
+              width: bounded.width,
+              height: bounded.height,
             },
           });
         }
         try {
           await saveElementLocallyAndSync(selectedId, {
-            width: el.width,
-            height: el.height,
+            width: bounded.width,
+            height: bounded.height,
           }, true);
         } catch (err) {
           console.error("Error updating resized element:", err);
@@ -2209,6 +2537,17 @@ export default function WhiteboardCanvas({
     if (target) {
       pushToUndo({ type: "delete", elementId: id, beforeData: target });
     }
+
+    // Also delete any connectors attached to this element
+    const attachedConnectors = elementsRef.current.filter(
+      (el) => el.type === "connector" && ((el as any).fromId === id || (el as any).toId === id)
+    );
+    attachedConnectors.forEach((conn) => {
+      pushToUndo({ type: "delete", elementId: conn.id, beforeData: conn });
+      saveElementLocallyAndSync(conn.id, null, false, "delete").catch((err) =>
+        console.error("Error deleting attached connector:", err)
+      );
+    });
 
     saveElementLocallyAndSync(id, null, false, 'delete')
       .then(() => {
@@ -2462,6 +2801,7 @@ export default function WhiteboardCanvas({
         else if (key === "s") setActiveTool("shape");
         else if (key === "g") setActiveTool("cartesian");
         else if (key === "t") setActiveTool("text");
+        else if (key === "l") setActiveTool("connector");
         else if (key === "e") setActiveTool("eraser");
       } else if (e.key === "Delete" || e.key === "Backspace") {
         if (!canWrite) {
@@ -3065,10 +3405,17 @@ export default function WhiteboardCanvas({
                   </span>
                 )}
                 {syncStatus === "offline" && (
-                  <span className="bg-rose-50 text-rose-700 border border-rose-100 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold flex items-center space-x-1">
-                    <span className="w-1 h-1 rounded-full bg-rose-500"></span>
-                    <span>Offline</span>
-                  </span>
+                  <button
+                    onClick={() => {
+                      showSyncToast("Attempting to force sync offline progress...", "info");
+                      flushPendingChanges();
+                    }}
+                    className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-100 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold flex items-center space-x-1 cursor-pointer transition-colors"
+                    title="No internet connection detected or Firestore offline. Click to manually force synchronize progress with Cloud."
+                  >
+                    <span className="w-1 h-1 rounded-full bg-rose-500 animate-pulse"></span>
+                    <span>Offline (Sync Now)</span>
+                  </button>
                 )}
 
                 {/* WebSocket Status Indicator with Real-Time latency */}
@@ -3418,9 +3765,66 @@ export default function WhiteboardCanvas({
             })}
           </div>
 
+          {/* 1.5. Connection Sockets Handles Overlay (shown when Connector Tool is active) */}
+          {activeTool === "connector" && (
+            <div className="absolute inset-0 pointer-events-none z-30">
+              {elements
+                .filter(el => el.type !== "drawing" && el.type !== "connector")
+                .map(el => {
+                  const bounded = el as any;
+                  const w = bounded.width || 150;
+                  const h = bounded.height || 150;
+                  
+                  const sockets: ("top" | "right" | "bottom" | "left")[] = ["top", "right", "bottom", "left"];
+                  
+                  return (
+                    <div
+                      key={`sockets-${el.id}`}
+                      className="absolute pointer-events-none"
+                      style={{
+                        left: bounded.x,
+                        top: bounded.y,
+                        width: w,
+                        height: h,
+                      }}
+                    >
+                      {sockets.map(s => {
+                        let style: React.CSSProperties = {};
+                        switch (s) {
+                          case "top": style = { top: -7, left: "50%", transform: "translateX(-50%)" }; break;
+                          case "right": style = { top: "50%", right: -7, transform: "translateY(-50%)" }; break;
+                          case "bottom": style = { bottom: -7, left: "50%", transform: "translateX(-50%)" }; break;
+                          case "left": style = { top: "50%", left: -7, transform: "translateY(-50%)" }; break;
+                        }
+                        
+                        return (
+                          <div
+                            key={s}
+                            className="absolute w-3.5 h-3.5 bg-blue-500 border-2 border-white rounded-full shadow-md pointer-events-auto cursor-crosshair transition-all hover:scale-125 active:bg-blue-600"
+                            style={style}
+                            title={`Drag from ${s} connector`}
+                            onPointerDown={(e) => {
+                              e.stopPropagation();
+                              const coords = screenToCanvasCoords(e.clientX, e.clientY);
+                              setTempConnector({
+                                fromId: el.id,
+                                fromSocket: s,
+                                startPoint: getElementSocketCoords(el, s),
+                                currentPoint: coords
+                              });
+                            }}
+                          />
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+            </div>
+          )}
+
           {/* Render remote collaborator selection borders */}
           {elements.map((el) => {
-            if (el.type === "drawing") return null;
+            if (el.type === "drawing" || el.type === "connector") return null;
             
             const focusedBy = Object.entries(remoteSelections).find(
               ([uId, sel]) => sel.selectedIds && sel.selectedIds.includes(el.id)
@@ -3431,15 +3835,17 @@ export default function WhiteboardCanvas({
             const [focusedUserId, focusInfo] = focusedBy;
             if (focusedUserId === currentUser.id) return null;
 
+            const bounded = el as any;
+
             return (
               <div
                 key={`remote-focus-${el.id}`}
                 className="absolute pointer-events-none border transition-all duration-150 z-30"
                 style={{
-                  left: (el.x || 0) - 2,
-                  top: (el.y || 0) - 2,
-                  width: (el.width || 100) + 4,
-                  height: (el.height || 80) + 4,
+                  left: (bounded.x || 0) - 2,
+                  top: (bounded.y || 0) - 2,
+                  width: (bounded.width || 100) + 4,
+                  height: (bounded.height || 80) + 4,
                   borderColor: focusInfo.color,
                   borderStyle: "dashed",
                   borderWidth: "2px",
@@ -3517,6 +3923,126 @@ export default function WhiteboardCanvas({
             />
             {/* Render remote active drawing streams */}
             <RemoteDrawingStreamsLayer streamsRef={remoteDrawingStreamsRef} dirtyRef={remoteDrawingStreamsDirtyRef} />
+
+            {/* Snap Alignment Guides */}
+            {snapLines && snapLines.x !== undefined && (
+              <line
+                x1={snapLines.x}
+                y1={-50000}
+                x2={snapLines.x}
+                y2={50000}
+                stroke="#6366f1"
+                strokeWidth="1.5"
+                strokeDasharray="4 4"
+              />
+            )}
+            {snapLines && snapLines.y !== undefined && (
+              <line
+                x1={-50000}
+                y1={snapLines.y}
+                x2={50000}
+                y2={snapLines.y}
+                stroke="#6366f1"
+                strokeWidth="1.5"
+                strokeDasharray="4 4"
+              />
+            )}
+
+            {/* Render Saved Connector Lines */}
+            {elements
+              .filter((el) => el.type === "connector")
+              .map((el) => {
+                const conn = el as ConnectorElement;
+                const fromEl = elements.find((e) => e.id === conn.fromId);
+                const toEl = conn.toId ? elements.find((e) => e.id === conn.toId) : null;
+                
+                if (!fromEl) return null;
+                
+                const start = getElementSocketCoords(fromEl, conn.fromSocket);
+                const end = toEl ? getElementSocketCoords(toEl, conn.toSocket || "top") : (conn.endPoint || start);
+                
+                const pathD = getConnectorPath(start, end, conn.fromSocket, toEl ? conn.toSocket : undefined);
+                const isSelected = selectedIds.includes(conn.id) || selectedId === conn.id;
+                
+                const dx = end.x - start.x;
+                const dy = end.y - start.y;
+                const angle = Math.atan2(dy, dx);
+                
+                const arrowLength = 12;
+                const arrowAngle = Math.PI / 6;
+                const arrowTip = end;
+                const arrowLeftX = end.x - arrowLength * Math.cos(angle - arrowAngle);
+                const arrowLeftY = end.y - arrowLength * Math.sin(angle - arrowAngle);
+                const arrowRightX = end.x - arrowLength * Math.cos(angle + arrowAngle);
+                const arrowRightY = end.y - arrowLength * Math.sin(angle + arrowAngle);
+                
+                const color = conn.color || "#4b5563";
+                
+                return (
+                  <g key={conn.id} className="pointer-events-none">
+                    {/* Invisible thicker selection target path */}
+                    {activeTool === "select" && (
+                      <path
+                        d={pathD}
+                        stroke="transparent"
+                        strokeWidth="16"
+                        fill="none"
+                        className="pointer-events-auto cursor-pointer"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleSelectElement(conn.id, e);
+                        }}
+                      />
+                    )}
+                    
+                    {/* Selected highlight path */}
+                    {isSelected && (
+                      <path
+                        d={pathD}
+                        stroke="#3b82f6"
+                        strokeWidth="5"
+                        strokeLinecap="round"
+                        fill="none"
+                        opacity="0.3"
+                      />
+                    )}
+                    
+                    {/* Main visible path */}
+                    <path
+                      d={pathD}
+                      stroke={color}
+                      strokeWidth={isSelected ? "3.5" : "2.5"}
+                      strokeLinecap="round"
+                      fill="none"
+                    />
+                    
+                    {/* Arrowhead polygon */}
+                    <polygon
+                      points={`${arrowTip.x},${arrowTip.y} ${arrowLeftX},${arrowLeftY} ${arrowRightX},${arrowRightY}`}
+                      fill={color}
+                    />
+                  </g>
+                );
+              })}
+
+            {/* Render temporary active connector line */}
+            {tempConnector && (
+              <g>
+                <path
+                  d={getConnectorPath(tempConnector.startPoint, tempConnector.currentPoint, tempConnector.fromSocket)}
+                  stroke="#3b82f6"
+                  strokeWidth="3"
+                  strokeDasharray="4 4"
+                  fill="none"
+                />
+                <circle
+                  cx={tempConnector.currentPoint.x}
+                  cy={tempConnector.currentPoint.y}
+                  r="5"
+                  fill="#3b82f6"
+                />
+              </g>
+            )}
           </svg>
 
           {/* 3. Real-Time Collaborative Cursors Tracker Overlay */}
@@ -3666,6 +4192,30 @@ export default function WhiteboardCanvas({
           <span>
             View-Only Mode: The teacher has locked writing access on this board.
           </span>
+        </div>
+      )}
+
+      {/* Offline Sync Floating Toast Notice */}
+      {syncNotification.visible && (
+        <div className={`fixed bottom-6 right-6 px-4 py-3 rounded-xl shadow-2xl z-50 flex items-center space-x-2.5 border transition-all duration-300 ${
+          syncNotification.type === 'success' ? 'bg-emerald-600 text-white border-emerald-500' :
+          syncNotification.type === 'error' ? 'bg-rose-600 text-white border-rose-500' :
+          syncNotification.type === 'warning' ? 'bg-amber-500 text-white border-amber-400' :
+          'bg-blue-600 text-white border-blue-500'
+        }`}>
+          {syncNotification.type === 'success' && <Check className="w-4 h-4 text-white shrink-0" />}
+          {syncNotification.type === 'error' && <WifiOff className="w-4 h-4 text-white shrink-0" />}
+          {syncNotification.type === 'warning' && <WifiOff className="w-4 h-4 text-white shrink-0" />}
+          {syncNotification.type === 'info' && <Wifi className="w-4 h-4 text-white shrink-0 animate-pulse" />}
+          <span className="text-xs font-semibold tracking-wide">
+            {syncNotification.message}
+          </span>
+          <button 
+            onClick={() => setSyncNotification(prev => ({ ...prev, visible: false }))}
+            className="text-white hover:text-white/80 p-0.5 rounded-full hover:bg-white/10 transition-colors cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
       )}
 

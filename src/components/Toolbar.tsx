@@ -36,7 +36,8 @@ export type Tool =
   | "numberline"
   | "advanced-cartesian"
   | "text"
-  | "eraser";
+  | "eraser"
+  | "connector";
 
 interface ToolbarProps {
   activeTool: Tool;
@@ -288,6 +289,7 @@ export default function Toolbar({
       label: "Graphs (G)",
     },
     { id: "text", icon: <Type className="w-5 h-5" />, label: "Text Box (T)" },
+    { id: "connector", icon: <CornerDownRight className="w-5 h-5" />, label: "Connector Line (L)" },
     { id: "eraser", icon: <Eraser className="w-5 h-5" />, label: "Eraser (E)" },
   ];
 
@@ -330,6 +332,7 @@ export default function Toolbar({
                           "cartesian",
                           "numberline",
                           "advanced-cartesian",
+                          "connector",
                         ].includes(t.id)
                       ) {
                         setShowColorMenu(true);

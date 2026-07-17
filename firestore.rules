@@ -15,6 +15,31 @@ service cloud.firestore {
       return val is int || val is float;
     }
 
+    // Returns true if the current requester is the verified administrator al.matubis17@gmail.com
+    function isAdmin() {
+      return request.auth != null 
+        && request.auth.token.email == 'al.matubis17@gmail.com' 
+        && request.auth.token.email_verified == true;
+    }
+
+    // Returns true if the workspace application is enabled for general use
+    function isAppEnabled() {
+      let path = /databases/$(database)/documents/admin_settings/global;
+      return !exists(path) || get(path).data.appEnabled == true;
+    }
+
+    // Check if the current user has access (either app is enabled or is admin)
+    function canAccess() {
+      return isAdmin() || isAppEnabled();
+    }
+
+    // Check if the current user has the teacher role in their presence document
+    function isTeacher() {
+      return request.auth != null 
+        && exists(/databases/$(database)/documents/presence/$(request.auth.uid))
+        && get(/databases/$(database)/documents/presence/$(request.auth.uid)).data.get('role', 'student') == 'teacher';
+    }
+
     // Default deny catch-all to prevent unwanted access
     match /{document=**} {
       allow read, write: if false;
@@ -22,8 +47,11 @@ service cloud.firestore {
 
     // Whiteboards collection rules
     match /whiteboards/{boardId} {
-      allow read: if true;
-      allow create: if isValidId(boardId)
+      // Allow read to anyone who can access the app (supports query/list without wildcard issues)
+      allow read: if canAccess();
+      
+      allow create: if canAccess() 
+                    && isValidId(boardId)
                     && isStringWithLimit(request.resource.data.name, 100)
                     && (request.resource.data.get('description', '') is string && request.resource.data.get('description', '').size() <= 500)
                     && isNumber(request.resource.data.createdAt)
@@ -31,19 +59,26 @@ service cloud.firestore {
                     && (request.resource.data.get('studentId', '') is string && request.resource.data.get('studentId', '').size() <= 100)
                     && (request.resource.data.get('studentName', '') is string && request.resource.data.get('studentName', '').size() <= 100);
       
-      allow update: if (request.resource.data.get('name', '') is string && request.resource.data.get('name', '').size() <= 100)
+      allow update: if canAccess()
+                    && isValidId(boardId)
+                    && (request.resource.data.get('name', '') is string && request.resource.data.get('name', '').size() <= 100)
                     && (request.resource.data.get('description', '') is string && request.resource.data.get('description', '').size() <= 500)
                     && isNumber(request.resource.data.get('createdAt', 0))
                     && (request.resource.data.get('createdBy', '') is string && request.resource.data.get('createdBy', '').size() <= 100)
                     && (request.resource.data.get('studentId', '') is string && request.resource.data.get('studentId', '').size() <= 100)
                     && (request.resource.data.get('studentName', '') is string && request.resource.data.get('studentName', '').size() <= 100);
 
-      allow delete: if true;
+      // Only teachers or administrators can delete whiteboards, or guests (authenticated or when app is enabled)
+      allow delete: if canAccess() 
+                    && isValidId(boardId);
 
       // Subcollection: elements on a whiteboard
       match /elements/{elementId} {
-        allow read: if true;
-        allow create, update: if isValidId(elementId)
+        allow read: if canAccess();
+        
+        allow create, update: if canAccess()
+                              && isValidId(boardId)
+                              && isValidId(elementId)
                               && (
                                 elementId == "drawings_blob" ||
                                 elementId == "elements_blob" ||
@@ -52,47 +87,98 @@ service cloud.firestore {
                                   && request.resource.data.type in ['sticky', 'shape', 'text', 'drawing', 'connector', 'image']
                                   && isNumber(request.resource.data.zIndex)
                                 )
+                              )
+                              // Write is allowed if:
+                              // - Admin is writing
+                              // - Or the board is not locked (studentsCanWrite is true or absent)
+                              // - Or the user is a teacher
+                              && (
+                                isAdmin()
+                                || get(/databases/$(database)/documents/whiteboards/$(boardId)).data.get('studentsCanWrite', true) == true
+                                || isTeacher()
                               );
-        allow delete: if true;
+
+        allow delete: if canAccess()
+                      && isValidId(boardId)
+                      && isValidId(elementId)
+                      // Deletion is allowed if:
+                      // - Admin is deleting
+                      // - Or the board is not locked (studentsCanWrite is true or absent)
+                      // - Or the user is a teacher
+                      && (
+                        isAdmin()
+                        || get(/databases/$(database)/documents/whiteboards/$(boardId)).data.get('studentsCanWrite', true) == true
+                        || isTeacher()
+                      );
       }
 
       // Subcollection: live collaborator cursors
       match /cursors/{cursorId} {
-        allow read: if true;
-        allow create, update: if isValidId(cursorId)
+        allow read: if canAccess();
+        
+        // Users can only write/update their own cursors (or guest cursors with 'u-' prefix matching their cursorId)
+        allow create, update: if canAccess()
+                              && isValidId(cursorId)
+                              && (
+                                // Scenario A: Authenticated user
+                                (request.auth != null && request.auth.uid == cursorId)
+                                ||
+                                // Scenario B: Guest user
+                                (request.auth == null && cursorId.matches('^u\\-[a-zA-Z0-9_\\-]+$'))
+                              )
                               && isStringWithLimit(request.resource.data.name, 100)
                               && isStringWithLimit(request.resource.data.color, 20)
                               && isNumber(request.resource.data.x)
                               && isNumber(request.resource.data.y)
                               && isNumber(request.resource.data.lastActive);
-        allow delete: if true;
+                              
+        // Users can only delete their own cursors (or if they are admin or teacher)
+        allow delete: if canAccess()
+                      && (
+                        (request.auth != null && request.auth.uid == cursorId)
+                        || (request.auth == null && cursorId.matches('^u\\-[a-zA-Z0-9_\\-]+$'))
+                        || isAdmin()
+                        || isTeacher()
+                      );
       }
     }
 
     // Global User Presence rules
     match /presence/{userId} {
-      allow read: if request.auth != null 
-                  && request.auth.token.email == 'al.matubis17@gmail.com' 
-                  && request.auth.token.email_verified == true;
+      // Allow read to any user to render collaborative online users
+      allow read: if canAccess();
       
-      allow create, update: if isValidId(userId)
-                            && request.resource.data.id == userId
+      // Users (including authenticated and guests) can only create or update their own presence document
+      allow create, update: if canAccess()
+                            && isValidId(userId)
+                            && (
+                              // Scenario A: Authenticated user updating their own presence
+                              (request.auth != null && request.auth.uid == userId)
+                              ||
+                              // Scenario B: Unauthenticated guest user updating their own guest presence
+                              (
+                                request.auth == null 
+                                && userId.matches('^u\\-[a-zA-Z0-9_\\-]+$') 
+                                && request.resource.data.id == userId
+                              )
+                            )
                             && isStringWithLimit(request.resource.data.name, 100)
-                            && (request.resource.data.get('email', '') is string && request.resource.data.get('email', '').size() <= 150)
                             && isNumber(request.resource.data.lastActive)
                             && request.resource.data.isOnline is bool;
       
-      allow delete: if request.auth != null 
-                    && request.auth.token.email == 'al.matubis17@gmail.com' 
-                    && request.auth.token.email_verified == true;
+      // Presence can only be deleted by admins or the user themselves
+      allow delete: if canAccess()
+                    && (
+                      isAdmin() 
+                      || (request.auth != null && request.auth.uid == userId)
+                      || (request.auth == null && userId.matches('^u\\-[a-zA-Z0-9_\\-]+$'))
+                    );
     }
 
     // Admin Settings rules
     match /admin_settings/{settingId} {
       allow read: if true;
-      allow write: if request.auth != null 
-                    && request.auth.token.email == 'al.matubis17@gmail.com' 
-                    && request.auth.token.email_verified == true;
+      allow write: if isAdmin();
     }
   }
 }

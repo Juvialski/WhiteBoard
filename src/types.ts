@@ -1,4 +1,4 @@
-export type ElementType = "sticky" | "shape" | "text" | "drawing" | "image";
+export type ElementType = "sticky" | "shape" | "text" | "drawing" | "image" | "connector";
 
 export type ShapeType =
   | "rect"
@@ -117,8 +117,29 @@ export interface DrawingElement {
   locked?: boolean;
 }
 
+export interface ConnectorElement {
+  id: string;
+  type: "connector";
+  fromId: string;
+  toId?: string; // If undefined, it connects to a free endPoint
+  fromSocket: "top" | "right" | "bottom" | "left";
+  toSocket?: "top" | "right" | "bottom" | "left";
+  endPoint?: Point; // Used when dragging or connected to a free point
+  color: string;
+  strokeWidth?: number;
+  lineStyle?: "straight" | "curved" | "elbow";
+  label?: string;
+  zIndex: number;
+  updatedAt?: number;
+}
+
 export type BoardElement =
-  StickyElement | ShapeElement | TextElement | DrawingElement | ImageElement;
+  | StickyElement
+  | ShapeElement
+  | TextElement
+  | DrawingElement
+  | ImageElement
+  | ConnectorElement;
 
 export interface Collaborator {
   id: string;
