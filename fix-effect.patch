@@ -1,0 +1,13 @@
+--- src/components/WhiteboardCanvas.tsx
++++ src/components/WhiteboardCanvas.tsx
+@@ -723,6 +723,10 @@
+   const [activeUsersCount, setActiveUsersCount] = useState<number>(1);
+   const [firestoreActiveUsersCount, setFirestoreActiveUsersCount] = useState<number>(1);
+   const [syncStatus, setSyncStatus] = useState<'synced' | 'saving-cloud' | 'saved-local' | 'offline'>('synced');
++  const activeUsersCountRef = useRef<number>(1);
++  useEffect(() => {
++    activeUsersCountRef.current = activeUsersCount;
++  }, [activeUsersCount]);
+   const hasUnsavedChanges = useRef<boolean>(false);
+   const pendingSyncElements = useRef<Record<string, { data: any; action: 'set' | 'delete' }>>({});
+   const debounceTimer = useRef<any>(null);

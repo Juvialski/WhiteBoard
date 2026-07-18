@@ -722,6 +722,10 @@ export default function WhiteboardCanvas({
   // Write Minimization & Offline Persistence States & Refs
   const [activeUsersCount, setActiveUsersCount] = useState<number>(1);
   const [firestoreActiveUsersCount, setFirestoreActiveUsersCount] = useState<number>(1);
+  const activeUsersCountRef = useRef<number>(1);
+  useEffect(() => {
+    activeUsersCountRef.current = activeUsersCount;
+  }, [activeUsersCount]);
   const [syncStatus, setSyncStatus] = useState<'synced' | 'saving-cloud' | 'saved-local' | 'offline'>('synced');
   const hasUnsavedChanges = useRef<boolean>(false);
   const pendingSyncElements = useRef<Record<string, { data: any; action: 'set' | 'delete' }>>({});
@@ -1050,14 +1054,16 @@ export default function WhiteboardCanvas({
     const elementsRefColl = collection(db, "whiteboards", boardId, "elements");
     const q = query(elementsRefColl);
 
-    let initialUnsubscribe: any;
     let isInitialLoad = true;
-    let fallbackUnsubscribe: any;
 
-    initialUnsubscribe = onSnapshot(q, (snapshot) => {
-      if (!isInitialLoad) return;
+    let unsubscribe = onSnapshot(q, (snapshot) => {
       const readCount = snapshot.docChanges().length || snapshot.size || 1;
       incrementStats('read', readCount);
+
+      if (!isInitialLoad && hasUnsavedChanges.current && activeUsersCountRef.current <= 1) {
+        return;
+      }
+      isInitialLoad = false;
 
       const loaded: BoardElement[] = [];
       snapshot.forEach((docSnap) => {
@@ -1075,6 +1081,7 @@ export default function WhiteboardCanvas({
           loaded.push({ id, ...docData } as BoardElement);
         }
       });
+
       setElements(loaded);
 
       try {
@@ -1090,57 +1097,18 @@ export default function WhiteboardCanvas({
     });
 
     const timeout = setTimeout(() => {
-      isInitialLoad = false;
-      
       // CRITICAL QUOTA OPTIMIZATION:
       // If WebSocket is successfully connected, unsubscribe the Firestore listener to prevent continuous read billing!
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        if (initialUnsubscribe) initialUnsubscribe();
-        return;
+        unsubscribe();
       }
-      
-      fallbackUnsubscribe = onSnapshot(q, (snapshot) => {
-        const readCount = snapshot.docChanges().length || snapshot.size || 1;
-        incrementStats('read', readCount);
-
-        if (hasUnsavedChanges.current && activeUsersCount <= 1) {
-          return;
-        }
-
-        const loaded: BoardElement[] = [];
-        snapshot.forEach((docSnap) => {
-          const id = docSnap.id;
-          const docData = docSnap.data();
-          if (id === "elements_blob" || id === "drawings_blob") {
-            if (docData && docData.data) {
-              Object.keys(docData.data).forEach(elId => {
-                loaded.push({ id: elId, ...docData.data[elId] } as BoardElement);
-              });
-            } else if (id === "drawings_blob" && docData && Array.isArray(docData.drawings)) {
-              loaded.push(...docData.drawings);
-            }
-          } else {
-            loaded.push({ id, ...docData } as BoardElement);
-          }
-        });
-        setElements(loaded);
-
-        try {
-          localStorage.setItem(`whiteboard_elements_${boardId}`, JSON.stringify(loaded));
-          const drawings = loaded.filter(el => el.type === "drawing") as DrawingElement[];
-          idbSet(`drawings_${boardId}`, drawings).catch(e => console.error("IDB save error:", e));
-        } catch (e) {
-          console.error("Local storage error:", e);
-        }
-      });
     }, 4000);
 
     return () => {
       clearTimeout(timeout);
-      if (initialUnsubscribe) initialUnsubscribe();
-      if (fallbackUnsubscribe) fallbackUnsubscribe();
+      unsubscribe();
     };
-  }, [boardId, activeUsersCount]);
+  }, [boardId]);
 
   // Monitor active cursors to determine Solo User Mode (Solo) vs Collaborative Mode (Multiplayer)
   useEffect(() => {
