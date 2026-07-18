@@ -1963,10 +1963,12 @@ export default function WhiteboardCanvas({
     // 5. Default selection click
     if (activeTool === "select") {
       // Clear selection if clicking on the empty background
-      setSelectedId(null);
-      setSelectedIds([]);
-      setDragSelectStart(coords);
-      setDragSelectEnd(coords);
+      if (e.target === e.currentTarget) {
+        setSelectedId(null);
+        setSelectedIds([]);
+        setDragSelectStart(coords);
+        setDragSelectEnd(coords);
+      }
     }
   };
 
@@ -2365,6 +2367,8 @@ export default function WhiteboardCanvas({
     if (dragSelectStart) {
       setDragSelectStart(null);
       setDragSelectEnd(null);
+      setIsDragging(false);
+      setIsResizing(false);
       return;
     }
 
@@ -2425,15 +2429,16 @@ export default function WhiteboardCanvas({
     }
 
     // 4. Update elements coordinates in Firestore on move end
-    if (isDragging && selectedIds.length > 0) {
+    if (isDragging) {
       setIsDragging(false);
+      
+      if (selectedIds.length > 0) {
+        const movedElements = elements.filter(
+          (el) => selectedIds.includes(el.id),
+        );
 
-      const movedElements = elements.filter(
-        (el) => selectedIds.includes(el.id),
-      );
-
-      await Promise.all(
-        movedElements.map(async (el) => {
+        await Promise.all(
+          movedElements.map(async (el) => {
           const startPos = elementStartPositions[el.id];
           if (startPos) {
             if (el.type !== "drawing") {
@@ -2490,38 +2495,42 @@ export default function WhiteboardCanvas({
           }
         }),
       );
+      }
       return;
     }
 
     // 5. Update size in Firestore on resize end
-    if (isResizing && selectedId) {
+    if (isResizing) {
       setIsResizing(false);
-      const el = elements.find((e) => e.id === selectedId);
-      if (el && el.type !== "drawing" && el.type !== "connector") {
-        const bounded = el as any;
-        const hasResized =
-          bounded.width !== elementStartSize.w || bounded.height !== elementStartSize.h;
-        if (hasResized) {
-          pushToUndo({
-            type: "update",
-            elementId: selectedId,
-            beforeData: {
-              width: elementStartSize.w,
-              height: elementStartSize.h,
-            },
-            afterData: {
+      
+      if (selectedId) {
+        const el = elements.find((e) => e.id === selectedId);
+        if (el && el.type !== "drawing" && el.type !== "connector") {
+          const bounded = el as any;
+          const hasResized =
+            bounded.width !== elementStartSize.w || bounded.height !== elementStartSize.h;
+          if (hasResized) {
+            pushToUndo({
+              type: "update",
+              elementId: selectedId,
+              beforeData: {
+                width: elementStartSize.w,
+                height: elementStartSize.h,
+              },
+              afterData: {
+                width: bounded.width,
+                height: bounded.height,
+              },
+            });
+          }
+          try {
+            await saveElementLocallyAndSync(selectedId, {
               width: bounded.width,
               height: bounded.height,
-            },
-          });
-        }
-        try {
-          await saveElementLocallyAndSync(selectedId, {
-            width: bounded.width,
-            height: bounded.height,
-          }, true);
-        } catch (err) {
-          console.error("Error updating resized element:", err);
+            }, true);
+          } catch (err) {
+            console.error("Error updating resized element:", err);
+          }
         }
       }
       return;
