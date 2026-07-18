@@ -1066,6 +1066,11 @@ export default function WhiteboardCanvas({
       isInitialLoad = false;
 
       const loaded: BoardElement[] = [];
+      let hasStrays = false;
+      const straysToDelete: string[] = [];
+      const strayElementsBlob: any = {};
+      const strayDrawingsBlob: any = {};
+
       snapshot.forEach((docSnap) => {
         const id = docSnap.id;
         const docData = docSnap.data();
@@ -1079,6 +1084,15 @@ export default function WhiteboardCanvas({
           }
         } else {
           loaded.push({ id, ...docData } as BoardElement);
+          if (!id.startsWith("chat_") && !id.startsWith("meta_")) {
+            hasStrays = true;
+            straysToDelete.push(id);
+            if (docData.type === "drawing") {
+              strayDrawingsBlob[id] = docData;
+            } else {
+              strayElementsBlob[id] = docData;
+            }
+          }
         }
       });
 
@@ -1090,6 +1104,34 @@ export default function WhiteboardCanvas({
         idbSet(`drawings_${boardId}`, drawings).catch(e => console.error("IDB save error:", e));
       } catch (e) {
         console.error("Local storage error:", e);
+      }
+
+      // Background migration for old stray documents
+      if (hasStrays && straysToDelete.length > 0) {
+        (async () => {
+          console.log(`Migrating ${straysToDelete.length} stray documents...`);
+          try {
+             if (Object.keys(strayElementsBlob).length > 0) {
+               await setDoc(doc(db, "whiteboards", boardId, "elements", "elements_blob"), { data: strayElementsBlob }, { merge: true });
+             }
+             if (Object.keys(strayDrawingsBlob).length > 0) {
+               await setDoc(doc(db, "whiteboards", boardId, "elements", "drawings_blob"), { data: strayDrawingsBlob }, { merge: true });
+             }
+             
+             // Delete strays in batches of 400
+             for (let i = 0; i < straysToDelete.length; i += 400) {
+                const chunk = straysToDelete.slice(i, i + 400);
+                const deleteBatch = writeBatch(db);
+                chunk.forEach(strayId => {
+                   deleteBatch.delete(doc(db, "whiteboards", boardId, "elements", strayId));
+                });
+                await deleteBatch.commit();
+             }
+             console.log("Migration successful!");
+          } catch (err) {
+             console.error("Migration failed:", err);
+          }
+        })();
       }
     }, (error) => {
       console.error("Snapshot connection error:", error);
