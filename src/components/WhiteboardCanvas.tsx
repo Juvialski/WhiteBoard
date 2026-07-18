@@ -1087,7 +1087,7 @@ export default function WhiteboardCanvas({
       }
       isInitialLoad = false;
 
-      const loaded: BoardElement[] = [];
+            const loadedMap = new Map<string, BoardElement>();
       let hasStrays = false;
       const straysToDelete: string[] = [];
       const shardUpdates: Record<string, any> = {};
@@ -1095,19 +1095,25 @@ export default function WhiteboardCanvas({
       snapshot.forEach((docSnap) => {
         const id = docSnap.id;
         const docData = docSnap.data();
+
         if (id.startsWith("elements_blob") || id.startsWith("drawings_blob")) {
           if (docData && docData.data) {
             Object.keys(docData.data).forEach(elId => {
-              loaded.push({ id: elId, ...docData.data[elId] } as BoardElement);
+              // Priority to blob data
+              loadedMap.set(elId, { id: elId, ...docData.data[elId] } as BoardElement);
             });
           } else if (id.startsWith("drawings_blob") && docData && Array.isArray(docData.drawings)) {
-            loaded.push(...docData.drawings);
+            docData.drawings.forEach((d: any) => loadedMap.set(d.id, d));
           }
         } else {
-          loaded.push({ id, ...docData } as BoardElement);
+          // If it's a stray document, we only add it if it's NOT already in a blob
           if (!id.startsWith("chat_") && !id.startsWith("meta_")) {
             hasStrays = true;
-            straysToDelete.push(id);
+            if (/^[a-zA-Z0-9_\-]+$/.test(id)) {
+              straysToDelete.push(id);
+            } else {
+              console.warn("Skipping invalid stray ID:", id);
+            }
             const blobId = getBlobRefId(docData.type === "drawing", id);
             if (!shardUpdates[blobId]) shardUpdates[blobId] = {};
             if (docData.type === "drawing") {
@@ -1115,10 +1121,19 @@ export default function WhiteboardCanvas({
             } else {
               shardUpdates[blobId][id] = docData;
             }
+            
+            if (!loadedMap.has(id)) {
+              loadedMap.set(id, { id, ...docData } as BoardElement);
+            }
+          } else {
+            if (!loadedMap.has(id)) {
+              loadedMap.set(id, { id, ...docData } as BoardElement);
+            }
           }
         }
       });
 
+      const loaded = Array.from(loadedMap.values());
       setElements(loaded);
 
       try {
@@ -1134,10 +1149,16 @@ export default function WhiteboardCanvas({
         (async () => {
           console.log(`Migrating ${straysToDelete.length} stray documents...`);
           try {
-             // Update shards
+                          // Update shards
              for (const blobId of Object.keys(shardUpdates)) {
                if (Object.keys(shardUpdates[blobId]).length > 0) {
-                 await setDoc(doc(db, "whiteboards", boardId, "elements", blobId), { data: shardUpdates[blobId] }, { merge: true });
+                 try {
+                   await setDoc(doc(db, "whiteboards", boardId, "elements", blobId), { data: shardUpdates[blobId] }, { merge: true });
+                 } catch (err) {
+                   console.error("Migration setDoc failed for blob", blobId, err);
+                   showSyncToast("Migration setDoc failed: " + err.message, "error", 10000);
+                   throw err;
+                 }
                }
              }
              
@@ -1148,11 +1169,17 @@ export default function WhiteboardCanvas({
                 chunk.forEach(strayId => {
                    deleteBatch.delete(doc(db, "whiteboards", boardId, "elements", strayId));
                 });
-                await deleteBatch.commit();
+                try {
+                  await deleteBatch.commit();
+                } catch (err) {
+                   console.error("Migration deleteBatch failed for chunk", i, err);
+                   showSyncToast("Migration deleteBatch failed: " + err.message, "error", 10000);
+                   throw err;
+                }
              }
              console.log("Migration successful!");
           } catch (err) {
-             console.error("Migration failed:", err);
+             console.error("Migration failed:", err); showSyncToast("Migration failed: " + err.message, "error", 10000);
           }
         })();
       }
@@ -1432,7 +1459,7 @@ export default function WhiteboardCanvas({
       });
       hasUnsavedChanges.current = true;
       setSyncStatus('offline');
-      showSyncToast("Sync failed. Device is offline or permission was denied.", "error");
+      showSyncToast("Sync failed: " + err.message, "error", 10000);
     }
   }, [boardId, incrementStats, showSyncToast]);
 
@@ -1524,26 +1551,31 @@ export default function WhiteboardCanvas({
       }, 3000);
     } else {
       setSyncStatus('saving-cloud');
+      
       try {
-        const isDrawingEl = isDrawing;
-        const blobRefId = getBlobRefId(isDrawingEl, elementId);
-        const blobRef = doc(db, "whiteboards", boardId, "elements", blobRefId);
+        const isDraw = processedData && processedData.type === 'drawing';
+        const blobId = getBlobRefId(isDraw, elementId);
         
-        // Always delete any stray individual documents just in case to keep things clean!
-        const docRef = doc(db, "whiteboards", boardId, "elements", elementId);
-        deleteDoc(docRef).catch(e => {});
-
         if (actionType === 'delete') {
-          // Use dynamic import for deleteField or just assume it's available
-          await setDoc(blobRef, { data: { [elementId]: deleteField() } }, { merge: true });
+          await setDoc(doc(db, "whiteboards", boardId, "elements", blobId), {
+            data: { [elementId]: deleteField() }
+          }, { merge: true });
         } else {
-          await setDoc(blobRef, { data: { [elementId]: processedData } }, { merge: true });
+          let payload = processedData;
+          if (isDraw) {
+             payload = { ...processedData, points: simplifyPoints(processedData.points, 1.2) };
+          }
+          await setDoc(doc(db, "whiteboards", boardId, "elements", blobId), {
+            data: { [elementId]: payload }
+          }, { merge: true });
         }
+        
         setSyncStatus('synced');
         incrementStats('write', 1);
       } catch (err) {
-        console.error("Direct sync error:", err);
+        console.error("Error saving element:", err);
         setSyncStatus('offline');
+        showSyncToast("Sync failed: " + err.message, "error", 10000);
       }
     }
   }, [boardId, activeUsersCount, currentUser, setElements, setSyncStatus, flushPendingChanges]);
@@ -2708,14 +2740,12 @@ export default function WhiteboardCanvas({
       setClipboardElements(pastedElements);
     } else {
       setSyncStatus('saving-cloud');
-      const batch = writeBatch(db);
-      const elementsBlobRef = doc(db, "whiteboards", boardId, "elements", "elements_blob");
-      const drawingsBlobRef = doc(db, "whiteboards", boardId, "elements", "drawings_blob");
       
-      const elementsBlobData: Record<string, any> = {};
-      const drawingsBlobData: Record<string, any> = {};
-      let hasElementUpdates = false;
-      let hasDrawingUpdates = false;
+      const currentList = [...elementsRef.current];
+      const updatedList = [...currentList];
+
+      const batch = writeBatch(db);
+      const blobUpdates: Record<string, any> = {};
 
       for (let i = 0; i < clipboardElements.length; i++) {
         const el = clipboardElements[i];
@@ -2725,7 +2755,6 @@ export default function WhiteboardCanvas({
         newEl.id = newId;
         newEl.zIndex = maxZ + i + 1;
         newEl.updatedAt = Date.now();
-
         if ('x' in newEl && 'y' in newEl) {
           newEl.x += (offset / zoom);
           newEl.y += (offset / zoom);
@@ -2735,27 +2764,30 @@ export default function WhiteboardCanvas({
           newEl.points = newEl.points.map((p: any) => ({ x: p.x + (offset / zoom), y: p.y + (offset / zoom) }));
         }
 
-        const { id, ...data } = newEl;
-        if (newEl.type === 'drawing') {
-          drawingsBlobData[newId] = data;
-          hasDrawingUpdates = true;
-        } else {
-          elementsBlobData[newId] = data;
-          hasElementUpdates = true;
-        }
-        
+        updatedList.push(newEl);
         newPasteIds.push(newId);
         pastedElements.push(newEl);
-        
         pushToUndo({ type: "add", elementId: newId, afterData: newEl });
+
+        const isDraw = newEl.type === 'drawing';
+        const blobId = getBlobRefId(isDraw, newId);
+        if (!blobUpdates[blobId]) blobUpdates[blobId] = {};
+        
+        const { id, ...data } = newEl;
+        if (isDraw) {
+          blobUpdates[blobId][newId] = { ...data, points: simplifyPoints((data as any).points, 1.2) };
+        } else {
+          blobUpdates[blobId][newId] = data;
+        }
       }
 
-      if (hasElementUpdates) {
-        batch.set(elementsBlobRef, { data: elementsBlobData }, { merge: true });
-      }
-      if (hasDrawingUpdates) {
-        batch.set(drawingsBlobRef, { data: drawingsBlobData }, { merge: true });
-      }
+      setElements(updatedList);
+      elementsRef.current = updatedList;
+
+      Object.keys(blobUpdates).forEach(blobId => {
+        const ref = doc(db, "whiteboards", boardId, "elements", blobId);
+        batch.set(ref, { data: blobUpdates[blobId] }, { merge: true });
+      });
 
       try {
         await batch.commit();
@@ -2767,6 +2799,7 @@ export default function WhiteboardCanvas({
       } catch (err) {
         console.error("Error pasting elements:", err);
         setSyncStatus('offline');
+        showSyncToast("Paste failed: " + err.message, "error", 10000);
       }
     }
   };
@@ -2816,6 +2849,7 @@ export default function WhiteboardCanvas({
 
       if ((e.ctrlKey || e.metaKey) && key === "v") {
         if (clipboardElements.length > 0) {
+          e.preventDefault();
           if (!canWrite) {
             triggerReadOnlyAlert();
             return;
