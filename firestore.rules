@@ -80,8 +80,8 @@ service cloud.firestore {
                               && isValidId(boardId)
                               && isValidId(elementId)
                               && (
-                                elementId == "drawings_blob" ||
-                                elementId == "elements_blob" ||
+                                elementId.matches('^drawings_blob.*') ||
+                                elementId.matches('^elements_blob.*') ||
                                 (
                                   request.resource.data.get('id', elementId) == elementId
                                   && request.resource.data.type in ['sticky', 'shape', 'text', 'drawing', 'connector', 'image']
