@@ -3693,6 +3693,7 @@ export default function WhiteboardCanvas({
         onPointerMove={handleMouseMove}
         onPointerUp={handleMouseUp}
         onPointerLeave={handleMouseUp}
+        onPointerCancel={handleMouseUp}
         className="w-full h-full relative outline-none select-none touch-none"
         style={{
           touchAction: "none",

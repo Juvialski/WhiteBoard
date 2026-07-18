@@ -136,7 +136,7 @@ export default function TextComponent({
       {/* Floating Action Menu below or above */}
       {isSelected && !isDraggingOrResizing && (
         <div 
-          onMouseDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}
           className="absolute -top-12 left-1/2 -translate-x-1/2 bg-white border border-slate-200 rounded-full shadow-lg px-2.5 py-1.5 flex items-center space-x-2 z-30 animate-fade-in whitespace-nowrap"
         >
           {/* Reaction picker */}
@@ -212,7 +212,7 @@ export default function TextComponent({
 
       {/* Reactions badges underneath */}
       <div 
-        onMouseDown={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}
         className="absolute -bottom-5 left-1 flex flex-wrap gap-1 z-10"
       >
         {Object.entries(element.reactions || {}).map(([emoji, users]) => (

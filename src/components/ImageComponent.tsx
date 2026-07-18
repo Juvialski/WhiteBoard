@@ -208,7 +208,7 @@ export default function ImageComponent({
         {/* Floating Controls Overlay (Visible when selected, or when reactions exist) */}
         {(isSelected || Object.keys(element.reactions || {}).length > 0) && (
           <div 
-            onMouseDown={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}
             className="absolute -bottom-12 left-1/2 -translate-x-1/2 flex items-center bg-white/95 border border-slate-200/80 rounded-full px-2.5 py-1 shadow-md gap-2 z-30 min-h-[34px] whitespace-nowrap"
           >
             {/* Render Reactions */}

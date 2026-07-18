@@ -141,7 +141,7 @@ export default function StickyComponent({
 
       {/* Footer (Reactions & Controls) */}
       <div 
-        onMouseDown={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}
         className="flex items-center justify-between mt-2 pt-2 border-t border-slate-900/5 min-h-[24px]"
       >
         {/* Render Emojis List */}

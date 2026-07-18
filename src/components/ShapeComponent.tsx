@@ -614,6 +614,7 @@ export default function ShapeComponent({
 
         return (
           <svg
+            draggable={false}
             className="absolute inset-0 w-full h-full"
             style={{
               pointerEvents: "auto",
@@ -625,6 +626,12 @@ export default function ShapeComponent({
                 : graphInteractionMode === "move"
                   ? "move"
                   : "default",
+            }}
+            onPointerDown={(e) => {
+              if (activeTool === "eraser" || (activeTool === "select" && !isSelected)) return;
+              if (graphInteractionMode !== "none") {
+                e.stopPropagation();
+              }
             }}
             onMouseDown={(e) => {
               if (activeTool === "eraser" || (activeTool === "select" && !isSelected)) return;
@@ -1589,7 +1596,7 @@ export default function ShapeComponent({
       {/* Floating Emoji Bar Above the Shape (Lucidspark style) */}
       {isSelected && !isDraggingOrResizing && (
         <div
-          onMouseDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}
           className="absolute -top-12 left-1/2 -translate-x-1/2 bg-white border border-slate-200 rounded-full shadow-lg px-2.5 py-1.5 flex items-center space-x-2 z-30 animate-fade-in whitespace-nowrap animate-scale-up"
         >
           {/* Reaction Emojis list */}
@@ -1744,7 +1751,7 @@ export default function ShapeComponent({
 
       {/* Inline Reaction Badges (collapsible below) */}
       <div
-        onMouseDown={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}
         className="absolute -bottom-6 left-2 flex flex-wrap gap-1 z-10"
       >
         {Object.entries(element.reactions || {}).map(([emoji, users]) => (
@@ -1788,7 +1795,7 @@ export default function ShapeComponent({
       {/* Advanced Cartesian Objects Panel */}
       {isSelected && canWrite && element.shapeType === "advanced-cartesian" && (
         <div
-          onMouseDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}
           className="absolute right-full top-0 mr-4 bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-2xl shadow-xl p-4 w-[240px] z-30 pointer-events-auto animate-scale-up flex flex-col space-y-4 text-left select-text max-h-[80vh] overflow-y-auto"
         >
           <div className="flex items-center space-x-2 pb-2 border-b border-slate-100">
@@ -1886,7 +1893,7 @@ export default function ShapeComponent({
       {/* Advanced Cartesian Settings Panel (Mini Desmos) */}
       {isSelected && canWrite && element.shapeType === "advanced-cartesian" && (
         <div
-          onMouseDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}
           className="absolute left-full top-0 ml-4 bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-2xl shadow-xl p-4 w-[280px] z-30 pointer-events-auto animate-scale-up flex flex-col space-y-4 text-left select-text"
         >
           <div className="flex items-center space-x-2 pb-2 border-b border-slate-100">
