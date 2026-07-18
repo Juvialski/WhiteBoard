@@ -238,7 +238,7 @@ const DrawingItem = React.memo(({
           ? "pointer-events-auto cursor-pointer"
           : "pointer-events-none"
       }
-      onMouseDown={(e) => handleSelectElement(el.id, e)}
+      onPointerDown={(e) => handleSelectElement(el.id, e)}
     >
       {/* Invisible thicker hit area for easier clicking */}
       <path

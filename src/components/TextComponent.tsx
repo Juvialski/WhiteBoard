@@ -89,7 +89,7 @@ export default function TextComponent({
 
   return (
     <div
-      onMouseDown={onSelect}
+      onPointerDown={onSelect}
       className={`absolute select-none flex flex-col justify-between transition-shadow duration-150 rounded-lg group p-2 ${cursorClass} ${
         isSelected ? 'ring-2 ring-blue-600 bg-blue-50/30 z-20 shadow-xs' : 'hover:bg-slate-50/30'
       }`}

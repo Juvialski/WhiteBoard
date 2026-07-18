@@ -580,7 +580,7 @@ export default function ShapeComponent({
                     pointerEvents: "stroke",
                     cursor: "default",
                   }}
-                  onMouseDown={(e) => {
+                  onPointerDown={(e) => {
                     if (activeTool === "eraser" || (activeTool === "select" && !isSelected)) return;
                   }}
                 />
@@ -614,7 +614,6 @@ export default function ShapeComponent({
 
         return (
           <svg
-            draggable={false}
             className="absolute inset-0 w-full h-full"
             style={{
               pointerEvents: "auto",
@@ -628,12 +627,6 @@ export default function ShapeComponent({
                   : "default",
             }}
             onPointerDown={(e) => {
-              if (activeTool === "eraser" || (activeTool === "select" && !isSelected)) return;
-              if (graphInteractionMode !== "none") {
-                e.stopPropagation();
-              }
-            }}
-            onMouseDown={(e) => {
               if (activeTool === "eraser" || (activeTool === "select" && !isSelected)) return;
               if (graphInteractionMode !== "none") {
                 e.stopPropagation();
@@ -906,7 +899,7 @@ export default function ShapeComponent({
                             : "grab"
                           : "crosshair",
                     }}
-                    onMouseDown={(e) => {
+                    onPointerDown={(e) => {
                       if (activeTool === "eraser" || (activeTool === "select" && !isSelected)) return;
                       if (
                         graphInteractionMode === "point" ||
@@ -994,7 +987,7 @@ export default function ShapeComponent({
                               : "grab"
                             : "crosshair",
                       }}
-                      onMouseDown={(e) => {
+                      onPointerDown={(e) => {
                         if (activeTool === "eraser" || (activeTool === "select" && !isSelected)) return;
                         if (
                           graphInteractionMode === "point" ||
@@ -1527,7 +1520,7 @@ export default function ShapeComponent({
 
   return (
     <div
-      onMouseDown={onSelect}
+      onPointerDown={onSelect}
       className={`absolute select-none flex flex-col justify-between transition-shadow duration-150 group ${cursorClass} ${
         isSelected ? "z-20" : "hover:shadow-xs"
       }`}

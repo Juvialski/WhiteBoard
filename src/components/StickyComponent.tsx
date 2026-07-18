@@ -94,7 +94,7 @@ export default function StickyComponent({
 
   return (
     <div
-      onMouseDown={onSelect}
+      onPointerDown={onSelect}
       className={`absolute select-none rounded-xl p-4 flex flex-col justify-between transition-shadow duration-150 group ${cursorClass} ${
         isSelected ? 'ring-2 ring-blue-600 shadow-xl z-20' : 'shadow-md shadow-slate-200/50 hover:shadow-lg'
       }`}

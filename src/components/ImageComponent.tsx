@@ -136,7 +136,7 @@ export default function ImageComponent({
   return (
     <>
       <div
-        onMouseDown={onSelect}
+        onPointerDown={onSelect}
         className={`absolute select-none flex flex-col justify-between transition-shadow duration-150 group ${cursorClass} ${
           isSelected ? 'ring-2 ring-blue-600 shadow-xl z-20' : 'z-10'
         } ${element.id.startsWith('pdf-page-') ? 'shadow-lg bg-white border border-slate-200' : ''}`}
@@ -169,22 +169,22 @@ export default function ImageComponent({
 
                <div className="absolute left-1/2 -translate-x-1/2 w-8 h-4 cursor-n-resize pointer-events-auto flex items-start justify-center" 
                     style={{ top: crop.top - 2 }}
-                    onMouseDown={(e) => handleCropDrag(e, 'top')}>
+                    onPointerDown={(e) => handleCropDrag(e, 'top')}>
                     <div className="w-4 h-1.5 bg-white rounded-full shadow" />
                </div>
                <div className="absolute left-1/2 -translate-x-1/2 w-8 h-4 cursor-s-resize pointer-events-auto flex items-end justify-center" 
                     style={{ bottom: crop.bottom - 2 }}
-                    onMouseDown={(e) => handleCropDrag(e, 'bottom')}>
+                    onPointerDown={(e) => handleCropDrag(e, 'bottom')}>
                     <div className="w-4 h-1.5 bg-white rounded-full shadow" />
                </div>
                <div className="absolute top-1/2 -translate-y-1/2 w-4 h-8 cursor-w-resize pointer-events-auto flex items-center justify-start" 
                     style={{ left: crop.left - 2 }}
-                    onMouseDown={(e) => handleCropDrag(e, 'left')}>
+                    onPointerDown={(e) => handleCropDrag(e, 'left')}>
                     <div className="w-1.5 h-4 bg-white rounded-full shadow" />
                </div>
                <div className="absolute top-1/2 -translate-y-1/2 w-4 h-8 cursor-e-resize pointer-events-auto flex items-center justify-end" 
                     style={{ right: crop.right - 2 }}
-                    onMouseDown={(e) => handleCropDrag(e, 'right')}>
+                    onPointerDown={(e) => handleCropDrag(e, 'right')}>
                     <div className="w-1.5 h-4 bg-white rounded-full shadow" />
                </div>
             </div>
