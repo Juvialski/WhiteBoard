@@ -443,6 +443,21 @@ interface WhiteboardCanvasProps {
   onBackToDashboard: () => void;
 }
 
+const getShardId = (id: string, maxShards: number = 10) => {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = ((hash << 5) - hash) + id.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash) % maxShards;
+};
+
+const getBlobRefId = (isDrawing: boolean, id: string) => {
+  const shardId = getShardId(id, 10);
+  const prefix = isDrawing ? "drawings_blob" : "elements_blob";
+  return shardId === 0 ? prefix : `${prefix}_${shardId}`;
+};
+
 export default function WhiteboardCanvas({
   boardId,
   boardName,
@@ -1057,8 +1072,15 @@ export default function WhiteboardCanvas({
     let isInitialLoad = true;
 
     let unsubscribe = onSnapshot(q, (snapshot) => {
-      const readCount = snapshot.docChanges().length || snapshot.size || 1;
-      incrementStats('read', readCount);
+      let readCount = 0;
+      if (isInitialLoad) {
+        readCount = snapshot.size || 1;
+      } else {
+        readCount = snapshot.docChanges().filter(c => c.type !== 'removed').length;
+      }
+      if (readCount > 0) {
+        incrementStats('read', readCount);
+      }
 
       if (!isInitialLoad && hasUnsavedChanges.current && activeUsersCountRef.current <= 1) {
         return;
@@ -1068,18 +1090,17 @@ export default function WhiteboardCanvas({
       const loaded: BoardElement[] = [];
       let hasStrays = false;
       const straysToDelete: string[] = [];
-      const strayElementsBlob: any = {};
-      const strayDrawingsBlob: any = {};
+      const shardUpdates: Record<string, any> = {};
 
       snapshot.forEach((docSnap) => {
         const id = docSnap.id;
         const docData = docSnap.data();
-        if (id === "elements_blob" || id === "drawings_blob") {
+        if (id.startsWith("elements_blob") || id.startsWith("drawings_blob")) {
           if (docData && docData.data) {
             Object.keys(docData.data).forEach(elId => {
               loaded.push({ id: elId, ...docData.data[elId] } as BoardElement);
             });
-          } else if (id === "drawings_blob" && docData && Array.isArray(docData.drawings)) {
+          } else if (id.startsWith("drawings_blob") && docData && Array.isArray(docData.drawings)) {
             loaded.push(...docData.drawings);
           }
         } else {
@@ -1087,10 +1108,12 @@ export default function WhiteboardCanvas({
           if (!id.startsWith("chat_") && !id.startsWith("meta_")) {
             hasStrays = true;
             straysToDelete.push(id);
+            const blobId = getBlobRefId(docData.type === "drawing", id);
+            if (!shardUpdates[blobId]) shardUpdates[blobId] = {};
             if (docData.type === "drawing") {
-              strayDrawingsBlob[id] = docData;
+              shardUpdates[blobId][id] = { ...docData, points: simplifyPoints(docData.points, 1.2) };
             } else {
-              strayElementsBlob[id] = docData;
+              shardUpdates[blobId][id] = docData;
             }
           }
         }
@@ -1111,11 +1134,11 @@ export default function WhiteboardCanvas({
         (async () => {
           console.log(`Migrating ${straysToDelete.length} stray documents...`);
           try {
-             if (Object.keys(strayElementsBlob).length > 0) {
-               await setDoc(doc(db, "whiteboards", boardId, "elements", "elements_blob"), { data: strayElementsBlob }, { merge: true });
-             }
-             if (Object.keys(strayDrawingsBlob).length > 0) {
-               await setDoc(doc(db, "whiteboards", boardId, "elements", "drawings_blob"), { data: strayDrawingsBlob }, { merge: true });
+             // Update shards
+             for (const blobId of Object.keys(shardUpdates)) {
+               if (Object.keys(shardUpdates[blobId]).length > 0) {
+                 await setDoc(doc(db, "whiteboards", boardId, "elements", blobId), { data: shardUpdates[blobId] }, { merge: true });
+               }
              }
              
              // Delete strays in batches of 400
@@ -1363,42 +1386,36 @@ export default function WhiteboardCanvas({
 
     try {
       const batch = writeBatch(db);
-      const elementsBlobRef = doc(db, "whiteboards", boardId, "elements", "elements_blob");
-      const drawingsBlobRef = doc(db, "whiteboards", boardId, "elements", "drawings_blob");
-      
-      const elementsBlobData: Record<string, any> = {};
-      const drawingsBlobData: Record<string, any> = {};
-      
-      let hasElementUpdates = false;
-      let hasDrawingUpdates = false;
+      const blobUpdates: Record<string, any> = {};
 
       keys.forEach((id) => {
         const item = queue[id];
+        if (!item) return;
         const isDraw = item.data?.type === 'drawing' || id.startsWith('draw-');
         
         // Clean up old individual docs to save reads over time!
         const oldDocRef = doc(db, "whiteboards", boardId, "elements", id);
         batch.delete(oldDocRef);
 
+        const blobId = getBlobRefId(isDraw, id);
+        if (!blobUpdates[blobId]) blobUpdates[blobId] = {};
+
         if (item.action === 'delete') {
-          if (isDraw) drawingsBlobData[id] = deleteField();
-          else elementsBlobData[id] = deleteField();
+          blobUpdates[blobId][id] = deleteField();
         } else {
           const { id: _, ...data } = item.data;
-          if (isDraw) drawingsBlobData[id] = data;
-          else elementsBlobData[id] = data;
+          if (isDraw) {
+            blobUpdates[blobId][id] = { ...data, points: simplifyPoints(data.points, 1.2) };
+          } else {
+            blobUpdates[blobId][id] = data;
+          }
         }
-        
-        if (isDraw) hasDrawingUpdates = true;
-        else hasElementUpdates = true;
       });
 
-      if (hasElementUpdates) {
-        batch.set(elementsBlobRef, { data: elementsBlobData }, { merge: true });
-      }
-      if (hasDrawingUpdates) {
-        batch.set(drawingsBlobRef, { data: drawingsBlobData }, { merge: true });
-      }
+      Object.keys(blobUpdates).forEach(blobId => {
+        const ref = doc(db, "whiteboards", boardId, "elements", blobId);
+        batch.set(ref, { data: blobUpdates[blobId] }, { merge: true });
+      });
 
       await batch.commit();
       hasUnsavedChanges.current = false;
@@ -1509,7 +1526,7 @@ export default function WhiteboardCanvas({
       setSyncStatus('saving-cloud');
       try {
         const isDrawingEl = isDrawing;
-        const blobRefId = isDrawingEl ? "drawings_blob" : "elements_blob";
+        const blobRefId = getBlobRefId(isDrawingEl, elementId);
         const blobRef = doc(db, "whiteboards", boardId, "elements", blobRefId);
         
         // Always delete any stray individual documents just in case to keep things clean!
