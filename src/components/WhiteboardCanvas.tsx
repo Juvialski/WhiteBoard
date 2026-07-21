@@ -814,27 +814,18 @@ export default function WhiteboardCanvas({
     }, 4000); // sync stats after 4 seconds of inactivity
   }, [boardId]);
 
-  const [localTeacherWritesCount, setLocalTeacherWritesCount] = useState<number>(0);
-
   const incrementStats = React.useCallback((type: 'write' | 'read', count: number) => {
     const isTeacher = currentUser.role === "teacher";
     if (type === 'write') {
       pendingAllWrites.current += count;
       if (isTeacher) {
         pendingTeacherWrites.current += count;
-        setLocalTeacherWritesCount((prev) => prev + count);
       }
     } else {
       pendingReads.current += count;
     }
     triggerStatsSync();
   }, [currentUser.role, triggerStatsSync]);
-
-  useEffect(() => {
-    const todayStr = getTodayDateString();
-    const dbWritesCount = boardData?.teacherDailyWrites?.[todayStr] || 0;
-    setLocalTeacherWritesCount(dbWritesCount + pendingTeacherWrites.current);
-  }, [boardData]);
 
   useEffect(() => {
     return () => {
@@ -1448,7 +1439,6 @@ export default function WhiteboardCanvas({
       hasUnsavedChanges.current = false;
       setSyncStatus('synced');
       incrementStats('write', keys.length);
-      showSyncToast("All offline changes synchronized successfully with cloud!", "success");
     } catch (err) {
       console.error("Flush pending changes to cloud failed:", err);
       // Restore failed items back to the queue safely
@@ -3749,7 +3739,6 @@ export default function WhiteboardCanvas({
             hasSelection={selectedIds.length > 0 || selectedId !== null}
             hasColorableSelection={hasColorableSelection}
             isPdfMode={isPdfBoard}
-            teacherDailyWritesCount={localTeacherWritesCount}
             isZenMode={isZenMode}
             onToggleZenMode={handleToggleZenMode}
           />

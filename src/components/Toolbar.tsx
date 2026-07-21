@@ -58,7 +58,6 @@ interface ToolbarProps {
   hasSelection?: boolean;
   hasColorableSelection?: boolean;
   isPdfMode?: boolean;
-  teacherDailyWritesCount?: number;
   isZenMode?: boolean;
   onToggleZenMode?: () => void;
 }
@@ -199,7 +198,6 @@ export default function Toolbar({
   hasSelection = false,
   hasColorableSelection = false,
   isPdfMode = false,
-  teacherDailyWritesCount,
   isZenMode = false,
   onToggleZenMode,
 }: ToolbarProps) {
@@ -605,20 +603,6 @@ export default function Toolbar({
                   <rect x="3" y="3" width="18" height="18" rx="2" />
                 </svg>
               </button>
-            </div>
-          )}
-
-          {/* Daily Firebase Writes Counter */}
-          {teacherDailyWritesCount !== undefined && (
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-lg p-1.5 flex items-center space-x-2 animate-fade-in hover:shadow-xl transition-all duration-300">
-              <div className="flex items-center space-x-1.5 text-slate-500 font-bold uppercase tracking-wider text-[9px] px-1">
-                <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-500 animate-pulse shrink-0" />
-                <span className="hidden sm:inline">Writes Today</span>
-                <span className="inline sm:hidden">Writes</span>
-              </div>
-              <div className="font-mono font-black text-xs text-slate-800 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded-lg border border-slate-200/60 shadow-xs flex items-center justify-center min-w-[2rem] transition-colors" title="Today's total Firestore database write actions initiated by teachers. Runs on an optimized low-write buffer system.">
-                {teacherDailyWritesCount}
-              </div>
             </div>
           )}
 

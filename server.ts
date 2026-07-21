@@ -11,7 +11,7 @@ dotenv.config();
 
 // Simple file logger
 const logFile = path.join(process.cwd(), 'app-events.log');
-function logToFile(level, message, data = null) {
+function logToFile(level: string, message: string, data: any = null) {
   const timestamp = new Date().toISOString();
   let logLine = `[${timestamp}] [${level.toUpperCase()}] ${message}`;
   if (data) {
@@ -44,8 +44,16 @@ const rooms = new Map<string, Set<WebSocket>>();
 
 
 
+
+// Set up body parser with large limit for pasting images / elements
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+
 // Log API (client can send logs here)
 app.post("/api/log", (req, res) => {
+  if (!req.body) {
+    return res.json({ success: false, error: "No body" });
+  }
   const { level, message, data } = req.body;
   logToFile(level || 'info', message || 'No message', data);
   res.json({ success: true });
@@ -65,9 +73,6 @@ app.get("/api/logs", (req, res) => {
   }
 });
 
-// Set up body parser with large limit for pasting images / elements
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
 // Helper to resolve the correct AI instance (strictly user-supplied key)
 function getAiInstance(req: express.Request): GoogleGenAI | null {

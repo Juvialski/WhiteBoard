@@ -5,14 +5,19 @@ import './index.css';
 
 // Global error logger
 const sendLog = (level: string, message: string, data?: any) => {
+  if (message && (message.includes('/api/log') || message.includes('Failed to fetch') || message.includes('fetch'))) {
+    return;
+  }
   try {
     fetch('/api/log', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ level, message, data })
+    }).catch(() => {
+      // Catch promise rejection to prevent unhandledrejection event
     });
   } catch (e) {
-    // Ignore
+    // Ignore synchronous errors
   }
 };
 
