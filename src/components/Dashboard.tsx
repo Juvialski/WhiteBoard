@@ -278,11 +278,10 @@ export default function Dashboard({
     }
   }, []);
 
-  // Fetch whiteboards
-  const loadWhiteboards = async () => {
-    try {
-      const q = query(collection(db, 'whiteboards'));
-      const snapshot = await import('firebase/firestore').then(m => m.getDocs(q));
+  // Fetch and listen to whiteboards in real-time
+  useEffect(() => {
+    const q = query(collection(db, 'whiteboards'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
       const loadedBoards: Whiteboard[] = [];
       snapshot.forEach((docSnap) => {
         const data = docSnap.data();
@@ -302,13 +301,11 @@ export default function Dashboard({
       // Sort by newest
       loadedBoards.sort((a, b) => b.createdAt - a.createdAt);
       setBoards(loadedBoards);
-    } catch (err) {
-      console.error("Error loading whiteboards:", err);
-    }
-  };
+    }, (err) => {
+      console.error("Error subscribing to whiteboards:", err);
+    });
 
-  useEffect(() => {
-    loadWhiteboards();
+    return () => unsubscribe();
   }, [refreshTrigger]);
 
   const handleCreateBoard = async (e: React.FormEvent) => {
