@@ -69,20 +69,26 @@ import Markdown from "react-markdown";
 import { secureEncrypt, secureDecrypt } from "../utils/crypto";
 import { exportPdfWithDrawings } from "../utils/pdf";
 
+interface CompressedImage {
+  base64Str: string;
+  width: number;
+  height: number;
+}
+
 // Client-side image compression utility to handle high volumes of pasted images safely
 // within Firestore documents without needing Firebase Storage.
-const compressImage = (file: File): Promise<string | null> => {
+const compressImage = (file: File): Promise<CompressedImage | null> => {
   return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = (event) => {
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement("canvas");
-        let width = img.width;
-        let height = img.height;
+        let width = img.naturalWidth || img.width;
+        let height = img.naturalHeight || img.height;
 
-        // Downscale to max 800px on any dimension to minimize storage footprint
-        const MAX_DIM = 800;
+        // Downscale to max 1600px on any dimension to minimize storage footprint while retaining pristine sharpness
+        const MAX_DIM = 1600;
         if (width > MAX_DIM || height > MAX_DIM) {
           if (width > height) {
             height = Math.round((height * MAX_DIM) / width);
@@ -103,9 +109,9 @@ const compressImage = (file: File): Promise<string | null> => {
         }
 
         ctx.drawImage(img, 0, 0, width, height);
-        // Output as highly-compressed JPEG (typically reduces size to 15KB - 40KB)
-        const compressedBase64 = canvas.toDataURL("image/jpeg", 0.65);
-        resolve(compressedBase64);
+        // Output as high-quality JPEG (balanced visually and file size-wise)
+        const compressedBase64 = canvas.toDataURL("image/jpeg", 0.85);
+        resolve({ base64Str: compressedBase64, width, height });
       };
       img.onerror = () => resolve(null);
       img.src = event.target?.result as string;
@@ -1759,9 +1765,17 @@ export default function WhiteboardCanvas({
     return () => window.removeEventListener("init-resize", handleResizeStart);
   }, [elements]);
 
+  // Synchronize state and handlers to refs for stable window event listener callbacks
+  const clipboardElementsRef = useRef(clipboardElements);
+  useEffect(() => {
+    clipboardElementsRef.current = clipboardElements;
+  }, [clipboardElements]);
+
+  const handlePasteRef = useRef<(() => Promise<void>) | null>(null);
+
   // Handle Paste events for Images!
   useEffect(() => {
-    const handlePaste = async (e: ClipboardEvent) => {
+    const handleNativePaste = async (e: ClipboardEvent) => {
       if (
         document.activeElement?.tagName === "TEXTAREA" ||
         document.activeElement?.tagName === "INPUT"
@@ -1770,27 +1784,48 @@ export default function WhiteboardCanvas({
       }
 
       const items = e.clipboardData?.items;
-      if (!items) return;
+      const files = e.clipboardData?.files;
+      
+      let imageFiles: File[] = [];
 
-      const hasImage = Array.from(items).some(
-        (item) => item.type.indexOf("image") !== -1,
-      );
-      if (hasImage && !canWrite) {
-        e.preventDefault();
-        triggerReadOnlyAlert();
-        return;
+      // Extract image files copied directly from disk/file explorer
+      if (files && files.length > 0) {
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          if (file && file.type && file.type.startsWith("image/")) {
+            imageFiles.push(file);
+          }
+        }
       }
 
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i];
-        if (item.type.indexOf("image") !== -1) {
-          const file = item.getAsFile();
-          if (!file) continue;
+      // Fallback or additional item check (copied screenshots, browser copy, etc.)
+      if (imageFiles.length === 0 && items) {
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          if (item && item.type && item.type.indexOf("image") !== -1) {
+            const file = item.getAsFile();
+            if (file) {
+              imageFiles.push(file);
+            }
+          }
+        }
+      }
 
-          e.preventDefault(); // stop any default paste browser behavior
+      // If we found image files, paste them
+      if (imageFiles.length > 0) {
+        if (!canWriteRef.current) {
+          e.preventDefault();
+          triggerReadOnlyAlert();
+          return;
+        }
 
-          const base64Str = await compressImage(file);
-          if (!base64Str) continue;
+        e.preventDefault(); // stop default browser paste behavior
+
+        for (const file of imageFiles) {
+          const result = await compressImage(file);
+          if (!result) continue;
+
+          const { base64Str, width: originalWidth, height: originalHeight } = result;
 
           // Place the image centered in the user's current view
           let x = 100;
@@ -1800,56 +1835,66 @@ export default function WhiteboardCanvas({
             const centerX = rect.width / 2;
             const centerY = rect.height / 2;
             // Map the screen center coordinates to current canvas scale & pan
-            x = (centerX - panX) / zoom;
-            y = (centerY - panY) / zoom;
+            x = (centerX - panXRef.current) / zoomRef.current;
+            y = (centerY - panYRef.current) / zoomRef.current;
           }
 
           const id = "img-" + Date.now() + Math.floor(Math.random() * 100);
 
-          // Get dimensions dynamically to keep correct ratio and size
-          const img = new Image();
-          img.onload = () => {
-            let w = img.naturalWidth || 300;
-            let h = img.naturalHeight || 200;
-            const maxDim = 320; // nice starting size on the board
-            if (w > maxDim || h > maxDim) {
-              const ratio = Math.min(maxDim / w, maxDim / h);
-              w = Math.round(w * ratio);
-              h = Math.round(h * ratio);
-            }
+          let w = originalWidth;
+          let h = originalHeight;
+          const maxDim = 320; // nice starting size on the board
+          if (w > maxDim || h > maxDim) {
+            const ratio = Math.min(maxDim / w, maxDim / h);
+            w = Math.round(w * ratio);
+            h = Math.round(h * ratio);
+          }
 
-            const newImageElement: ImageElement = {
-              id,
-              type: "image",
-              x: Math.round(x - w / 2),
-              y: Math.round(y - h / 2),
-              width: w,
-              height: h,
-              src: base64Str,
-              zIndex: elements.length + 1,
-            };
-
-            setDoc(
-              doc(db, "whiteboards", boardId, "elements", id),
-              newImageElement,
-            )
-              .then(() => {
-                pushToUndo({
-                  type: "add",
-                  elementId: id,
-                  afterData: newImageElement,
-                });
-              })
-              .catch((err) => console.error("Error saving pasted image:", err));
+          const newImageElement: ImageElement = {
+            id,
+            type: "image",
+            x: Math.round(x - w / 2),
+            y: Math.round(y - h / 2),
+            width: w,
+            height: h,
+            src: base64Str,
+            zIndex: elementsRef.current.length + 1,
           };
-          img.src = base64Str;
+
+          // Save using centralized queue manager instead of raw setDoc stray documents!
+          saveElementLocallyAndSync(id, newImageElement)
+            .then(() => {
+              pushToUndo({
+                type: "add",
+                elementId: id,
+                afterData: newImageElement,
+              });
+              // Select the newly pasted image for convenience
+              setSelectedId(id);
+              setSelectedIds([id]);
+            })
+            .catch((err) => console.error("Error saving pasted image:", err));
+        }
+        return;
+      }
+
+      // If we DID NOT find images, check if we have copied whiteboard elements in local clipboard
+      if (clipboardElementsRef.current.length > 0) {
+        if (!canWriteRef.current) {
+          e.preventDefault();
+          triggerReadOnlyAlert();
+          return;
+        }
+        e.preventDefault();
+        if (handlePasteRef.current) {
+          handlePasteRef.current();
         }
       }
     };
 
-    window.addEventListener("paste", handlePaste);
-    return () => window.removeEventListener("paste", handlePaste);
-  }, [boardId, elements.length, panX, panY, zoom, canWrite]);
+    window.addEventListener("paste", handleNativePaste);
+    return () => window.removeEventListener("paste", handleNativePaste);
+  }, [boardId, saveElementLocallyAndSync, pushToUndo]);
 
   // Handle Board Canvas Mouse Events
   const handleMouseDown = (e: React.PointerEvent) => {
@@ -2610,9 +2655,10 @@ export default function WhiteboardCanvas({
     saveElementLocallyAndSync(id, null, false, 'delete')
       .then(() => {
         setSelectedId(prev => prev === id ? null : prev);
+        setSelectedIds(prev => prev.filter(x => x !== id));
       })
       .catch((err) => console.error("Error deleting element:", err));
-  }, [pushToUndo, saveElementLocallyAndSync, setSelectedId]);
+  }, [pushToUndo, saveElementLocallyAndSync, setSelectedId, setSelectedIds]);
 
   // Undo the last action from the local stack
   const handleUndo = async () => {
@@ -2794,6 +2840,10 @@ export default function WhiteboardCanvas({
     }
   };
 
+  useEffect(() => {
+    handlePasteRef.current = handlePaste;
+  }, [handlePaste]);
+
   // Keyboard shortcut listeners (standard whiteboards experience!)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -2833,18 +2883,6 @@ export default function WhiteboardCanvas({
         const toCopy = elements.filter(el => selectedIds.includes(el.id) || el.id === (selectedId || ''));
         if (toCopy.length > 0) {
           setClipboardElements(JSON.parse(JSON.stringify(toCopy)));
-        }
-        return;
-      }
-
-      if ((e.ctrlKey || e.metaKey) && key === "v") {
-        if (clipboardElements.length > 0) {
-          e.preventDefault();
-          if (!canWrite) {
-            triggerReadOnlyAlert();
-            return;
-          }
-          handlePaste();
         }
         return;
       }

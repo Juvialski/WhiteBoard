@@ -57,7 +57,7 @@ export default function ImageComponent({
     setShowEmojiPicker(false);
   };
 
-  const handleCropDrag = (e: React.MouseEvent, edge: 'top' | 'bottom' | 'left' | 'right') => {
+  const handleCropDrag = (e: React.PointerEvent<HTMLDivElement> | React.MouseEvent<HTMLDivElement>, edge: 'top' | 'bottom' | 'left' | 'right') => {
       e.stopPropagation();
       e.preventDefault();
       
@@ -65,7 +65,7 @@ export default function ImageComponent({
       const startY = e.clientY;
       const startCrop = { ...crop };
       
-      const onMouseMove = (moveEvent: MouseEvent) => {
+      const onPointerMove = (moveEvent: PointerEvent) => {
           const dx = (moveEvent.clientX - startX) / zoom;
           const dy = (moveEvent.clientY - startY) / zoom;
           
@@ -80,13 +80,13 @@ export default function ImageComponent({
           }
       };
       
-      const onMouseUp = () => {
-          window.removeEventListener('mousemove', onMouseMove);
-          window.removeEventListener('mouseup', onMouseUp);
+      const onPointerUp = () => {
+          window.removeEventListener('pointermove', onPointerMove);
+          window.removeEventListener('pointerup', onPointerUp);
       };
       
-      window.addEventListener('mousemove', onMouseMove);
-      window.addEventListener('mouseup', onMouseUp);
+      window.addEventListener('pointermove', onPointerMove);
+      window.addEventListener('pointerup', onPointerUp);
   };
 
   const handleConfirmCrop = (e: React.MouseEvent) => {
@@ -104,15 +104,18 @@ export default function ImageComponent({
          const sourceW = cropW * scaleX;
          const sourceH = cropH * scaleY;
 
+         const sX = Math.max(0, Math.floor(sourceX));
+         const sY = Math.max(0, Math.floor(sourceY));
+         const sW = Math.max(1, Math.floor(sourceW));
+         const sH = Math.max(1, Math.floor(sourceH));
+
          const canvas = document.createElement("canvas");
-         canvas.width = sourceW; // use natural source width for better quality! Wait, no, we want the canvas width to match the visual size?
-         // Actually better to use sourceW / sourceH to retain quality
-         canvas.width = sourceW;
-         canvas.height = sourceH;
+         canvas.width = sW;
+         canvas.height = sH;
          
          const ctx = canvas.getContext("2d");
          if (ctx) {
-             ctx.drawImage(img, sourceX, sourceY, sourceW, sourceH, 0, 0, sourceW, sourceH);
+             ctx.drawImage(img, sX, sY, sW, sH, 0, 0, sW, sH);
              const newSrc = canvas.toDataURL("image/jpeg", 0.9);
              // Shift x/y by crop left/top to maintain position visually!
              onUpdate({ src: newSrc, width: cropW, height: cropH, x: element.x + crop.left, y: element.y + crop.top });
