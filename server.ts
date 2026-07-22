@@ -150,7 +150,7 @@ User Request / Question to solve:
 Provide the solution text and the visual elements layout coordinates.`;
 
     const response = await activeAi.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.6-flash",
       contents: userPrompt,
       config: {
         systemInstruction,
@@ -246,7 +246,7 @@ ${pointsStr}
 Provide your classification and bounding box coordinates matching the drawing's dimensions.`;
 
     const response = await activeAi.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.6-flash",
       contents: prompt,
       config: {
         systemInstruction,

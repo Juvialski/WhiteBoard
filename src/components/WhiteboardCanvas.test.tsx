@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import WhiteboardCanvas from './WhiteboardCanvas';
 import { UserProfile } from '../types';
@@ -57,24 +57,60 @@ describe('WhiteboardCanvas', () => {
     id: 'u1',
     name: 'TestUser',
     color: '#123',
-    role: 'student'
+    role: 'teacher'
   };
 
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
   });
 
-  it('renders canvas and toolbar', () => {
+  it('renders canvas, board name and toolbar elements correctly', () => {
     render(
       <WhiteboardCanvas 
         boardId="b1" 
-        boardName="Test Board" 
+        boardName="Test Math Board" 
         currentUser={mockUser} 
         onBackToDashboard={vi.fn()} 
       />
     );
 
     // The name of the board
-    expect(screen.getByText('Test Board')).toBeTruthy();
+    expect(screen.getByText('Test Math Board')).toBeTruthy();
+    // Toolbar buttons are rendered
+    expect(screen.getByTitle('Select & Edit (V)')).toBeTruthy();
+    expect(screen.getByTitle('Sticky Note (N)')).toBeTruthy();
+    expect(screen.getByTitle('AI Assistant')).toBeTruthy();
+  });
+
+  it('handles back button click', () => {
+    const onBack = vi.fn();
+    render(
+      <WhiteboardCanvas 
+        boardId="b1" 
+        boardName="Test Board" 
+        currentUser={mockUser} 
+        onBackToDashboard={onBack} 
+      />
+    );
+
+    const backBtn = screen.getByText('All Boards');
+    fireEvent.click(backBtn);
+    expect(onBack).toHaveBeenCalled();
+  });
+
+  it('renders AI Assistant trigger and opens AI Assistant panel', () => {
+    render(
+      <WhiteboardCanvas 
+        boardId="b1" 
+        boardName="Math Test Board" 
+        currentUser={mockUser} 
+        onBackToDashboard={vi.fn()} 
+      />
+    );
+
+    const aiBtn = screen.getByTitle('AI Assistant');
+    fireEvent.click(aiBtn);
+    expect(screen.getByText('AI Tutor & Problem Solver')).toBeTruthy();
   });
 });
