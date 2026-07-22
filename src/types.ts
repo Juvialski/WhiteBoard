@@ -99,6 +99,15 @@ export interface TextElement {
   text: string;
   color: string; // text color
   fontSize: number;
+  fontFamily?: "sans" | "serif" | "mono" | "handwritten" | "display";
+  fontWeight?: "normal" | "bold";
+  fontStyle?: "normal" | "italic";
+  textDecoration?: "none" | "underline" | "line-through";
+  textAlign?: "left" | "center" | "right";
+  backgroundColor?: string; // background fill color
+  borderColor?: string;
+  borderStyle?: "none" | "solid" | "dashed";
+  borderWidth?: number;
   reactions?: Record<string, string[]>; // emoji -> array of userNames
   zIndex: number;
   updatedAt?: number;
@@ -147,6 +156,10 @@ export interface Collaborator {
   color: string;
   x: number;
   y: number;
+  panX?: number;
+  panY?: number;
+  zoom?: number;
+  role?: "student" | "teacher";
   lastActive: number;
 }
 

@@ -8,12 +8,24 @@ interface LiveCursorsProps {
   currentUser: UserProfile;
   zoom?: number;
   socketCollaboratorsRef?: React.MutableRefObject<Record<string, Collaborator>>;
+  followedUserId?: string | null;
+  onFollowUser?: (userId: string) => void;
 }
 
-const CollaboratorCursor = React.memo(({ collaborator, zoom }: { collaborator: Collaborator, zoom: number }) => {
+const CollaboratorCursor = React.memo(({
+  collaborator,
+  zoom,
+  isFollowed,
+  onFollow,
+}: {
+  collaborator: Collaborator;
+  zoom: number;
+  isFollowed?: boolean;
+  onFollow?: (userId: string) => void;
+}) => {
   return (
     <div
-      className="absolute pointer-events-none"
+      className="absolute pointer-events-none transition-transform duration-75"
       style={{
         left: collaborator.x,
         top: collaborator.y,
@@ -35,24 +47,39 @@ const CollaboratorCursor = React.memo(({ collaborator, zoom }: { collaborator: C
           strokeLinejoin="round"
         />
       </svg>
-      <div
-        className="ml-4 -mt-1 px-2.5 py-1 rounded-full text-[10px] font-bold text-white shadow-md select-none whitespace-nowrap"
+      <button
+        onClick={() => onFollow?.(collaborator.id)}
+        className={`ml-4 -mt-1 px-2.5 py-1 rounded-full text-[10px] font-extrabold text-white shadow-md select-none whitespace-nowrap pointer-events-auto cursor-pointer flex items-center space-x-1 hover:scale-105 active:scale-95 transition-all ${
+          isFollowed ? "ring-2 ring-white ring-offset-2 ring-offset-blue-600 animate-pulse" : ""
+        }`}
         style={{ backgroundColor: collaborator.color }}
+        title={`Click to follow ${collaborator.name}`}
       >
-        {collaborator.name}
-      </div>
+        <span>{collaborator.name}</span>
+        {isFollowed && <span className="text-[9px] bg-white/30 px-1.5 py-0.2 rounded-full">Following</span>}
+      </button>
     </div>
   );
 });
 
-export default function LiveCursors({ boardId, currentUser, zoom = 1, socketCollaboratorsRef }: LiveCursorsProps) {
+export default function LiveCursors({
+  boardId,
+  currentUser,
+  zoom = 1,
+  socketCollaboratorsRef,
+  followedUserId,
+  onFollowUser,
+}: LiveCursorsProps) {
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
 
   useEffect(() => {
     let interval: any;
     if (socketCollaboratorsRef) {
       interval = setInterval(() => {
-        const list = Object.values(socketCollaboratorsRef.current);
+        const raw = socketCollaboratorsRef.current || {};
+        const list = Object.values(raw).filter(
+          (c) => c && c.id !== currentUser.id
+        );
         setCollaborators(list);
       }, 1000 / 30);
       return () => clearInterval(interval);
@@ -96,7 +123,13 @@ export default function LiveCursors({ boardId, currentUser, zoom = 1, socketColl
   return (
     <div className="absolute inset-0 pointer-events-none z-40" id="live-cursors-layer">
       {collaborators.map((c) => (
-        <CollaboratorCursor key={c.id} collaborator={c} zoom={zoom} />
+        <CollaboratorCursor
+          key={c.id}
+          collaborator={c}
+          zoom={zoom}
+          isFollowed={c.id === followedUserId}
+          onFollow={onFollowUser}
+        />
       ))}
     </div>
   );

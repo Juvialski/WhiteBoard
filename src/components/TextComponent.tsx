@@ -1,6 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { TextElement, UserProfile } from '../types';
-import { Smile, Trash2, Lock, Unlock } from 'lucide-react';
+import { 
+  Trash2, Lock, Unlock, AlignLeft, AlignCenter, AlignRight, 
+  Bold, Italic, Underline, Strikethrough, Type, Palette, 
+  Square, Copy, ChevronDown 
+} from 'lucide-react';
 
 interface TextComponentProps {
   element: TextElement;
@@ -17,6 +21,45 @@ interface TextComponentProps {
 
 const EMOJIS = ['👍', '❤️', '🔥', '💡', '❓', '🎉'];
 
+interface FontFamilyOption {
+  id: 'sans' | 'serif' | 'mono' | 'handwritten' | 'display';
+  name: string;
+  fontClass?: string;
+  fontStyleObj?: React.CSSProperties;
+}
+
+const FONT_FAMILIES: FontFamilyOption[] = [
+  { id: 'sans', name: 'Sans', fontClass: 'font-sans' },
+  { id: 'serif', name: 'Serif', fontClass: 'font-serif' },
+  { id: 'mono', name: 'Mono', fontClass: 'font-mono' },
+  { id: 'handwritten', name: 'Handdrawn', fontStyleObj: { fontFamily: "'Caveat', 'Comic Sans MS', 'Kalam', cursive, sans-serif" } },
+  { id: 'display', name: 'Display', fontClass: 'font-sans font-black tracking-tight' }
+];
+
+const TEXT_COLORS = [
+  { name: 'Charcoal', value: '#1e293b' },
+  { name: 'Blue', value: '#2563eb' },
+  { name: 'Indigo', value: '#4f46e5' },
+  { name: 'Purple', value: '#9333ea' },
+  { name: 'Pink', value: '#db2777' },
+  { name: 'Red', value: '#dc2626' },
+  { name: 'Amber', value: '#d97706' },
+  { name: 'Emerald', value: '#16a34a' },
+  { name: 'White', value: '#ffffff' },
+];
+
+const FILL_COLORS = [
+  { name: 'None', value: 'transparent' },
+  { name: 'White', value: '#ffffff' },
+  { name: 'Soft Slate', value: '#f8fafc' },
+  { name: 'Soft Yellow', value: '#fef08a' },
+  { name: 'Soft Green', value: '#dcfce7' },
+  { name: 'Soft Blue', value: '#dbeafe' },
+  { name: 'Soft Purple', value: '#f3e8ff' },
+  { name: 'Soft Pink', value: '#fce7f3' },
+  { name: 'Dark Slate', value: '#1e293b' },
+];
+
 export default function TextComponent({
   element,
   isSelected,
@@ -29,9 +72,10 @@ export default function TextComponent({
   activeTool = 'select',
   canWrite = true
 }: TextComponentProps) {
-  const [isEditing, setIsEditing] = useState(false);
+  // Auto-edit newly created empty text boxes
+  const [isEditing, setIsEditing] = useState(() => element.text === '' && canWrite && !element.locked);
   const [text, setText] = useState(element.text);
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [activePopover, setActivePopover] = useState<'font' | 'color' | 'fill' | 'border' | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -41,12 +85,26 @@ export default function TextComponent({
   useEffect(() => {
     if (isEditing && textareaRef.current) {
       textareaRef.current.focus();
-      textareaRef.current.select();
+      if (text.length > 0) {
+        textareaRef.current.select();
+      }
     }
   }, [isEditing]);
 
+  // Adjust height on text change to prevent vertical truncation
+  useEffect(() => {
+    if (isEditing && textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      const scrollHeight = textareaRef.current.scrollHeight;
+      if (scrollHeight > element.height) {
+        onUpdate({ height: Math.max(scrollHeight + 16, 40) });
+      }
+    }
+  }, [text, isEditing]);
+
   const handleBlur = () => {
     setIsEditing(false);
+    setActivePopover(null);
     if (text !== element.text) {
       onUpdate({ text: text });
     }
@@ -76,7 +134,27 @@ export default function TextComponent({
     }
 
     onUpdate({ reactions: updatedReactions });
-    setShowEmojiPicker(false);
+  };
+
+  const currentFontFamily = FONT_FAMILIES.find(f => f.id === element.fontFamily) || FONT_FAMILIES[0];
+
+  const getFontFamilyStyle = () => {
+    if (element.fontFamily === 'handwritten') {
+      return { fontFamily: "'Caveat', 'Comic Sans MS', 'Kalam', cursive, sans-serif" };
+    }
+    return {};
+  };
+
+  const getFontFamilyClass = () => {
+    switch (element.fontFamily) {
+      case 'serif': return 'font-serif';
+      case 'mono': return 'font-mono';
+      case 'display': return 'font-sans font-black tracking-tight';
+      case 'handwritten': return '';
+      case 'sans':
+      default:
+        return 'font-sans';
+    }
   };
 
   const cursorClass = element.locked
@@ -87,17 +165,32 @@ export default function TextComponent({
         ? 'cursor-pointer hover:bg-rose-50 hover:ring-2 hover:ring-rose-500 hover:ring-offset-1 transition-all' 
         : 'cursor-default';
 
+  const isBold = element.fontWeight === 'bold';
+  const isItalic = element.fontStyle === 'italic';
+  const isUnderline = element.textDecoration === 'underline';
+  const isStrikethrough = element.textDecoration === 'line-through';
+
+  const textAlignClass = element.textAlign === 'center' 
+    ? 'text-center' 
+    : element.textAlign === 'right' 
+      ? 'text-right' 
+      : 'text-left';
+
   return (
     <div
       onPointerDown={onSelect}
-      className={`absolute select-none flex flex-col justify-between transition-shadow duration-150 rounded-lg group p-2 ${cursorClass} ${
-        isSelected ? 'ring-2 ring-blue-600 bg-blue-50/30 z-20 shadow-xs' : 'hover:bg-slate-50/30'
+      className={`absolute select-none flex flex-col justify-between transition-all duration-150 rounded-xl group p-2.5 ${cursorClass} ${
+        isSelected ? 'ring-2 ring-blue-500 bg-blue-50/20 z-20 shadow-md' : 'hover:bg-slate-50/40'
       }`}
       style={{
         left: element.x,
         top: element.y,
         width: element.width,
         height: element.height,
+        backgroundColor: element.backgroundColor || 'transparent',
+        borderColor: element.borderColor || (isSelected ? '#3b82f6' : 'transparent'),
+        borderStyle: element.borderStyle || 'none',
+        borderWidth: element.borderStyle && element.borderStyle !== 'none' ? `${element.borderWidth || 1}px` : '0px',
       }}
       id={`text-${element.id}`}
     >
@@ -108,12 +201,18 @@ export default function TextComponent({
             value={text}
             onChange={handleTextChange}
             onBlur={handleBlur}
-            className="w-full h-full bg-transparent border-none resize-none focus:outline-none text-left font-bold font-mono text-slate-800 p-1"
-            style={{ fontSize: `${element.fontSize || 16}px`, color: element.color }}
+            className={`w-full h-full bg-transparent border-none resize-none focus:outline-none p-1 ${getFontFamilyClass()} ${textAlignClass}`}
+            style={{ 
+              fontSize: `${element.fontSize || 16}px`, 
+              color: element.color || '#1e293b',
+              fontWeight: isBold ? 'bold' : 'normal',
+              fontStyle: isItalic ? 'italic' : 'normal',
+              textDecoration: isUnderline ? 'underline' : isStrikethrough ? 'line-through' : 'none',
+              ...getFontFamilyStyle()
+            }}
             placeholder="Type text..."
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
+              if (e.key === 'Escape') {
                 textareaRef.current?.blur();
               }
             }}
@@ -125,31 +224,39 @@ export default function TextComponent({
               if (!canWrite || element.locked) return;
               setIsEditing(true);
             }}
-            className="w-full h-full text-left font-bold break-words overflow-y-auto select-text cursor-text p-1"
-            style={{ fontSize: `${element.fontSize || 16}px`, color: element.color, whiteSpace: 'pre-wrap' }}
+            className={`w-full h-full break-words overflow-y-auto select-text cursor-text p-1 ${getFontFamilyClass()} ${textAlignClass}`}
+            style={{ 
+              fontSize: `${element.fontSize || 16}px`, 
+              color: element.color || '#1e293b', 
+              whiteSpace: 'pre-wrap',
+              fontWeight: isBold ? 'bold' : 'normal',
+              fontStyle: isItalic ? 'italic' : 'normal',
+              textDecoration: isUnderline ? 'underline' : isStrikethrough ? 'line-through' : 'none',
+              ...getFontFamilyStyle()
+            }}
           >
             {element.text || (canWrite ? <span className="opacity-30 italic text-xs font-normal">Double click to type text</span> : '')}
           </div>
         )}
       </div>
 
-      {/* Floating Action Menu below or above */}
+      {/* Floating Lucidspark Formatting Action Bar */}
       {isSelected && !isDraggingOrResizing && (
         <div 
-          onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}
-          className="absolute -top-12 left-1/2 -translate-x-1/2 bg-white border border-slate-200 rounded-full shadow-lg px-2.5 py-1.5 flex items-center space-x-2 z-30 animate-fade-in whitespace-nowrap"
+          onPointerDown={(e) => e.stopPropagation()} 
+          onMouseDown={(e) => e.stopPropagation()}
+          className="absolute -top-14 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-2xl shadow-xl px-2 py-1.5 flex items-center space-x-1 z-40 animate-fade-in max-w-[90vw] overflow-x-auto scrollbar-none"
         >
-          {/* Reaction picker */}
-          <div className="flex items-center space-x-1 pr-2">
-            {/* Lock Trigger */}
+          {/* Reaction & Lock */}
+          <div className="flex items-center space-x-0.5 pr-1.5 border-r border-slate-100 shrink-0">
             {canWrite && (
               <button
                 onClick={(e) => {
                   e.stopPropagation();
                   onUpdate({ locked: !element.locked });
                 }}
-                className={`p-1 rounded hover:bg-slate-100 transition-colors cursor-pointer ${
-                  element.locked ? 'text-amber-600' : 'text-slate-500'
+                className={`p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer ${
+                  element.locked ? 'text-amber-600 bg-amber-50' : 'text-slate-500'
                 }`}
                 title={element.locked ? 'Unlock Text' : 'Lock Text'}
               >
@@ -157,42 +264,268 @@ export default function TextComponent({
               </button>
             )}
 
-            {EMOJIS.map((emoji) => (
+            {EMOJIS.slice(0, 3).map((emoji) => (
               <button
                 key={emoji}
                 onClick={(e) => handleEmojiClick(emoji, e)}
-                className="w-7 h-7 rounded-full hover:bg-slate-100 flex items-center justify-center text-sm transition-transform hover:scale-125"
+                className="w-6 h-6 rounded-lg hover:bg-slate-100 flex items-center justify-center text-xs transition-transform hover:scale-125 cursor-pointer"
               >
                 {emoji}
               </button>
             ))}
           </div>
 
-          {/* FontSize adjustments */}
-          {canWrite && (
-            <div className="flex items-center space-x-1 border-l border-slate-100 pl-2 pr-2">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onUpdate({ fontSize: Math.max(12, (element.fontSize || 16) - 2) });
-                }}
-                className="p-1 hover:bg-slate-100 rounded text-[10px] font-bold text-slate-600"
-                title="Smaller font"
-              >
-                A-
-              </button>
-              <span className="text-[10px] text-slate-500 font-mono w-6 text-center">{element.fontSize || 16}px</span>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onUpdate({ fontSize: Math.min(48, (element.fontSize || 16) + 2) });
-                }}
-                className="p-1 hover:bg-slate-100 rounded text-[10px] font-bold text-slate-600"
-                title="Larger font"
-              >
-                A+
-              </button>
-            </div>
+          {canWrite && !element.locked && (
+            <>
+              {/* Font Family Picker */}
+              <div className="relative shrink-0">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setActivePopover(activePopover === 'font' ? null : 'font');
+                  }}
+                  className="px-2 py-1 rounded-lg text-xs font-bold text-slate-700 hover:bg-slate-100 flex items-center space-x-1 border border-slate-200/60 cursor-pointer"
+                  title="Font Family"
+                >
+                  <span>{currentFontFamily.name}</span>
+                  <ChevronDown className="w-3 h-3 text-slate-400" />
+                </button>
+
+                {activePopover === 'font' && (
+                  <div className="absolute top-9 left-0 bg-white border border-slate-200 rounded-xl shadow-xl p-1 z-50 flex flex-col w-28 animate-scale-up">
+                    {FONT_FAMILIES.map((fam) => (
+                      <button
+                        key={fam.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onUpdate({ fontFamily: fam.id as any });
+                          setActivePopover(null);
+                        }}
+                        className={`px-2 py-1.5 rounded-lg text-xs text-left cursor-pointer flex items-center justify-between ${
+                          element.fontFamily === fam.id ? 'bg-blue-50 text-blue-600 font-bold' : 'hover:bg-slate-50 text-slate-700'
+                        }`}
+                      >
+                        <span className={fam.fontClass || ''} style={fam.fontStyleObj || {}}>
+                          {fam.name}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* FontSize controls */}
+              <div className="flex items-center space-x-0.5 border-r border-slate-100 pr-1.5 pl-0.5 shrink-0">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onUpdate({ fontSize: Math.max(12, (element.fontSize || 16) - 2) });
+                  }}
+                  className="p-1 hover:bg-slate-100 rounded-lg text-xs font-extrabold text-slate-600 cursor-pointer min-w-[22px]"
+                  title="Smaller font"
+                >
+                  A-
+                </button>
+                <span className="text-[11px] text-slate-600 font-mono font-bold px-1 min-w-[24px] text-center">
+                  {element.fontSize || 16}
+                </span>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onUpdate({ fontSize: Math.min(64, (element.fontSize || 16) + 2) });
+                  }}
+                  className="p-1 hover:bg-slate-100 rounded-lg text-xs font-extrabold text-slate-600 cursor-pointer min-w-[22px]"
+                  title="Larger font"
+                >
+                  A+
+                </button>
+              </div>
+
+              {/* Text Styling: Bold, Italic, Underline, Strikethrough */}
+              <div className="flex items-center space-x-0.5 border-r border-slate-100 pr-1.5 shrink-0">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onUpdate({ fontWeight: isBold ? 'normal' : 'bold' });
+                  }}
+                  className={`p-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    isBold ? 'bg-blue-100 text-blue-700' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                  title="Bold"
+                >
+                  <Bold className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onUpdate({ fontStyle: isItalic ? 'normal' : 'italic' });
+                  }}
+                  className={`p-1.5 rounded-lg text-xs transition-all cursor-pointer ${
+                    isItalic ? 'bg-blue-100 text-blue-700' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                  title="Italic"
+                >
+                  <Italic className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onUpdate({ textDecoration: isUnderline ? 'none' : 'underline' });
+                  }}
+                  className={`p-1.5 rounded-lg text-xs transition-all cursor-pointer ${
+                    isUnderline ? 'bg-blue-100 text-blue-700' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                  title="Underline"
+                >
+                  <Underline className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onUpdate({ textDecoration: isStrikethrough ? 'none' : 'line-through' });
+                  }}
+                  className={`p-1.5 rounded-lg text-xs transition-all cursor-pointer ${
+                    isStrikethrough ? 'bg-blue-100 text-blue-700' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                  title="Strikethrough"
+                >
+                  <Strikethrough className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/* Text Alignment */}
+              <div className="flex items-center space-x-0.5 border-r border-slate-100 pr-1.5 shrink-0">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onUpdate({ textAlign: 'left' });
+                  }}
+                  className={`p-1.5 rounded-lg transition-all cursor-pointer ${
+                    (element.textAlign || 'left') === 'left' ? 'bg-slate-200 text-slate-900' : 'text-slate-500 hover:bg-slate-100'
+                  }`}
+                  title="Align Left"
+                >
+                  <AlignLeft className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onUpdate({ textAlign: 'center' });
+                  }}
+                  className={`p-1.5 rounded-lg transition-all cursor-pointer ${
+                    element.textAlign === 'center' ? 'bg-slate-200 text-slate-900' : 'text-slate-500 hover:bg-slate-100'
+                  }`}
+                  title="Align Center"
+                >
+                  <AlignCenter className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onUpdate({ textAlign: 'right' });
+                  }}
+                  className={`p-1.5 rounded-lg transition-all cursor-pointer ${
+                    element.textAlign === 'right' ? 'bg-slate-200 text-slate-900' : 'text-slate-500 hover:bg-slate-100'
+                  }`}
+                  title="Align Right"
+                >
+                  <AlignRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/* Text Color Picker */}
+              <div className="relative shrink-0">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setActivePopover(activePopover === 'color' ? null : 'color');
+                  }}
+                  className="p-1.5 rounded-lg hover:bg-slate-100 flex items-center space-x-1 cursor-pointer"
+                  title="Text Color"
+                >
+                  <div
+                    className="w-3.5 h-3.5 rounded-full border border-slate-300 shadow-xs"
+                    style={{ backgroundColor: element.color || '#1e293b' }}
+                  />
+                  <Type className="w-3 h-3 text-slate-500" />
+                </button>
+
+                {activePopover === 'color' && (
+                  <div className="absolute top-9 left-0 bg-white border border-slate-200 rounded-2xl shadow-xl p-2 z-50 grid grid-cols-5 gap-1.5 w-36 animate-scale-up">
+                    {TEXT_COLORS.map((c) => (
+                      <button
+                        key={c.value}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onUpdate({ color: c.value });
+                          setActivePopover(null);
+                        }}
+                        className="w-6 h-6 rounded-full border border-slate-200 hover:scale-110 transition-transform cursor-pointer flex items-center justify-center"
+                        style={{ backgroundColor: c.value }}
+                        title={c.name}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Fill / Background Color Picker */}
+              <div className="relative shrink-0">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setActivePopover(activePopover === 'fill' ? null : 'fill');
+                  }}
+                  className="p-1.5 rounded-lg hover:bg-slate-100 flex items-center space-x-1 cursor-pointer"
+                  title="Fill Color"
+                >
+                  <Palette className="w-3.5 h-3.5 text-slate-600" />
+                  <div
+                    className="w-3 h-3 rounded border border-slate-300 shadow-xs"
+                    style={{ backgroundColor: element.backgroundColor || 'transparent' }}
+                  />
+                </button>
+
+                {activePopover === 'fill' && (
+                  <div className="absolute top-9 left-0 bg-white border border-slate-200 rounded-2xl shadow-xl p-2 z-50 grid grid-cols-5 gap-1.5 w-36 animate-scale-up">
+                    {FILL_COLORS.map((c) => (
+                      <button
+                        key={c.value}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onUpdate({ backgroundColor: c.value });
+                          setActivePopover(null);
+                        }}
+                        className="w-6 h-6 rounded-md border border-slate-200 hover:scale-110 transition-transform cursor-pointer flex items-center justify-center relative"
+                        style={{ backgroundColor: c.value }}
+                        title={c.name}
+                      >
+                        {c.value === 'transparent' && (
+                          <div className="w-full h-0.5 bg-rose-500 rotate-45" />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Border Style Toggle */}
+              <div className="relative shrink-0 pr-1">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const nextStyle = element.borderStyle === 'solid' ? 'dashed' : element.borderStyle === 'dashed' ? 'none' : 'solid';
+                    onUpdate({ borderStyle: nextStyle, borderColor: element.borderColor || '#3b82f6', borderWidth: 1 });
+                  }}
+                  className={`p-1.5 rounded-lg transition-all cursor-pointer ${
+                    element.borderStyle && element.borderStyle !== 'none' ? 'bg-blue-100 text-blue-700' : 'text-slate-500 hover:bg-slate-100'
+                  }`}
+                  title={`Border Style: ${element.borderStyle || 'none'}`}
+                >
+                  <Square className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </>
           )}
 
           {canWrite && (
@@ -201,7 +534,7 @@ export default function TextComponent({
                 e.stopPropagation();
                 onDelete();
               }}
-              className="p-1.5 rounded hover:bg-rose-50 text-rose-500 hover:text-rose-600 transition-colors flex items-center border-l border-slate-100 pl-2"
+              className="p-1.5 rounded-lg hover:bg-rose-50 text-rose-500 hover:text-rose-600 transition-colors flex items-center border-l border-slate-100 pl-1.5 shrink-0 cursor-pointer"
               title="Delete text box"
             >
               <Trash2 className="w-4 h-4" />
@@ -212,7 +545,8 @@ export default function TextComponent({
 
       {/* Reactions badges underneath */}
       <div 
-        onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()} 
+        onMouseDown={(e) => e.stopPropagation()}
         className="absolute -bottom-5 left-1 flex flex-wrap gap-1 z-10"
       >
         {Object.entries(element.reactions || {}).map(([emoji, users]) => (
@@ -239,7 +573,7 @@ export default function TextComponent({
             window.dispatchEvent(canvasEvent);
           }}
         >
-          <div className="w-2.5 h-2.5 rounded-full bg-blue-600 border border-white shadow-sm" />
+          <div className="w-3 h-3 rounded-full bg-blue-600 border-2 border-white shadow-md hover:scale-125 transition-transform" />
         </div>
       )}
     </div>

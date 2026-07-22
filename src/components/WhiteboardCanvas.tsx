@@ -34,6 +34,9 @@ import ShapeComponent from "./ShapeComponent";
 import TextComponent from "./TextComponent";
 import ImageComponent from "./ImageComponent";
 import LiveCursors from "./LiveCursors";
+import Minimap from "./Minimap";
+import KeyboardShortcutsModal from "./KeyboardShortcutsModal";
+import ClearCanvasModal from "./ClearCanvasModal";
 import {
   ChevronLeft,
   Share2,
@@ -64,8 +67,12 @@ import {
   Minimize2,
   Wifi,
   WifiOff,
+  Flame,
+  Timer as TimerIcon,
+  Video,
 } from "lucide-react";
 import Markdown from "react-markdown";
+import WorkspaceTimer from "./WorkspaceTimer";
 import { secureEncrypt, secureDecrypt } from "../utils/crypto";
 import { exportPdfWithDrawings } from "../utils/pdf";
 
@@ -73,6 +80,13 @@ interface CompressedImage {
   base64Str: string;
   width: number;
   height: number;
+}
+
+interface LaserPoint {
+  x: number;
+  y: number;
+  timestamp: number;
+  color: string;
 }
 
 // Client-side image compression utility to handle high volumes of pasted images safely
@@ -508,6 +522,18 @@ export default function WhiteboardCanvas({
   
   const [clipboardElements, setClipboardElements] = useState<BoardElement[]>([]);
   const [boardData, setBoardData] = useState<Whiteboard | null>(null);
+  const [isTopBarHidden, setIsTopBarHidden] = useState(false);
+
+  // Live Screen Following & Modal States
+  const [followedUserId, setFollowedUserId] = useState<string | null>(null);
+  const followedUserIdRef = useRef<string | null>(null);
+  followedUserIdRef.current = followedUserId;
+  const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
+  const [isClearModalOpen, setIsClearModalOpen] = useState(false);
+  const [containerDimensions, setContainerDimensions] = useState({
+    width: typeof window !== "undefined" ? window.innerWidth : 1200,
+    height: typeof window !== "undefined" ? window.innerHeight : 800,
+  });
 
   // Real-Time WebSockets Sync & Caching States
   const wsRef = useRef<WebSocket | null>(null);
@@ -584,18 +610,40 @@ export default function WhiteboardCanvas({
         try {
           const msg = JSON.parse(event.data);
           if (msg.type === "cursor") {
+            if (msg.userId === currentUser.id) return;
             // Track cursor movement from remote collaborator
             const isNew = !socketCollaboratorsRef.current[msg.userId];
             socketCollaboratorsRef.current[msg.userId] = {
               id: msg.userId,
               name: msg.name,
               color: msg.color,
+              role: msg.role,
               x: msg.x,
               y: msg.y,
+              panX: msg.panX,
+              panY: msg.panY,
+              zoom: msg.zoom,
               lastActive: msg.lastActive
             };
             if (isNew) {
               setActiveCollaboratorIds(Object.keys(socketCollaboratorsRef.current));
+            }
+
+            // Smooth camera follow logic when actively following a target user
+            if (followedUserIdRef.current === msg.userId) {
+              if (msg.x !== undefined && msg.y !== undefined && containerRef.current) {
+                const rect = containerRef.current.getBoundingClientRect();
+                const curZoom = zoomRef.current || 1;
+                const targetPanX = rect.width / 2 - msg.x * curZoom;
+                const targetPanY = rect.height / 2 - msg.y * curZoom;
+                setPanX((prev) => prev + (targetPanX - prev) * 0.35);
+                setPanY((prev) => prev + (targetPanY - prev) * 0.35);
+              }
+            }
+          } else if (msg.type === "request_follow") {
+            if (currentUser.role !== "teacher" && msg.teacherId) {
+              setFollowedUserId(msg.teacherId);
+              showSyncToast(`${msg.teacherName || "Teacher"} is sharing view! Following screen...`, "info");
             }
           } else if (msg.type === "drawing_stream") {
             // Stream sketch points real-time
@@ -640,6 +688,27 @@ export default function WhiteboardCanvas({
                 selectedIds: msg.selectedIds
               }
             }));
+          } else if (msg.type === "laser_point") {
+            if (msg.userId === currentUser.id) return;
+            const now = Date.now();
+            setRemoteLaserPoints((prev) => {
+              const existing = prev[msg.userId] || [];
+              const active = existing.filter((p) => now - p.timestamp < 1500);
+              return {
+                ...prev,
+                [msg.userId]: [
+                  ...active,
+                  {
+                    x: msg.x,
+                    y: msg.y,
+                    timestamp: msg.timestamp || now,
+                    color: msg.color || "#ef4444",
+                  },
+                ],
+              };
+            });
+          } else if (msg.type === "timer_sync") {
+            setSyncedTimerState(msg.state);
           } else if (msg.type === "pong") {
             setWsLatency(Date.now() - msg.id);
           }
@@ -656,9 +725,8 @@ export default function WhiteboardCanvas({
         reconnectTimer = setTimeout(connect, 3000);
       };
       
-      socket.onerror = (err) => {
-        console.error("WebSocket client connection error:", err);
-        socket.close();
+      socket.onerror = () => {
+        setWsConnected(false);
       };
     };
     
@@ -879,6 +947,54 @@ export default function WhiteboardCanvas({
     w: number;
     h: number;
   }>({ w: 0, h: 0 });
+
+  // Floating Workspace Timer & Presenter / Laser Pointer States
+  const [isTimerOpen, setIsTimerOpen] = useState(false);
+  const [syncedTimerState, setSyncedTimerState] = useState<any>(null);
+  const [isPresenterMode, setIsPresenterMode] = useState(false);
+  const [localLaserPoints, setLocalLaserPoints] = useState<LaserPoint[]>([]);
+  const [remoteLaserPoints, setRemoteLaserPoints] = useState<{ [userId: string]: LaserPoint[] }>({});
+
+  const handleTimerSync = (timerState: any) => {
+    setSyncedTimerState(timerState);
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(
+        JSON.stringify({
+          type: "timer_sync",
+          boardId,
+          state: timerState,
+        })
+      );
+    }
+  };
+
+  // Continuous animation loop to decay fading laser trail points smoothly
+  useEffect(() => {
+    let animId: number;
+    const tick = () => {
+      const now = Date.now();
+      setLocalLaserPoints((prev) => {
+        if (prev.length === 0) return prev;
+        const active = prev.filter((p) => now - p.timestamp < 1500);
+        return active.length !== prev.length ? active : prev;
+      });
+      setRemoteLaserPoints((prev) => {
+        let changed = false;
+        const updated: typeof prev = {};
+        Object.entries(prev).forEach(([uid, pts]) => {
+          const active = pts.filter((p) => now - p.timestamp < 1500);
+          if (active.length > 0) {
+            updated[uid] = active;
+          }
+          if (active.length !== pts.length) changed = true;
+        });
+        return changed ? updated : prev;
+      });
+      animId = requestAnimationFrame(tick);
+    };
+    animId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(animId);
+  }, []);
 
   // Permission states for Teacher/Student lock controls
   const [showReadOnlyAlert, setShowReadOnlyAlert] = useState(false);
@@ -1698,8 +1814,12 @@ export default function WhiteboardCanvas({
         userId: currentUser.id,
         name: currentUser.name,
         color: currentUser.color,
+        role: currentUser.role,
         x: canvasX,
         y: canvasY,
+        panX,
+        panY,
+        zoom,
         lastActive: now
       }));
       
@@ -1901,6 +2021,10 @@ export default function WhiteboardCanvas({
     // Only primary clicks trigger actions
     if (e.button !== 0) return;
 
+    if (followedUserId) {
+      setFollowedUserId(null);
+    }
+
     if (
       !canWrite &&
       activeTool !== "select" &&
@@ -1912,6 +2036,28 @@ export default function WhiteboardCanvas({
     }
 
     const coords = screenToCanvasCoords(e.clientX, e.clientY);
+
+    // Laser pointer click trigger
+    if (activeTool === "laser") {
+      const now = Date.now();
+      const color = activeColor || "#ef4444";
+      const newPt = { x: coords.x, y: coords.y, timestamp: now, color };
+      setLocalLaserPoints((prev) => [...prev.filter((p) => now - p.timestamp < 1500), newPt]);
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(
+          JSON.stringify({
+            type: "laser_point",
+            boardId,
+            userId: currentUser.id,
+            x: coords.x,
+            y: coords.y,
+            color,
+            timestamp: now,
+          })
+        );
+      }
+      return;
+    }
 
     // 1. Hand tool / Pan Canvas mode
     if (containerRef.current) {
@@ -2042,8 +2188,13 @@ export default function WhiteboardCanvas({
         width: 200,
         height: 50,
         text: "",
-        color: activeColor === "#4b5563" ? "#4b5563" : "#1e293b",
+        color: activeColor === "#4b5563" ? "#1e293b" : activeColor,
         fontSize: 18,
+        fontFamily: "sans",
+        fontWeight: "normal",
+        textAlign: "left",
+        backgroundColor: "transparent",
+        borderStyle: "none",
         zIndex: elements.length + 1,
         reactions: {},
       };
@@ -2068,6 +2219,30 @@ export default function WhiteboardCanvas({
 
   const handleMouseMove = (e: React.PointerEvent) => {
     updateCursorPosition(e.clientX, e.clientY);
+
+    // Laser pointer movement tracking
+    if (activeToolRef.current === "laser") {
+      const coords = screenToCanvasCoords(e.clientX, e.clientY);
+      const now = Date.now();
+      const color = activeColorRef.current || "#ef4444";
+      const newPt = { x: coords.x, y: coords.y, timestamp: now, color };
+      setLocalLaserPoints((prev) => [...prev.filter((p) => now - p.timestamp < 1500), newPt]);
+
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && now - lastStreamBroadcast.current > 20) {
+        lastStreamBroadcast.current = now;
+        wsRef.current.send(
+          JSON.stringify({
+            type: "laser_point",
+            boardId,
+            userId: currentUser.id,
+            x: coords.x,
+            y: coords.y,
+            color,
+            timestamp: now,
+          })
+        );
+      }
+    }
 
     // Update connector drawing state
     if (tempConnector) {
@@ -2855,6 +3030,21 @@ export default function WhiteboardCanvas({
       }
 
       const key = e.key.toLowerCase();
+      if (e.key === "?" || (e.key === "/" && e.shiftKey)) {
+        e.preventDefault();
+        setIsShortcutsOpen((prev) => !prev);
+        return;
+      }
+
+      if (e.key === "Escape") {
+        setFollowedUserId(null);
+        setSelectedId(null);
+        setSelectedIds([]);
+        setIsShortcutsOpen(false);
+        setIsClearModalOpen(false);
+        return;
+      }
+
       if ((e.ctrlKey || e.metaKey) && key === "z") {
         e.preventDefault();
         if (!canWrite) {
@@ -3462,22 +3652,27 @@ export default function WhiteboardCanvas({
       className="flex-1 h-screen relative flex flex-col bg-[#F3F4F6] overflow-hidden"
       id="whiteboard-workspace"
     >
-      {/* Upper Navigation Control Bar */}
-      <nav className={`bg-white border-b border-slate-200 px-2 sm:px-4 h-14 flex items-center justify-between z-30 shadow-xs absolute top-0 left-0 right-0 transition-all duration-300 ${isZenMode ? "-translate-y-full opacity-0 pointer-events-none" : "translate-y-0"}`}>
-        <div className="flex items-center space-x-1.5 sm:space-x-3">
+      {/* Floating Island Header Controls */}
+      <div
+        className={`pointer-events-none absolute top-2 sm:top-3 left-2 sm:left-3 right-2 sm:right-3 flex items-center justify-between gap-1.5 z-30 transition-all duration-300 ${
+          isZenMode || isTopBarHidden ? "-translate-y-16 opacity-0" : "translate-y-0 opacity-100"
+        }`}
+      >
+        {/* Left Floating Island */}
+        <div className="pointer-events-auto bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/80 shadow-md hover:shadow-lg p-1 sm:p-1.5 flex items-center space-x-1 sm:space-x-1.5 shrink min-w-0 overflow-x-auto scrollbar-none">
           <button
             onClick={onBackToDashboard}
-            className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-slate-800 transition-colors flex items-center space-x-1 font-bold text-xs cursor-pointer shrink-0"
+            className="p-1 sm:p-1.5 hover:bg-slate-100/80 rounded-xl text-slate-600 hover:text-slate-900 transition-colors flex items-center space-x-1 font-bold text-xs cursor-pointer shrink-0"
           >
             <ChevronLeft className="w-4 h-4" />
             <span className="hidden md:inline">All Boards</span>
           </button>
 
-          <div className="h-4 w-[1px] bg-slate-200 hidden sm:block"></div>
+          <div className="h-4 w-[1px] bg-slate-200 shrink-0 hidden sm:block"></div>
 
-          <div>
-            <h2 className="text-sm font-semibold leading-tight text-slate-900 flex items-center space-x-1.5 flex-wrap gap-y-1">
-              <span className="truncate max-w-[80px] sm:max-w-[180px]" title={boardName}>{boardName}</span>
+          <div className="flex items-center space-x-1 sm:space-x-2 shrink min-w-0">
+            <h2 className="text-xs sm:text-sm font-semibold leading-tight text-slate-900 flex items-center space-x-1">
+              <span className="truncate max-w-[70px] sm:max-w-[180px]" title={boardName}>{boardName}</span>
               
               <div className="hidden sm:flex items-center space-x-1.5">
                 <span className="bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold">
@@ -3537,7 +3732,7 @@ export default function WhiteboardCanvas({
               </div>
 
               {/* Minimal compact indicator dot for mobile */}
-              <div className="flex sm:hidden items-center px-1">
+              <div className="flex sm:hidden items-center px-0.5">
                 <span 
                   className={`w-2 h-2 rounded-full ${
                     syncStatus === "synced" && wsConnected ? "bg-purple-500 animate-pulse" :
@@ -3549,19 +3744,16 @@ export default function WhiteboardCanvas({
                 />
               </div>
             </h2>
-            <p className="text-[10px] text-slate-500 font-mono hidden sm:block">
-              Workspace ID: {boardId.slice(0, 8)}...
-            </p>
           </div>
 
-          <div className="h-4 w-[1px] bg-slate-200 hidden md:block"></div>
+          <div className="h-4 w-[1px] bg-slate-200 shrink-0 hidden md:block"></div>
 
           <button
             onClick={handleUndo}
             disabled={undoStack.length === 0}
-            className={`p-1.5 md:px-3 md:py-1.5 rounded-lg flex items-center space-x-1.5 font-bold text-xs transition-all cursor-pointer shrink-0 ${
+            className={`p-1.5 md:px-2.5 md:py-1 rounded-xl flex items-center space-x-1 font-bold text-xs transition-all cursor-pointer shrink-0 ${
               undoStack.length > 0
-                ? "bg-slate-100 border border-slate-200 text-slate-700 hover:bg-slate-200 hover:text-slate-950 hover:scale-[1.02] active:scale-[0.98]"
+                ? "bg-slate-100 border border-slate-200/80 text-slate-700 hover:bg-slate-200 hover:text-slate-950 hover:scale-[1.02] active:scale-[0.98]"
                 : "text-slate-300 bg-slate-50 border border-slate-150 cursor-not-allowed"
             }`}
             title="Undo last action (Ctrl+Z)"
@@ -3580,9 +3772,9 @@ export default function WhiteboardCanvas({
           <button
             onClick={handleRedo}
             disabled={redoStack.length === 0}
-            className={`p-1.5 md:px-3 md:py-1.5 rounded-lg flex items-center space-x-1.5 font-bold text-xs transition-all cursor-pointer shrink-0 ${
+            className={`p-1.5 md:px-2.5 md:py-1 rounded-xl flex items-center space-x-1 font-bold text-xs transition-all cursor-pointer shrink-0 ${
               redoStack.length > 0
-                ? "bg-slate-100 border border-slate-200 text-slate-700 hover:bg-slate-200 hover:text-slate-950 hover:scale-[1.02] active:scale-[0.98]"
+                ? "bg-slate-100 border border-slate-200/80 text-slate-700 hover:bg-slate-200 hover:text-slate-950 hover:scale-[1.02] active:scale-[0.98]"
                 : "text-slate-300 bg-slate-50 border border-slate-150 cursor-not-allowed"
             }`}
             title="Redo last action (Ctrl+Y)"
@@ -3599,9 +3791,9 @@ export default function WhiteboardCanvas({
           </button>
         </div>
 
-        {/* Current Collaborator Profile details and Share action */}
-        <div className="flex items-center space-x-1 sm:space-x-2 shrink-0">
-          <div className="flex items-center space-x-1.5 bg-slate-100 p-1 md:px-2.5 md:py-1 rounded-full text-xs font-bold text-slate-600 border border-slate-200 shrink-0" title={`${currentUser.name} (You)`}>
+        {/* Right Floating Island */}
+        <div className="pointer-events-auto bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/80 shadow-md hover:shadow-lg p-1 sm:p-1.5 flex items-center space-x-1 sm:space-x-1.5 shrink min-w-0 overflow-x-auto scrollbar-none transition-all">
+          <div className="flex items-center space-x-1.5 bg-slate-100/90 p-1 md:px-2.5 md:py-1 rounded-full text-xs font-bold text-slate-600 border border-slate-200/80 shrink-0" title={`${currentUser.name} (You)`}>
             <span
               className="w-2.5 h-2.5 rounded-full shrink-0"
               style={{ backgroundColor: currentUser.color }}
@@ -3609,11 +3801,91 @@ export default function WhiteboardCanvas({
             <span className="hidden md:inline truncate max-w-[80px]">{currentUser.name} (You)</span>
           </div>
 
+          {/* Online Collaborators Avatars List with Follow Feature */}
+          {Object.values(socketCollaboratorsRef.current).map((collab) => {
+            if (collab.id === currentUser.id) return null;
+            const isFollowed = followedUserId === collab.id;
+            return (
+              <button
+                key={collab.id}
+                onClick={() => setFollowedUserId(isFollowed ? null : collab.id)}
+                className={`p-1 md:px-2.5 md:py-1 rounded-full flex items-center space-x-1.5 text-xs font-bold transition-all cursor-pointer border shrink-0 ${
+                  isFollowed
+                    ? "bg-blue-50 border-blue-500 text-blue-700 ring-2 ring-blue-500/30 scale-105"
+                    : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100 hover:scale-105"
+                }`}
+                title={isFollowed ? `Stop following ${collab.name}` : `Follow ${collab.name}'s live screen`}
+              >
+                <span
+                  className="w-2.5 h-2.5 rounded-full shrink-0"
+                  style={{ backgroundColor: collab.color }}
+                />
+                <span className="hidden sm:inline truncate max-w-[80px]">{collab.name}</span>
+                {collab.role === "teacher" && (
+                  <span className="text-[9px] bg-purple-100 text-purple-700 px-1 py-0.2 rounded font-extrabold uppercase">
+                    Teacher
+                  </span>
+                )}
+                {isFollowed ? (
+                  <span className="text-[9px] bg-blue-600 text-white px-1.5 py-0.2 rounded-full font-bold">
+                    Following
+                  </span>
+                ) : (
+                  <span className="text-[9px] text-slate-400 font-medium">Follow</span>
+                )}
+              </button>
+            );
+          })}
+
+          {/* Presenter Mode Button ("Follow Me") */}
+          <button
+            onClick={() => {
+              const nextState = !isPresenterMode;
+              setIsPresenterMode(nextState);
+              if (nextState) {
+                if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                  wsRef.current.send(JSON.stringify({
+                    type: "request_follow",
+                    boardId,
+                    teacherId: currentUser.id,
+                    teacherName: currentUser.name,
+                  }));
+                }
+                showSyncToast("Started Presenter Mode! Team will follow your screen.", "success");
+              } else {
+                showSyncToast("Exited Presenter Mode.", "info");
+              }
+            }}
+            className={`p-1.5 md:px-2.5 md:py-1 rounded-xl font-bold text-xs flex items-center space-x-1 transition-all cursor-pointer border shrink-0 ${
+              isPresenterMode
+                ? "bg-purple-600 border-purple-700 text-white shadow-md shadow-purple-600/20 ring-2 ring-purple-400"
+                : "bg-purple-50 hover:bg-purple-100 border-purple-200 text-purple-700"
+            }`}
+            title={isPresenterMode ? "Stop Presenter Mode" : "Start Presenter Mode (Broadcast View)"}
+          >
+            <Video className="w-3.5 h-3.5 shrink-0" />
+            <span className="hidden lg:inline">{isPresenterMode ? "Presenting" : "Presenter Mode"}</span>
+          </button>
+
+          {/* Floating Sprint Timer Button */}
+          <button
+            onClick={() => setIsTimerOpen(!isTimerOpen)}
+            className={`p-1.5 md:px-2.5 md:py-1 rounded-xl font-bold text-xs flex items-center space-x-1 transition-all cursor-pointer border shrink-0 ${
+              isTimerOpen
+                ? "bg-indigo-600 border-indigo-700 text-white shadow-md shadow-indigo-600/20"
+                : "bg-indigo-50 hover:bg-indigo-100 border-indigo-200 text-indigo-700"
+            }`}
+            title="Sprint Timer & Stopwatch"
+          >
+            <TimerIcon className="w-3.5 h-3.5 shrink-0" />
+            <span className="hidden lg:inline">Sprint Timer</span>
+          </button>
+
           {/* Teacher control to allow/disallow student writing */}
           {isTeacher ? (
             <button
               onClick={handleToggleStudentsCanWrite}
-              className={`p-1.5 md:px-3 md:py-1.5 rounded-lg flex items-center space-x-1.5 font-bold text-xs transition-all cursor-pointer border shrink-0 ${
+              className={`p-1.5 md:px-2.5 md:py-1 rounded-xl flex items-center space-x-1.5 font-bold text-xs transition-all cursor-pointer border shrink-0 ${
                 studentsCanWrite
                   ? "bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100"
                   : "bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100 animate-pulse"
@@ -3639,7 +3911,7 @@ export default function WhiteboardCanvas({
           ) : (
             /* Student status indicator */
             <div
-              className={`p-1.5 md:px-3 md:py-1.5 rounded-lg flex items-center space-x-1.5 font-bold text-xs border shrink-0 ${
+              className={`p-1.5 md:px-2.5 md:py-1 rounded-xl flex items-center space-x-1.5 font-bold text-xs border shrink-0 ${
                 studentsCanWrite
                   ? "bg-emerald-50 border-emerald-100 text-emerald-600"
                   : "bg-amber-50 border-amber-200 text-amber-700"
@@ -3665,10 +3937,10 @@ export default function WhiteboardCanvas({
 
           <button
             onClick={() => setIsAiPanelOpen(!isAiPanelOpen)}
-            className={`p-1.5 md:px-3.5 md:py-1.5 rounded text-xs font-semibold flex items-center space-x-1.5 transition-all cursor-pointer shrink-0 ${
+            className={`p-1.5 md:px-3 md:py-1 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-all cursor-pointer shrink-0 ${
               isAiPanelOpen
                 ? "bg-purple-600 hover:bg-purple-700 text-white shadow-md border-purple-600 scale-102"
-                : "bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 shadow-xs"
+                : "bg-white hover:bg-slate-50 text-slate-700 border border-slate-200/80 shadow-xs"
             }`}
             title="AI Assistant"
           >
@@ -3682,7 +3954,7 @@ export default function WhiteboardCanvas({
             <button
               onClick={handleDownloadPdfWithDrawings}
               disabled={isGeneratingPdf}
-              className="p-1.5 md:px-3.5 md:py-1.5 rounded text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm flex items-center space-x-1.5 transition-all cursor-pointer disabled:opacity-50 shrink-0"
+              className="p-1.5 md:px-3 md:py-1 rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs flex items-center space-x-1.5 transition-all cursor-pointer disabled:opacity-50 shrink-0"
               title="Download PDF"
             >
               {isGeneratingPdf ? (
@@ -3701,10 +3973,10 @@ export default function WhiteboardCanvas({
 
           <button
             onClick={copyBoardLink}
-            className={`p-1.5 md:px-3.5 md:py-1.5 rounded text-xs font-medium flex items-center space-x-1.5 transition-all cursor-pointer shrink-0 ${
+            className={`p-1.5 md:px-3 md:py-1 rounded-xl text-xs font-medium flex items-center space-x-1.5 transition-all cursor-pointer shrink-0 ${
               copiedLink
-                ? "bg-green-500 text-white shadow-sm"
-                : "bg-blue-600 hover:bg-blue-700 text-white shadow-sm"
+                ? "bg-green-500 text-white shadow-xs"
+                : "bg-blue-600 hover:bg-blue-700 text-white shadow-xs"
             }`}
             title="Share Canvas"
           >
@@ -3720,8 +3992,29 @@ export default function WhiteboardCanvas({
               </>
             )}
           </button>
+
+          {/* Subtle Button to Hide Header */}
+          <button
+            onClick={() => setIsTopBarHidden(true)}
+            className="p-1.5 hover:bg-slate-100/80 rounded-xl text-slate-400 hover:text-slate-700 transition-colors cursor-pointer shrink-0"
+            title="Hide Header Controls"
+          >
+            <EyeOff className="w-4 h-4" />
+          </button>
         </div>
-      </nav>
+      </div>
+
+      {/* Subtle Floating Toggle Button to Show Header when Hidden */}
+      {isTopBarHidden && !isZenMode && (
+        <button
+          onClick={() => setIsTopBarHidden(false)}
+          className="absolute top-3 right-3 z-30 bg-white/95 backdrop-blur-md hover:bg-white text-slate-700 hover:text-blue-600 border border-slate-200/90 shadow-md hover:shadow-lg rounded-2xl px-3 py-2 flex items-center space-x-1.5 text-xs font-bold cursor-pointer transition-all hover:scale-105 active:scale-95"
+          title="Show Header Controls"
+        >
+          <Eye className="w-4 h-4 text-blue-600" />
+          <span className="hidden sm:inline">Header</span>
+        </button>
+      )}
 
       {isZenMode && (
         <button
@@ -3779,6 +4072,11 @@ export default function WhiteboardCanvas({
             isPdfMode={isPdfBoard}
             isZenMode={isZenMode}
             onToggleZenMode={handleToggleZenMode}
+            isTopBarHidden={isTopBarHidden}
+            onOpenShortcuts={() => setIsShortcutsOpen(true)}
+            onOpenClearModal={() => setIsClearModalOpen(true)}
+            onToggleTimer={() => setIsTimerOpen(!isTimerOpen)}
+            isTimerOpen={isTimerOpen}
           />
         );
       })()}
@@ -3980,6 +4278,83 @@ export default function WhiteboardCanvas({
             height="100%"
             className="absolute inset-0 overflow-visible pointer-events-none z-20"
           >
+            {/* Fading Laser Pointer Trails Layer (Local & Remote) */}
+            {(() => {
+              const allLaserStreams: { color: string; points: LaserPoint[] }[] = [];
+              if (localLaserPoints.length > 0) {
+                allLaserStreams.push({ color: activeColor || "#ef4444", points: localLaserPoints });
+              }
+              Object.values(remoteLaserPoints).forEach((pts) => {
+                if (pts.length > 0) {
+                  allLaserStreams.push({ color: pts[0]?.color || "#ef4444", points: pts });
+                }
+              });
+
+              if (allLaserStreams.length === 0) return null;
+              const now = Date.now();
+
+              return (
+                <g className="pointer-events-none z-30">
+                  {allLaserStreams.map((stream, sIdx) => {
+                    if (stream.points.length === 0) return null;
+                    const pts = stream.points;
+                    const color = stream.color || "#ef4444";
+                    const latestPoint = pts[pts.length - 1];
+
+                    return (
+                      <g key={`laser-stream-${sIdx}`}>
+                        {/* Fading laser stroke segments */}
+                        {pts.slice(1).map((pt, idx) => {
+                          const prevPt = pts[idx];
+                          const age = now - pt.timestamp;
+                          const alpha = Math.max(0, 1 - age / 1500);
+                          const strokeW = 3 + alpha * 5;
+
+                          return (
+                            <line
+                              key={`laser-line-${idx}`}
+                              x1={prevPt.x}
+                              y1={prevPt.y}
+                              x2={pt.x}
+                              y2={pt.y}
+                              stroke={color}
+                              strokeWidth={strokeW}
+                              strokeLinecap="round"
+                              opacity={alpha}
+                              style={{
+                                filter: `drop-shadow(0 0 6px ${color})`,
+                              }}
+                            />
+                          );
+                        })}
+
+                        {/* Glowing Laser Pointer Tip Dot */}
+                        {latestPoint && (
+                          <g transform={`translate(${latestPoint.x}, ${latestPoint.y})`}>
+                            <circle
+                              r="12"
+                              fill={color}
+                              opacity="0.3"
+                              className="animate-ping"
+                            />
+                            <circle
+                              r="6"
+                              fill={color}
+                              opacity="0.9"
+                              style={{ filter: `drop-shadow(0 0 10px ${color})` }}
+                            />
+                            <circle
+                              r="2.5"
+                              fill="#ffffff"
+                            />
+                          </g>
+                        )}
+                      </g>
+                    );
+                  })}
+                </g>
+              );
+            })()}
             {/* Render saved drawings */}
             {elements
               .filter((el) => el.type === "drawing")
@@ -4154,134 +4529,7 @@ export default function WhiteboardCanvas({
         </div>
       </div>
 
-      {/* Interactive Shortcuts and Quick-Tools Widget */}
-      <div
-        className="absolute bottom-6 right-6 z-30 flex flex-col items-end"
-        id="shortcuts-panel"
-      >
-        {!isShortcutsExpanded ? (
-          <button
-            onClick={() => setIsShortcutsExpanded(true)}
-            className="bg-white text-slate-700 hover:text-blue-600 border border-slate-200 shadow-lg rounded-full p-3.5 flex items-center justify-center cursor-pointer transition-all hover:scale-105 active:scale-95 group relative"
-            title="Show Keyboard Shortcuts"
-          >
-            <Keyboard className="w-5 h-5" />
-            <span className="absolute -top-1 -right-1 flex h-3.5 w-3.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-blue-500"></span>
-            </span>
-          </button>
-        ) : (
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-80 p-4 animate-scale-up text-slate-800 flex flex-col space-y-3">
-            {/* Header */}
-            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-              <div className="flex items-center space-x-2 text-xs font-bold text-slate-500 uppercase tracking-wider">
-                <Keyboard className="w-4 h-4 text-blue-600" />
-                <span>Shortcuts & Quick Tools</span>
-              </div>
-              <button
-                onClick={() => setIsShortcutsExpanded(false)}
-                className="p-1 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
-                title="Collapse Panel"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
 
-            {/* Intro description */}
-            <p className="text-[11px] text-slate-500 leading-normal">
-              Press the hotkey on your keyboard or click the buttons below to
-              switch tools instantly:
-            </p>
-
-            {/* Interactive Shortcut Row List */}
-            <div className="flex flex-col space-y-1">
-              {[
-                { key: "V", label: "Select & Edit", tool: "select" },
-                { key: "H", label: "Pan Canvas", tool: "pan" },
-                { key: "P", label: "Pen / Ink Drawing", tool: "pencil" },
-                { key: "N", label: "Sticky Note", tool: "sticky" },
-                { key: "S", label: "Shapes Selector", tool: "shape" },
-                { key: "T", label: "Text Box", tool: "text" },
-                { key: "E", label: "Eraser Tool", tool: "eraser" },
-              ].map((item) => {
-                const isActive = activeTool === item.tool;
-                return (
-                  <button
-                    key={item.key}
-                    onClick={() => {
-                      setActiveTool(item.tool as Tool);
-                    }}
-                    className={`group w-full flex items-center justify-between p-1.5 rounded-lg text-left text-xs transition-all cursor-pointer ${
-                      isActive
-                        ? "bg-blue-50 text-blue-700 font-bold border border-blue-100 shadow-xs"
-                        : "hover:bg-slate-50 text-slate-600 hover:text-slate-900 border border-transparent"
-                    }`}
-                  >
-                    <div className="flex items-center space-x-2">
-                      <kbd
-                        className={`min-w-[20px] h-5 px-1.5 py-0.5 font-mono text-[10px] font-bold border rounded shadow-xs flex items-center justify-center transition-colors ${
-                          isActive
-                            ? "bg-blue-600 border-blue-700 text-white"
-                            : "bg-white border-slate-300 text-slate-600 group-hover:bg-slate-100"
-                        }`}
-                      >
-                        {item.key}
-                      </kbd>
-                      <span className="font-semibold">{item.label}</span>
-                    </div>
-                    {isActive && (
-                      <span className="text-[9px] bg-blue-100 text-blue-800 font-extrabold px-1.5 py-0.5 rounded-full uppercase tracking-wider scale-95">
-                        Active
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* General Non-Tool Shortcuts */}
-            <div className="border-t border-slate-100 pt-2.5 flex flex-col space-y-1.5">
-              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">
-                Other Commands
-              </div>
-
-              <div className="flex items-center justify-between text-xs text-slate-600">
-                <span className="font-medium text-slate-500">
-                  Delete Selected Item
-                </span>
-                <div className="flex items-center space-x-1">
-                  <kbd className="px-1.5 py-0.5 font-mono text-[10px] font-bold bg-slate-50 border border-slate-300 rounded shadow-xs text-slate-600">
-                    Del
-                  </kbd>
-                  <span className="text-[10px] text-slate-400">or</span>
-                  <kbd className="px-1.5 py-0.5 font-mono text-[10px] font-bold bg-slate-50 border border-slate-300 rounded shadow-xs text-slate-600">
-                    ⌫
-                  </kbd>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between text-xs text-slate-600">
-                <span className="font-medium text-slate-500">
-                  Paste Board Images
-                </span>
-                <kbd className="px-1.5 py-0.5 font-mono text-[10px] font-bold bg-slate-50 border border-slate-300 rounded shadow-xs text-slate-600">
-                  Ctrl + V
-                </kbd>
-              </div>
-
-              <div className="flex items-center justify-between text-xs text-slate-600">
-                <span className="font-medium text-slate-500">
-                  Undo Last Action
-                </span>
-                <kbd className="px-1.5 py-0.5 font-mono text-[10px] font-bold bg-slate-50 border border-slate-300 rounded shadow-xs text-slate-600">
-                  Ctrl + Z
-                </kbd>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
 
       {/* Read-Only Mode Floating Notice Banner */}
       {showReadOnlyAlert && (
@@ -4671,6 +4919,71 @@ export default function WhiteboardCanvas({
           </div>
         </div>
       )}
+
+      {/* Floating Follow Indicator Banner */}
+      {followedUserId && (
+        <div className="fixed top-18 left-1/2 -translate-x-1/2 z-40 bg-slate-900/90 backdrop-blur-md text-white font-bold text-xs px-4 py-2.5 rounded-2xl shadow-xl border border-slate-700/80 flex items-center space-x-3 animate-fade-in">
+          <div className="flex items-center space-x-2">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-500"></span>
+            </span>
+            <span>
+              Following <strong className="text-blue-400 font-extrabold">{socketCollaboratorsRef.current[followedUserId]?.name || "Collaborator"}</strong>'s view
+            </span>
+          </div>
+          <button
+            onClick={() => setFollowedUserId(null)}
+            className="px-2.5 py-1 bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold rounded-lg transition-colors cursor-pointer"
+          >
+            Stop Following (Esc)
+          </button>
+        </div>
+      )}
+
+      {/* Minimap Navigation Control */}
+      {!isZenMode && (
+        <div className="fixed bottom-16 sm:bottom-6 right-3 sm:right-6 z-30 flex flex-col items-end space-y-2">
+          <Minimap
+            elements={elements}
+            panX={panX}
+            panY={panY}
+            zoom={zoom}
+            containerWidth={containerDimensions.width}
+            containerHeight={containerDimensions.height}
+            onPanTo={(newPanX, newPanY) => {
+              setPanX(newPanX);
+              setPanY(newPanY);
+            }}
+          />
+        </div>
+      )}
+
+      {/* Presenter Mode Live Indicator Border */}
+      {isPresenterMode && (
+        <div className="fixed inset-0 border-4 border-purple-500/80 pointer-events-none z-30 shadow-[inset_0_0_24px_rgba(168,85,247,0.35)] animate-pulse" />
+      )}
+
+      {/* Floating Workspace Sprint Timer & Stopwatch Widget */}
+      <WorkspaceTimer
+        isOpen={isTimerOpen}
+        onClose={() => setIsTimerOpen(false)}
+        onTimerSync={handleTimerSync}
+        syncedState={syncedTimerState}
+      />
+
+      {/* Helper Modals */}
+      <KeyboardShortcutsModal
+        isOpen={isShortcutsOpen}
+        onClose={() => setIsShortcutsOpen(false)}
+      />
+
+      <ClearCanvasModal
+        isOpen={isClearModalOpen}
+        onClose={() => setIsClearModalOpen(false)}
+        onConfirm={handleClearBoard}
+        elementCount={elements.length}
+      />
     </div>
   );
 }
