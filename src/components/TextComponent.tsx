@@ -60,6 +60,60 @@ const FILL_COLORS = [
   { name: 'Dark Slate', value: '#1e293b' },
 ];
 
+const parseRichText = (str: string): React.ReactNode => {
+  if (!str) return '';
+
+  const regex = /(\*\*.*?\*\*|\*.*?\*|~~.*?~~|<u>.*?<\/u>|<span style="[^"]*">.*?<\/span>)/gs;
+  const parts = str.split(regex);
+  
+  if (parts.length === 1) {
+    return str;
+  }
+  
+  return parts.map((part, index) => {
+    if (!part) return null;
+    
+    if (part.startsWith('**') && part.endsWith('**')) {
+      const inner = part.slice(2, -2);
+      return <strong key={index} className="font-bold">{parseRichText(inner)}</strong>;
+    }
+    
+    if (part.startsWith('*') && part.endsWith('*')) {
+      const inner = part.slice(1, -1);
+      return <em key={index} className="italic">{parseRichText(inner)}</em>;
+    }
+    
+    if (part.startsWith('~~') && part.endsWith('~~')) {
+      const inner = part.slice(2, -2);
+      return <del key={index} className="line-through">{parseRichText(inner)}</del>;
+    }
+    
+    if (part.startsWith('<u>') && part.endsWith('</u>')) {
+      const inner = part.slice(3, -4);
+      return <span key={index} className="underline">{parseRichText(inner)}</span>;
+    }
+    
+    if (part.startsWith('<span style="') && part.endsWith('</span>')) {
+      const styleMatch = part.match(/style="([^"]*)"/);
+      const innerMatch = part.match(/>(.*?)<\/span>/s);
+      const styleStr = styleMatch ? styleMatch[1] : '';
+      const inner = innerMatch ? innerMatch[1] : '';
+      
+      const styleObj: React.CSSProperties = {};
+      if (styleStr) {
+        const colorMatch = styleStr.match(/color:\s*([^;"]+)/);
+        const sizeMatch = styleStr.match(/font-size:\s*([^;"]+)/);
+        if (colorMatch) styleObj.color = colorMatch[1].trim();
+        if (sizeMatch) styleObj.fontSize = sizeMatch[1].trim();
+      }
+      
+      return <span key={index} style={styleObj}>{parseRichText(inner)}</span>;
+    }
+    
+    return part;
+  });
+};
+
 export default function TextComponent({
   element,
   isSelected,
@@ -91,19 +145,21 @@ export default function TextComponent({
     }
   }, [isEditing]);
 
-  // Adjust height on text change to prevent vertical truncation
+  // Adjust height on text change to prevent vertical truncation without scrolling/reflow jumps
   useEffect(() => {
     if (isEditing && textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
       const scrollHeight = textareaRef.current.scrollHeight;
       if (scrollHeight > element.height) {
         onUpdate({ height: Math.max(scrollHeight + 16, 40) });
       }
-      textareaRef.current.style.height = '';
     }
-  }, [text, isEditing]);
+  }, [text, isEditing, element.height]);
 
-  const handleBlur = () => {
+  const handleBlur = (e: React.FocusEvent<HTMLTextAreaElement>) => {
+    // If focus is moving to the formatting toolbar, keep editing!
+    if (e.relatedTarget && (e.relatedTarget as HTMLElement).closest('.lucidspark-action-bar')) {
+      return;
+    }
     setIsEditing(false);
     setActivePopover(null);
     if (text !== element.text) {
@@ -113,6 +169,60 @@ export default function TextComponent({
 
   const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setText(e.target.value);
+  };
+
+  const handleFormatSelection = (
+    type: 'bold' | 'italic' | 'underline' | 'strikethrough' | 'fontSize' | 'color',
+    value?: string | number
+  ) => {
+    if (!textareaRef.current) return;
+    const start = textareaRef.current.selectionStart;
+    const end = textareaRef.current.selectionEnd;
+    
+    if (start === end) {
+      if (type === 'bold') {
+        onUpdate({ fontWeight: isBold ? 'normal' : 'bold' });
+      } else if (type === 'italic') {
+        onUpdate({ fontStyle: isItalic ? 'normal' : 'italic' });
+      } else if (type === 'underline') {
+        onUpdate({ textDecoration: isUnderline ? 'none' : 'underline' });
+      } else if (type === 'strikethrough') {
+        onUpdate({ textDecoration: isStrikethrough ? 'none' : 'line-through' });
+      } else if (type === 'fontSize') {
+        onUpdate({ fontSize: value as number });
+      } else if (type === 'color') {
+        onUpdate({ color: value as string });
+      }
+      return;
+    }
+
+    const selectedText = text.substring(start, end);
+    let formattedText = '';
+    
+    if (type === 'bold') {
+      formattedText = `**${selectedText}**`;
+    } else if (type === 'italic') {
+      formattedText = `*${selectedText}*`;
+    } else if (type === 'underline') {
+      formattedText = `<u>${selectedText}</u>`;
+    } else if (type === 'strikethrough') {
+      formattedText = `~~${selectedText}~~`;
+    } else if (type === 'fontSize') {
+      formattedText = `<span style="font-size: ${value}px">${selectedText}</span>`;
+    } else if (type === 'color') {
+      formattedText = `<span style="color: ${value}">${selectedText}</span>`;
+    }
+    
+    const newText = text.substring(0, start) + formattedText + text.substring(end);
+    setText(newText);
+    onUpdate({ text: newText });
+    
+    setTimeout(() => {
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+        textareaRef.current.setSelectionRange(start, start + formattedText.length);
+      }
+    }, 50);
   };
 
   const handleEmojiClick = (emoji: string, e: React.MouseEvent) => {
@@ -203,6 +313,12 @@ export default function TextComponent({
             value={text}
             onChange={handleTextChange}
             onBlur={handleBlur}
+            onPointerDown={(e) => {
+              e.stopPropagation();
+            }}
+            onMouseDown={(e) => {
+              e.stopPropagation();
+            }}
             className={`w-full h-full bg-transparent border-none resize-none focus:outline-none p-1 ${getFontFamilyClass()} ${textAlignClass}`}
             style={{ 
               fontSize: `${element.fontSize || 16}px`, 
@@ -237,7 +353,7 @@ export default function TextComponent({
               ...getFontFamilyStyle()
             }}
           >
-            {element.text || (canWrite ? <span className="opacity-30 italic text-xs font-normal">Double click to type text</span> : '')}
+            {element.text ? parseRichText(element.text) : (canWrite ? <span className="opacity-30 italic text-xs font-normal">Double click to type text</span> : '')}
           </div>
         )}
       </div>
@@ -245,9 +361,9 @@ export default function TextComponent({
       {/* Floating Lucidspark Formatting Action Bar */}
       {isSelected && !isDraggingOrResizing && (
         <div 
-          onPointerDown={(e) => e.stopPropagation()} 
-          onMouseDown={(e) => e.stopPropagation()}
-          className="absolute -top-14 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-2xl shadow-xl px-2 py-1.5 flex items-center space-x-1 z-40 animate-fade-in max-w-[90vw] overflow-x-auto scrollbar-none"
+          onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} 
+          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+          className="absolute -top-14 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-2xl shadow-xl px-2 py-1.5 flex items-center space-x-1 z-40 animate-fade-in max-w-[90vw] overflow-x-auto scrollbar-none lucidspark-action-bar"
         >
           {/* Reaction & Lock */}
           <div className="flex items-center space-x-0.5 pr-1.5 border-r border-slate-100 shrink-0">
@@ -316,12 +432,17 @@ export default function TextComponent({
                 )}
               </div>
 
-              {/* FontSize controls */}
               <div className="flex items-center space-x-0.5 border-r border-slate-100 pr-1.5 pl-0.5 shrink-0">
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    onUpdate({ fontSize: Math.max(12, (element.fontSize || 16) - 2) });
+                    const currentSize = element.fontSize || 16;
+                    const nextSize = Math.max(12, currentSize - 2);
+                    if (textareaRef.current && textareaRef.current.selectionStart !== textareaRef.current.selectionEnd) {
+                      handleFormatSelection('fontSize', nextSize);
+                    } else {
+                      onUpdate({ fontSize: nextSize });
+                    }
                   }}
                   className="p-1 hover:bg-slate-100 rounded-lg text-xs font-extrabold text-slate-600 cursor-pointer min-w-[22px]"
                   title="Smaller font"
@@ -334,7 +455,13 @@ export default function TextComponent({
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    onUpdate({ fontSize: Math.min(64, (element.fontSize || 16) + 2) });
+                    const currentSize = element.fontSize || 16;
+                    const nextSize = Math.min(64, currentSize + 2);
+                    if (textareaRef.current && textareaRef.current.selectionStart !== textareaRef.current.selectionEnd) {
+                      handleFormatSelection('fontSize', nextSize);
+                    } else {
+                      onUpdate({ fontSize: nextSize });
+                    }
                   }}
                   className="p-1 hover:bg-slate-100 rounded-lg text-xs font-extrabold text-slate-600 cursor-pointer min-w-[22px]"
                   title="Larger font"
@@ -348,7 +475,7 @@ export default function TextComponent({
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    onUpdate({ fontWeight: isBold ? 'normal' : 'bold' });
+                    handleFormatSelection('bold');
                   }}
                   className={`p-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                     isBold ? 'bg-blue-100 text-blue-700' : 'text-slate-600 hover:bg-slate-100'
@@ -360,7 +487,7 @@ export default function TextComponent({
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    onUpdate({ fontStyle: isItalic ? 'normal' : 'italic' });
+                    handleFormatSelection('italic');
                   }}
                   className={`p-1.5 rounded-lg text-xs transition-all cursor-pointer ${
                     isItalic ? 'bg-blue-100 text-blue-700' : 'text-slate-600 hover:bg-slate-100'
@@ -372,7 +499,7 @@ export default function TextComponent({
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    onUpdate({ textDecoration: isUnderline ? 'none' : 'underline' });
+                    handleFormatSelection('underline');
                   }}
                   className={`p-1.5 rounded-lg text-xs transition-all cursor-pointer ${
                     isUnderline ? 'bg-blue-100 text-blue-700' : 'text-slate-600 hover:bg-slate-100'
@@ -384,7 +511,7 @@ export default function TextComponent({
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    onUpdate({ textDecoration: isStrikethrough ? 'none' : 'line-through' });
+                    handleFormatSelection('strikethrough');
                   }}
                   className={`p-1.5 rounded-lg text-xs transition-all cursor-pointer ${
                     isStrikethrough ? 'bg-blue-100 text-blue-700' : 'text-slate-600 hover:bg-slate-100'
@@ -435,7 +562,6 @@ export default function TextComponent({
                 </button>
               </div>
 
-              {/* Text Color Picker */}
               <div className="relative shrink-0">
                 <button
                   onClick={(e) => {
@@ -459,7 +585,11 @@ export default function TextComponent({
                         key={c.value}
                         onClick={(e) => {
                           e.stopPropagation();
-                          onUpdate({ color: c.value });
+                          if (textareaRef.current && textareaRef.current.selectionStart !== textareaRef.current.selectionEnd) {
+                            handleFormatSelection('color', c.value);
+                          } else {
+                            onUpdate({ color: c.value });
+                          }
                           setActivePopover(null);
                         }}
                         className="w-6 h-6 rounded-full border border-slate-200 hover:scale-110 transition-transform cursor-pointer flex items-center justify-center"
