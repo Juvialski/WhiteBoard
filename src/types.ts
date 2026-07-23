@@ -1,4 +1,4 @@
-export type ElementType = "sticky" | "shape" | "text" | "drawing" | "image" | "connector";
+export type ElementType = "sticky" | "shape" | "text" | "drawing" | "image" | "connector" | "audio" | "stamp";
 
 export type ShapeType =
   | "rect"
@@ -150,13 +150,45 @@ export interface ConnectorElement {
   updatedAt?: number;
 }
 
+export interface AudioElement {
+  id: string;
+  type: "audio";
+  x: number;
+  y: number;
+  audioUrl: string; // Base64 audio blob data URL
+  duration?: number; // Duration in seconds
+  authorName?: string;
+  color?: string;
+  zIndex: number;
+  updatedAt?: number;
+  locked?: boolean;
+}
+
+export interface StampElement {
+  id: string;
+  type: "stamp";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  stampType: "checked" | "star" | "great_job" | "needs_revision" | "grade_a" | "approved" | "signature";
+  label?: string;
+  signatureDataUrl?: string; // base64 if custom drawn signature
+  color?: string;
+  zIndex: number;
+  updatedAt?: number;
+  locked?: boolean;
+}
+
 export type BoardElement =
   | StickyElement
   | ShapeElement
   | TextElement
   | DrawingElement
   | ImageElement
-  | ConnectorElement;
+  | ConnectorElement
+  | AudioElement
+  | StampElement;
 
 export interface Collaborator {
   id: string;

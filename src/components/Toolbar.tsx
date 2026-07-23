@@ -30,6 +30,9 @@ import {
   Flame,
   Timer as TimerIcon,
   Video,
+  Mic,
+  Stamp,
+  Calculator,
 } from "lucide-react";
 import { ShapeType } from "../types";
 
@@ -46,7 +49,10 @@ export type Tool =
   | "text"
   | "eraser"
   | "connector"
-  | "laser";
+  | "laser"
+  | "audio"
+  | "stamp"
+  | "math";
 
 interface ToolbarProps {
   activeTool: Tool;
@@ -307,6 +313,9 @@ export default function Toolbar({
       label: "Graphs (G)",
     },
     { id: "text", icon: <Type className="w-5 h-5" />, label: "Text Box (T)" },
+    { id: "audio", icon: <Mic className="w-5 h-5 text-amber-500" />, label: "Voice Comment / Audio Pin" },
+    { id: "stamp", icon: <Stamp className="w-5 h-5 text-emerald-500" />, label: "Stamps & Signatures" },
+    { id: "math", icon: <Calculator className="w-5 h-5 text-indigo-500" />, label: "Math Equation Callout" },
     { id: "connector", icon: <CornerDownRight className="w-5 h-5" />, label: "Connector Line (L)" },
     { id: "laser", icon: <Flame className="w-5 h-5 text-rose-500" />, label: "Laser Pointer (Laser Trail)" },
     { id: "eraser", icon: <Eraser className="w-5 h-5" />, label: "Eraser (E)" },

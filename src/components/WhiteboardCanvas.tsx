@@ -33,6 +33,11 @@ import StickyComponent from "./StickyComponent";
 import ShapeComponent from "./ShapeComponent";
 import TextComponent from "./TextComponent";
 import ImageComponent from "./ImageComponent";
+import AudioComponent from "./AudioComponent";
+import StampComponent from "./StampComponent";
+import PdfPageNavigation from "./PdfPageNavigation";
+import VoiceRecordModal from "./VoiceRecordModal";
+import StampPickerModal from "./StampPickerModal";
 import LiveCursors from "./LiveCursors";
 import Minimap from "./Minimap";
 import KeyboardShortcutsModal from "./KeyboardShortcutsModal";
@@ -448,6 +453,38 @@ const ElementWrapper = React.memo(({
           isDraggingOrResizing={isDraggingOrResizing}
           activeTool={activeTool}
           canWrite={canWrite}
+        />
+      </div>
+    );
+  }
+
+  if (el.type === "audio") {
+    return (
+      <div className={isInteractive ? "pointer-events-auto" : "pointer-events-none"}>
+        <AudioComponent
+          element={el as any}
+          isSelected={isSelected}
+          isInteractive={isInteractive}
+          onSelect={onSelect}
+          onUpdate={onUpdate}
+          onDelete={onDelete}
+          currentUser={currentUser}
+        />
+      </div>
+    );
+  }
+
+  if (el.type === "stamp") {
+    return (
+      <div className={isInteractive ? "pointer-events-auto" : "pointer-events-none"}>
+        <StampComponent
+          element={el as any}
+          isSelected={isSelected}
+          isInteractive={isInteractive}
+          onSelect={onSelect}
+          onUpdate={onUpdate}
+          onDelete={onDelete}
+          currentUser={currentUser}
         />
       </div>
     );
@@ -954,6 +991,32 @@ export default function WhiteboardCanvas({
   const [isPresenterMode, setIsPresenterMode] = useState(false);
   const [localLaserPoints, setLocalLaserPoints] = useState<LaserPoint[]>([]);
   const [remoteLaserPoints, setRemoteLaserPoints] = useState<{ [userId: string]: LaserPoint[] }>({});
+
+  // Kami Tools Modals & Navigation States
+  const [isVoiceModalOpen, setIsVoiceModalOpen] = useState(false);
+  const [isStampModalOpen, setIsStampModalOpen] = useState(false);
+  const [pendingVoiceCoords, setPendingVoiceCoords] = useState<Point | null>(null);
+  const [pendingStampCoords, setPendingStampCoords] = useState<Point | null>(null);
+  const [activePdfPageIndex, setActivePdfPageIndex] = useState(0);
+
+  const pdfPages = React.useMemo(() => {
+    return elements.filter((el) => el.type === "image" && el.id.startsWith("pdf-page-")) as ImageElement[];
+  }, [elements]);
+
+  const handleJumpToPdfPage = React.useCallback((pageIndex: number) => {
+    const page = pdfPages[pageIndex];
+    if (!page) return;
+    setActivePdfPageIndex(pageIndex);
+    const containerW = containerDimensions.width || 1200;
+    const containerH = containerDimensions.height || 800;
+    const targetZoom = Math.min(1.2, (containerH - 120) / (page.height || 800));
+    const targetPanX = containerW / 2 - (page.x + page.width / 2) * targetZoom;
+    const targetPanY = containerH / 2 - (page.y + page.height / 2) * targetZoom;
+
+    setZoom(targetZoom);
+    setPanX(targetPanX);
+    setPanY(targetPanY);
+  }, [pdfPages, containerDimensions]);
 
   const handleTimerSync = (timerState: any) => {
     setSyncedTimerState(timerState);
@@ -1692,6 +1755,80 @@ export default function WhiteboardCanvas({
     }
   }, [boardId, activeUsersCount, currentUser, setElements, setSyncStatus, flushPendingChanges]);
 
+  const handleInsertBlankPdfPage = React.useCallback(() => {
+    const lastPage = pdfPages[pdfPages.length - 1];
+    const newY = lastPage ? lastPage.y + lastPage.height + 40 : 0;
+    const newX = lastPage ? lastPage.x : 0;
+    const width = lastPage ? lastPage.width : 600;
+    const height = lastPage ? lastPage.height : 800;
+
+    const blankSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#ffffff"/><text x="50%" y="50%" font-family="sans-serif" font-size="16" fill="#94a3b8" text-anchor="middle">Blank PDF Page</text></svg>`;
+    const dataUrl = `data:image/svg+xml;utf8,${encodeURIComponent(blankSvg)}`;
+
+    const id = `pdf-page-${pdfPages.length}-${Date.now()}`;
+    const newPage: ImageElement = {
+      id,
+      type: "image",
+      x: newX,
+      y: newY,
+      width,
+      height,
+      src: dataUrl,
+      zIndex: -1,
+      locked: true,
+      updatedAt: Date.now(),
+    };
+
+    saveElementLocallyAndSync(id, newPage);
+    showSyncToast("Blank page added to document", "success");
+  }, [pdfPages, saveElementLocallyAndSync, showSyncToast]);
+
+  const handleSaveVoiceNote = React.useCallback((audioDataUrl: string, durationSec: number) => {
+    const coords = pendingVoiceCoords || { x: -panX + 200, y: -panY + 200 };
+    const id = "audio-" + Date.now() + Math.floor(Math.random() * 100);
+    const newAudio: BoardElement = {
+      id,
+      type: "audio",
+      x: coords.x - 20,
+      y: coords.y - 20,
+      audioUrl: audioDataUrl,
+      duration: durationSec,
+      authorName: currentUser.name,
+      zIndex: elements.length + 1,
+      updatedAt: Date.now(),
+    } as any;
+
+    saveElementLocallyAndSync(id, newAudio);
+    pushToUndo({ type: "add", elementId: id, afterData: newAudio });
+    setActiveTool("select");
+    setSelectedId(id);
+    showSyncToast("Voice comment attached!", "success");
+  }, [pendingVoiceCoords, panX, panY, currentUser.name, elements.length, saveElementLocallyAndSync, pushToUndo, showSyncToast]);
+
+  const handleSaveStamp = React.useCallback((stampType: any, label?: string, signatureUrl?: string) => {
+    const coords = pendingStampCoords || { x: -panX + 200, y: -panY + 200 };
+    const id = "stamp-" + Date.now() + Math.floor(Math.random() * 100);
+    const newStamp: BoardElement = {
+      id,
+      type: "stamp",
+      x: coords.x - 60,
+      y: coords.y - 30,
+      width: 140,
+      height: 60,
+      stampType,
+      label,
+      signatureDataUrl: signatureUrl,
+      zIndex: elements.length + 1,
+      updatedAt: Date.now(),
+    } as any;
+
+    saveElementLocallyAndSync(id, newStamp);
+    pushToUndo({ type: "add", elementId: id, afterData: newStamp });
+    setActiveTool("select");
+    setSelectedId(id);
+    showSyncToast("Stamp placed!", "success");
+  }, [pendingStampCoords, panX, panY, elements.length, saveElementLocallyAndSync, pushToUndo, showSyncToast]);
+
 
   // Synchronize unsaved changes on tab close or navigation away, and handle instant online/offline syncing
   useEffect(() => {
@@ -2200,6 +2337,46 @@ export default function WhiteboardCanvas({
       };
       saveElementLocallyAndSync(id, newText);
       pushToUndo({ type: "add", elementId: id, afterData: newText });
+      setActiveTool("select");
+      setSelectedId(id);
+      return;
+    }
+
+    if (activeTool === "audio") {
+      setPendingVoiceCoords(coords);
+      setIsVoiceModalOpen(true);
+      return;
+    }
+
+    if (activeTool === "stamp") {
+      setPendingStampCoords(coords);
+      setIsStampModalOpen(true);
+      return;
+    }
+
+    if (activeTool === "math") {
+      const id = "math-" + Date.now() + Math.floor(Math.random() * 100);
+      const newMathBox: TextElement = {
+        id,
+        type: "text",
+        x: coords.x - 120,
+        y: coords.y - 30,
+        width: 240,
+        height: 60,
+        text: "f(x) = x² + 2x + 1",
+        color: "#1e1b4b",
+        fontSize: 20,
+        fontFamily: "mono",
+        fontWeight: "bold",
+        textAlign: "center",
+        backgroundColor: "#e0e7ff",
+        borderStyle: "solid",
+        borderColor: "#6366f1",
+        zIndex: elements.length + 1,
+        reactions: {},
+      };
+      saveElementLocallyAndSync(id, newMathBox);
+      pushToUndo({ type: "add", elementId: id, afterData: newMathBox });
       setActiveTool("select");
       setSelectedId(id);
       return;
@@ -4983,6 +5160,32 @@ export default function WhiteboardCanvas({
         onClose={() => setIsClearModalOpen(false)}
         onConfirm={handleClearBoard}
         elementCount={elements.length}
+      />
+
+      {/* Kami Page Navigation Bar for PDF boards */}
+      {isPdfBoard && pdfPages.length > 0 && (
+        <PdfPageNavigation
+          pdfPages={pdfPages}
+          currentPageIndex={activePdfPageIndex}
+          onJumpToPage={handleJumpToPdfPage}
+          onInsertBlankPage={handleInsertBlankPdfPage}
+          onExportPdf={handleDownloadPdfWithDrawings}
+          isExporting={isGeneratingPdf}
+        />
+      )}
+
+      {/* Voice Note Recording Modal */}
+      <VoiceRecordModal
+        isOpen={isVoiceModalOpen}
+        onClose={() => setIsVoiceModalOpen(false)}
+        onSaveAudio={handleSaveVoiceNote}
+      />
+
+      {/* Stamp & Signature Picker Modal */}
+      <StampPickerModal
+        isOpen={isStampModalOpen}
+        onClose={() => setIsStampModalOpen(false)}
+        onSelectStamp={handleSaveStamp}
       />
     </div>
   );
