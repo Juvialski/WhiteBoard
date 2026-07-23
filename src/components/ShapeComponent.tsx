@@ -1,23 +1,44 @@
 import React, { useState, useRef, useEffect } from "react";
 import { ShapeElement, UserProfile, ShapeType } from "../types";
-import { Smile, Trash2, TrendingUp, Plus, X, Layers, Lock, Unlock } from "lucide-react";
+import {
+  Smile,
+  Trash2,
+  TrendingUp,
+  Plus,
+  X,
+  Layers,
+  Lock,
+  Unlock,
+  Sliders,
+  Play,
+  Pause,
+  Table,
+  Compass,
+  Activity,
+  Eye,
+  RefreshCw,
+  Sparkles,
+  SlidersHorizontal,
+  HelpCircle,
+  Grid,
+  Zap,
+} from "lucide-react";
 
 /**
  * Safely parses and evaluates algebraic mathematical functions like f(x) = y
- * with restricted safe character sets.
+ * with variable substitution, trig, and safe evaluation.
  */
-function evaluateMathExpression(expr: string, xVal: number): number | null {
+function evaluateMathExpression(
+  expr: string,
+  xVal: number,
+  vars: Record<string, { val: number }> = {}
+): number | null {
   try {
     let clean = expr.trim().toLowerCase();
-    if (clean.startsWith("y=")) {
-      clean = clean.substring(2);
-    } else if (clean.startsWith("y =")) {
-      clean = clean.substring(3);
-    } else if (clean.startsWith("f(x)=")) {
-      clean = clean.substring(5);
-    } else if (clean.startsWith("f(x) =")) {
-      clean = clean.substring(6);
-    }
+    if (clean.startsWith("y=")) clean = clean.substring(2);
+    else if (clean.startsWith("y =")) clean = clean.substring(3);
+    else if (clean.startsWith("f(x)=")) clean = clean.substring(5);
+    else if (clean.startsWith("f(x) =")) clean = clean.substring(6);
 
     clean = clean.trim();
     if (!clean) return null;
@@ -26,27 +47,49 @@ function evaluateMathExpression(expr: string, xVal: number): number | null {
       return null; // Handled separately as a vertical line
     }
 
+    // Substitute dynamic variable values (a, b, c, m, k, etc.)
+    if (vars) {
+      Object.keys(vars).forEach((vName) => {
+        const valObj = vars[vName];
+        if (valObj && typeof valObj.val === "number") {
+          const regex = new RegExp(`\\b(${vName})\\b`, "g");
+          clean = clean.replace(regex, `(${valObj.val})`);
+        }
+      });
+    }
+
     // Replace algebraic 'x' with actual numeric value inside parenthesis
     let formula = clean.replace(/\b(x)\b/g, `(${xVal})`);
 
     // Replace exponents ^ with JS operator **
     formula = formula.replace(/\^/g, "**");
 
-    // Add implicit multiplication, e.g. "2(" -> "2*("
-    formula = formula.replace(/(\d)\s*\(/g, "$1*(");
+    // Add implicit multiplication, e.g. "2(" -> "2*(", "2x" -> "2*x"
+    formula = formula.replace(/(\d|\))\s*\(|(\d)\s*([a-z])|([a-z])\s*(\d)/gi, (m, p1, p2, p3, p4, p5) => {
+      if (p1) return `${p1}*(`;
+      if (p2 && p3) return `${p2}*${p3}`;
+      if (p4 && p5) return `${p4}*${p5}`;
+      return m;
+    });
 
-    // Support key common math functions
+    // Support key common math functions & constants
+    formula = formula.replace(/\basin\b/g, "Math.asin");
+    formula = formula.replace(/\bacos\b/g, "Math.acos");
+    formula = formula.replace(/\batan\b/g, "Math.atan");
     formula = formula.replace(/\bsin\b/g, "Math.sin");
     formula = formula.replace(/\bcos\b/g, "Math.cos");
     formula = formula.replace(/\btan\b/g, "Math.tan");
     formula = formula.replace(/\babs\b/g, "Math.abs");
     formula = formula.replace(/\bsqrt\b/g, "Math.sqrt");
+    formula = formula.replace(/\blog\b/g, "Math.log10");
+    formula = formula.replace(/\bln\b/g, "Math.log");
     formula = formula.replace(/\bpi\b/g, "Math.PI");
+    formula = formula.replace(/\be\b/g, "Math.E");
 
-    // Strictly validate expression elements to prevent XSS or malicious code execution
+    // Strictly validate expression elements to prevent XSS or malicious execution
     const sanitizedFormula = formula.replace(
-      /[^0-9+\-*/().\s*Math\.sincostanbsqrPIe]/g,
-      "",
+      /[^0-9+\-*/().\s*Math\.sincostanabsasinacosatanloglnsqrtPIE]/g,
+      ""
     );
 
     const result = new Function(`return (${sanitizedFormula})`)();
@@ -57,6 +100,381 @@ function evaluateMathExpression(expr: string, xVal: number): number | null {
   } catch (e) {
     return null;
   }
+}
+
+/**
+ * Parses inequalities like y <= 2x + 1 or y > sin(x)
+ */
+function parseInequality(expr: string) {
+  let clean = expr.trim().toLowerCase();
+  if (clean.startsWith("f(x)")) clean = clean.substring(4).trim();
+
+  let op: "<=" | "<" | ">=" | ">" | null = null;
+  let subExpr = clean;
+
+  if (clean.includes("<=")) {
+    op = "<=";
+    subExpr = clean.split("<=")[1] || "";
+  } else if (clean.includes("\le")) {
+    op = "<=";
+    subExpr = clean.split("\le")[1] || "";
+  } else if (clean.includes("<")) {
+    op = "<";
+    subExpr = clean.split("<")[1] || "";
+  } else if (clean.includes(">=")) {
+    op = ">=";
+    subExpr = clean.split(">=")[1] || "";
+  } else if (clean.includes("\ge")) {
+    op = ">=";
+    subExpr = clean.split("\ge")[1] || "";
+  } else if (clean.includes(">")) {
+    op = ">";
+    subExpr = clean.split(">")[1] || "";
+  }
+
+  if (op) {
+    if (subExpr.startsWith("y")) subExpr = subExpr.substring(1).trim();
+    if (subExpr.startsWith("=")) subExpr = subExpr.substring(1).trim();
+    const isStrict = op === "<" || op === ">";
+    return { isInequality: true, op, isStrict, cleanExpr: subExpr.trim() };
+  }
+
+  return { isInequality: false, op: null, isStrict: false, cleanExpr: expr };
+}
+
+/**
+ * Evaluates implicit 2D equations in x and y (e.g. x^2 + y^2 = 25 or x^2/9 + y^2/4 = 1)
+ */
+function evaluateImplicit2D(
+  expr: string,
+  xVal: number,
+  yVal: number,
+  vars: Record<string, { val: number }> = {}
+): number | null {
+  try {
+    let clean = expr.trim().toLowerCase();
+    if (!clean.includes("=")) return null;
+
+    const parts = clean.split("=");
+    if (parts.length !== 2) return null;
+
+    let lhs = parts[0].trim();
+    let rhs = parts[1].trim();
+
+    // Substitute variables
+    if (vars) {
+      Object.keys(vars).forEach((vName) => {
+        const valObj = vars[vName];
+        if (valObj && typeof valObj.val === "number") {
+          const regex = new RegExp(`\\b(${vName})\\b`, "g");
+          lhs = lhs.replace(regex, `(${valObj.val})`);
+          rhs = rhs.replace(regex, `(${valObj.val})`);
+        }
+      });
+    }
+
+    lhs = lhs.replace(/\b(x)\b/g, `(${xVal})`).replace(/\b(y)\b/g, `(${yVal})`);
+    rhs = rhs.replace(/\b(x)\b/g, `(${xVal})`).replace(/\b(y)\b/g, `(${yVal})`);
+
+    lhs = lhs.replace(/\^/g, "**").replace(/\bpi\b/g, "Math.PI").replace(/\bsin\b/g, "Math.sin").replace(/\bcos\b/g, "Math.cos");
+    rhs = rhs.replace(/\^/g, "**").replace(/\bpi\b/g, "Math.PI").replace(/\bsin\b/g, "Math.sin").replace(/\bcos\b/g, "Math.cos");
+
+    const sanitizedLhs = lhs.replace(/[^0-9+\-*/().\s*Math\.sincostanabsasinacosatanloglnsqrtPIE]/g, "");
+    const sanitizedRhs = rhs.replace(/[^0-9+\-*/().\s*Math\.sincostanabsasinacosatanloglnsqrtPIE]/g, "");
+
+    const valLhs = new Function(`return (${sanitizedLhs})`)();
+    const valRhs = new Function(`return (${sanitizedRhs})`)();
+
+    if (typeof valLhs === "number" && typeof valRhs === "number" && !isNaN(valLhs) && !isNaN(valRhs)) {
+      return valLhs - valRhs;
+    }
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Contour Marching Squares generator for implicit relations (conics, circles, ellipses, hyperbolas)
+ */
+function generateImplicitContourPath(
+  expr: string,
+  minX: number,
+  maxX: number,
+  minY: number,
+  maxY: number,
+  cx: number,
+  cy: number,
+  scaleX: number,
+  scaleY: number,
+  vars: Record<string, { val: number }> = {}
+): string {
+  const stepsX = 60;
+  const stepsY = 60;
+  const dx = (maxX - minX) / stepsX;
+  const dy = (maxY - minY) / stepsY;
+
+  const grid: (number | null)[][] = [];
+  for (let i = 0; i <= stepsX; i++) {
+    grid[i] = [];
+    const x = minX + i * dx;
+    for (let j = 0; j <= stepsY; j++) {
+      const y = minY + j * dy;
+      grid[i][j] = evaluateImplicit2D(expr, x, y, vars);
+    }
+  }
+
+  let pathStr = "";
+  for (let i = 0; i < stepsX; i++) {
+    for (let j = 0; j < stepsY; j++) {
+      const v0 = grid[i][j];
+      const v1 = grid[i + 1][j];
+      const v2 = grid[i + 1][j + 1];
+      const v3 = grid[i][j + 1];
+
+      if (v0 === null || v1 === null || v2 === null || v3 === null) continue;
+
+      const x0 = minX + i * dx;
+      const x1 = x0 + dx;
+      const y0 = minY + j * dy;
+      const y1 = y0 + dy;
+
+      const edges: { x: number; y: number }[] = [];
+
+      if ((v0 >= 0 && v1 < 0) || (v0 < 0 && v1 >= 0)) {
+        const t = Math.abs(v0) / (Math.abs(v0) + Math.abs(v1) || 1e-6);
+        edges.push({ x: x0 + t * dx, y: y0 });
+      }
+      if ((v1 >= 0 && v2 < 0) || (v1 < 0 && v2 >= 0)) {
+        const t = Math.abs(v1) / (Math.abs(v1) + Math.abs(v2) || 1e-6);
+        edges.push({ x: x1, y: y0 + t * dy });
+      }
+      if ((v2 >= 0 && v3 < 0) || (v2 < 0 && v3 >= 0)) {
+        const t = Math.abs(v2) / (Math.abs(v2) + Math.abs(v3) || 1e-6);
+        edges.push({ x: x1 - t * dx, y: y1 });
+      }
+      if ((v3 >= 0 && v0 < 0) || (v3 < 0 && v0 >= 0)) {
+        const t = Math.abs(v3) / (Math.abs(v3) + Math.abs(v0) || 1e-6);
+        edges.push({ x: x0, y: y1 - t * dy });
+      }
+
+      if (edges.length >= 2) {
+        const px1 = cx + edges[0].x * scaleX;
+        const py1 = cy - edges[0].y * scaleY;
+        const px2 = cx + edges[1].x * scaleX;
+        const py2 = cy - edges[1].y * scaleY;
+        pathStr += `M ${px1} ${py1} L ${px2} ${py2} `;
+      }
+    }
+  }
+
+  return pathStr;
+}
+
+/**
+ * Calculates critical points: y-intercepts, roots (x-intercepts), extrema (peaks/troughs), intersections
+ */
+interface CriticalPointItem {
+  x: number;
+  y: number;
+  type: "root" | "y-int" | "peak" | "trough" | "intersection";
+  label: string;
+  color: string;
+}
+
+function calculateCriticalPoints(
+  equations: { expr: string; color: string; label: string }[],
+  minX: number,
+  maxX: number,
+  vars: Record<string, { val: number }> = {}
+): CriticalPointItem[] {
+  const points: CriticalPointItem[] = [];
+
+  equations.forEach((eq) => {
+    if (!eq.expr) return;
+    const ineq = parseInequality(eq.expr);
+    if (ineq.cleanExpr.includes("=") && ineq.cleanExpr.includes("x") && ineq.cleanExpr.includes("y")) {
+      return; // Skip implicit conics for root calculations
+    }
+
+    const exprToEval = ineq.cleanExpr;
+
+    // y-intercept at x = 0
+    if (minX <= 0 && maxX >= 0) {
+      const y0 = evaluateMathExpression(exprToEval, 0, vars);
+      if (y0 !== null && isFinite(y0)) {
+        points.push({
+          x: 0,
+          y: y0,
+          type: "y-int",
+          label: `${eq.label} y-int`,
+          color: "#3b82f6",
+        });
+      }
+    }
+
+    // Roots & Extrema via sampling
+    const steps = 120;
+    const dx = (maxX - minX) / steps;
+    let prevY = evaluateMathExpression(exprToEval, minX, vars);
+
+    for (let i = 1; i <= steps; i++) {
+      const x1 = minX + (i - 1) * dx;
+      const x2 = minX + i * dx;
+      const y2 = evaluateMathExpression(exprToEval, x2, vars);
+
+      if (prevY === null || y2 === null) {
+        prevY = y2;
+        continue;
+      }
+
+      // Root (x-intercept) detection
+      if (prevY * y2 <= 0) {
+        let a = x1, b = x2, rootX = (x1 + x2) / 2;
+        for (let k = 0; k < 8; k++) {
+          const mid = (a + b) / 2;
+          const yMid = evaluateMathExpression(exprToEval, mid, vars);
+          if (yMid === null) break;
+          const yA = evaluateMathExpression(exprToEval, a, vars);
+          if (yA !== null && yA * yMid <= 0) b = mid;
+          else a = mid;
+          rootX = mid;
+        }
+        points.push({
+          x: rootX,
+          y: 0,
+          type: "root",
+          label: `${eq.label} Zero`,
+          color: "#10b981",
+        });
+      }
+
+      // Local Extrema (peaks & troughs)
+      if (i >= 2) {
+        const x0 = minX + (i - 2) * dx;
+        const y0 = evaluateMathExpression(exprToEval, x0, vars);
+        if (y0 !== null) {
+          const slope1 = (prevY - y0) / dx;
+          const slope2 = (y2 - prevY) / dx;
+
+          if (slope1 * slope2 < 0) {
+            const isPeak = slope1 > 0 && slope2 < 0;
+            points.push({
+              x: x1,
+              y: prevY,
+              type: isPeak ? "peak" : "trough",
+              label: `${eq.label} ${isPeak ? "Peak" : "Trough"}`,
+              color: isPeak ? "#f59e0b" : "#8b5cf6",
+            });
+          }
+        }
+      }
+
+      prevY = y2;
+    }
+  });
+
+  // Intersections between equation pairs
+  for (let i = 0; i < equations.length; i++) {
+    for (let j = i + 1; j < equations.length; j++) {
+      const eq1 = equations[i];
+      const eq2 = equations[j];
+      if (!eq1.expr || !eq2.expr) continue;
+
+      const steps = 80;
+      const dx = (maxX - minX) / steps;
+      let prevDiff: number | null = null;
+
+      for (let k = 0; k <= steps; k++) {
+        const x = minX + k * dx;
+        const yA = evaluateMathExpression(parseInequality(eq1.expr).cleanExpr, x, vars);
+        const yB = evaluateMathExpression(parseInequality(eq2.expr).cleanExpr, x, vars);
+
+        if (yA === null || yB === null) {
+          prevDiff = null;
+          continue;
+        }
+
+        const diff = yA - yB;
+        if (prevDiff !== null && prevDiff * diff <= 0) {
+          let a = x - dx, b = x, intX = x;
+          for (let step = 0; step < 8; step++) {
+            const mid = (a + b) / 2;
+            const fA = evaluateMathExpression(parseInequality(eq1.expr).cleanExpr, mid, vars);
+            const fB = evaluateMathExpression(parseInequality(eq2.expr).cleanExpr, mid, vars);
+            if (fA === null || fB === null) break;
+            const fDiff = fA - fB;
+            if (fDiff * prevDiff <= 0) b = mid;
+            else a = mid;
+            intX = mid;
+          }
+          const finalY = evaluateMathExpression(parseInequality(eq1.expr).cleanExpr, intX, vars);
+          if (finalY !== null) {
+            points.push({
+              x: intX,
+              y: finalY,
+              type: "intersection",
+              label: `${eq1.label} ∩ ${eq2.label}`,
+              color: "#ec4899",
+            });
+          }
+        }
+        prevDiff = diff;
+      }
+    }
+  }
+
+  return points;
+}
+
+/**
+ * Computes linear regression y ~ mx + b for data tables
+ */
+function calculateLinearRegression(points: { x: number; y: number }[]) {
+  if (points.length < 2) return null;
+  const n = points.length;
+  let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0, sumYY = 0;
+  for (const p of points) {
+    sumX += p.x;
+    sumY += p.y;
+    sumXY += p.x * p.y;
+    sumXX += p.x * p.x;
+    sumYY += p.y * p.y;
+  }
+
+  const denom = n * sumXX - sumX * sumX;
+  if (Math.abs(denom) < 1e-9) return null;
+
+  const slope = (n * sumXY - sumX * sumY) / denom;
+  const intercept = (sumY - slope * sumX) / n;
+
+  const yMean = sumY / n;
+  let ssTot = 0, ssRes = 0;
+  for (const p of points) {
+    const predY = slope * p.x + intercept;
+    ssTot += (p.y - yMean) * (p.y - yMean);
+    ssRes += (p.y - predY) * (p.y - predY);
+  }
+
+  const rSquared = ssTot > 0 ? Math.max(0, 1 - ssRes / ssTot) : 1;
+
+  return { slope, intercept, rSquared };
+}
+
+function formatPiFraction(val: number): string {
+  const norm = val / Math.PI;
+  if (Math.abs(norm) < 0.01) return "0";
+  if (Math.abs(norm - 1) < 0.01) return "π";
+  if (Math.abs(norm + 1) < 0.01) return "-π";
+  if (Math.abs(norm - 2) < 0.01) return "2π";
+  if (Math.abs(norm + 2) < 0.01) return "-2π";
+  if (Math.abs(norm - 0.5) < 0.01) return "π/2";
+  if (Math.abs(norm + 0.5) < 0.01) return "-π/2";
+  if (Math.abs(norm - 1.5) < 0.01) return "3π/2";
+  if (Math.abs(norm + 1.5) < 0.01) return "-3π/2";
+  if (Math.abs(norm - 0.25) < 0.01) return "π/4";
+  if (Math.abs(norm + 0.25) < 0.01) return "-π/4";
+  return `${norm.toFixed(1)}π`;
 }
 
 function getVerticalLineConstant(expr: string): number | null {
@@ -105,7 +523,7 @@ export default function ShapeComponent({
   const [showColorPicker, setShowColorPicker] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Cartesian Advanced States
+  // Cartesian Advanced States & Desmos Features
   const [showMathPanel, setShowMathPanel] = useState(false);
   const [equationInput, setEquationInput] = useState(element.equation || "");
   const [equationsArray, setEquationsArray] = useState(element.equations || []);
@@ -116,6 +534,100 @@ export default function ShapeComponent({
     x: number;
     y: number;
   } | null>(null);
+
+  // Desmos Feature States
+  const [cartesianVariables, setCartesianVariables] = useState<
+    Record<string, { min: number; max: number; step: number; val: number; isAnimating?: boolean }>
+  >(
+    element.cartesianVariables || {
+      a: { min: -10, max: 10, step: 0.1, val: 2 },
+      b: { min: -5, max: 5, step: 0.1, val: 1 },
+      c: { min: -5, max: 5, step: 0.1, val: 0 },
+      m: { min: -10, max: 10, step: 0.1, val: 1 },
+      k: { min: -10, max: 10, step: 0.1, val: 0 },
+    }
+  );
+
+  const [tablePoints, setTablePoints] = useState<{ x: number; y: number }[]>(
+    element.cartesianTablePoints || [
+      { x: -2, y: 4 },
+      { x: -1, y: 1 },
+      { x: 0, y: 0 },
+      { x: 1, y: 1 },
+      { x: 2, y: 4 },
+    ]
+  );
+
+  const [showRegression, setShowRegression] = useState(
+    element.cartesianTableRegression ?? false
+  );
+
+  const [gridMode, setGridMode] = useState<"cartesian" | "polar" | "isometric">(
+    element.cartesianGridMode || "cartesian"
+  );
+
+  const [piTicks, setPiTicks] = useState(element.cartesianPiTicks ?? false);
+  const [showDerivative, setShowDerivative] = useState(
+    element.cartesianShowDerivative ?? false
+  );
+
+  const [desmosActiveTab, setDesmosActiveTab] = useState<"eq" | "sliders" | "table" | "grid" | "inspection">("eq");
+  const [showInspection, setShowInspection] = useState(
+    element.cartesianShowInspection ?? false
+  );
+
+  const [inspectionX, setInspectionX] = useState(
+    element.cartesianInspectionX ?? 1
+  );
+
+  const [activeTab, setActiveTab] = useState<
+    "equations" | "sliders" | "table" | "grid" | "inspection"
+  >("equations");
+
+  const [hoveredCritPoint, setHoveredCritPoint] = useState<CriticalPointItem | null>(null);
+
+  // Smooth variable playback animation loop
+  useEffect(() => {
+    let animId: number;
+    const hasAnimating = Object.values(cartesianVariables).some((v) => v.isAnimating);
+
+    if (hasAnimating) {
+      let lastTime = performance.now();
+      const animate = (time: number) => {
+        const delta = (time - lastTime) / 1000;
+        lastTime = time;
+
+        setCartesianVariables((prev) => {
+          let updated = false;
+          const next = { ...prev };
+
+          Object.keys(next).forEach((vName) => {
+            const v = { ...next[vName] };
+            if (v.isAnimating) {
+              updated = true;
+              let nextVal = v.val + (v.step || 0.1) * 20 * delta;
+              if (nextVal > v.max) nextVal = v.min;
+              v.val = parseFloat(nextVal.toFixed(2));
+              next[vName] = v;
+            }
+          });
+
+          if (updated) {
+            onUpdate({ cartesianVariables: next });
+          }
+          return next;
+        });
+
+        animId = requestAnimationFrame(animate);
+      };
+
+      animId = requestAnimationFrame(animate);
+    }
+
+    return () => {
+      if (animId) cancelAnimationFrame(animId);
+    };
+  }, [cartesianVariables]);
 
   // Interactive Graphing States
   const [graphInteractionMode, setGraphInteractionMode] = useState<
@@ -393,34 +905,114 @@ export default function ShapeComponent({
           Math.ceil((cy - 10) / scaleY)
         ) + 1;
 
-        // Draw grid lines and ticks
-        for (let i = minI; i <= maxI; i++) {
-          const xPos = cx + i * scaleX;
-          const yPos = cy - i * scaleY;
-
-          // Vertical grid line (except axes center)
-          if (i !== 0 && xPos > 10 && xPos < w - 10) {
+        // 1. Grid Modes: Cartesian, Polar, Isometric
+        if (gridMode === "polar") {
+          const maxRadius = Math.max(range, Math.ceil(Math.hypot(w, h) / scaleX));
+          for (let r = 1; r <= maxRadius; r++) {
+            gridLines.push(
+              <circle
+                key={`polar-r-${r}`}
+                cx={cx}
+                cy={cy}
+                r={r * scaleX}
+                fill="none"
+                stroke="rgba(148, 163, 184, 0.2)"
+                strokeWidth={0.8}
+                strokeDasharray="3 3"
+              />
+            );
+          }
+          for (let angle = 0; angle < 360; angle += 30) {
+            const rad = (angle * Math.PI) / 180;
+            const x2 = cx + Math.cos(rad) * scaleX * maxRadius;
+            const y2 = cy - Math.sin(rad) * scaleY * maxRadius;
             gridLines.push(
               <line
-                key={`adv-grid-v-${i}`}
-                x1={xPos}
-                y1={15}
-                x2={xPos}
-                y2={h - 15}
+                key={`polar-spoke-${angle}`}
+                x1={cx}
+                y1={cy}
+                x2={x2}
+                y2={y2}
+                stroke="rgba(148, 163, 184, 0.2)"
+                strokeWidth={0.8}
+              />
+            );
+          }
+        } else if (gridMode === "isometric") {
+          for (let i = -maxI * 2; i <= maxI * 2; i += 2) {
+            const xOffset = i * scaleX;
+            gridLines.push(
+              <line
+                key={`iso-60-${i}`}
+                x1={cx + xOffset - h}
+                y1={cy + h}
+                x2={cx + xOffset + h}
+                y2={cy - h}
                 stroke="rgba(148, 163, 184, 0.15)"
                 strokeWidth={0.8}
               />,
+              <line
+                key={`iso-120-${i}`}
+                x1={cx + xOffset - h}
+                y1={cy - h}
+                x2={cx + xOffset + h}
+                y2={cy + h}
+                stroke="rgba(148, 163, 184, 0.15)"
+                strokeWidth={0.8}
+              />
             );
-            xTicks.push(
-              <g key={`adv-xtick-${i}`}>
+          }
+        } else {
+          // Standard Rectangular Cartesian Grid
+          for (let i = minI; i <= maxI; i++) {
+            const xPos = cx + i * scaleX;
+            const yPos = cy - i * scaleY;
+
+            if (i !== 0 && xPos > 10 && xPos < w - 10) {
+              gridLines.push(
                 <line
+                  key={`adv-grid-v-${i}`}
                   x1={xPos}
-                  y1={cy - 4}
+                  y1={15}
                   x2={xPos}
-                  y2={cy + 4}
-                  stroke={stroke}
-                  strokeWidth={1.5}
+                  y2={h - 15}
+                  stroke="rgba(148, 163, 184, 0.15)"
+                  strokeWidth={0.8}
                 />
+              );
+            }
+            if (i !== 0 && yPos > 10 && yPos < h - 10) {
+              gridLines.push(
+                <line
+                  key={`adv-grid-h-${i}`}
+                  x1={15}
+                  y1={yPos}
+                  x2={w - 15}
+                  y2={yPos}
+                  stroke="rgba(148, 163, 184, 0.15)"
+                  strokeWidth={0.8}
+                />
+              );
+            }
+          }
+        }
+
+        // 2. Axis Ticks & Labels (Pi-ticks vs Standard numbers)
+        const tickStep = piTicks ? Math.PI / 2 : 1;
+        const tickMin = Math.floor(minI / tickStep);
+        const tickMax = Math.ceil(maxI / tickStep);
+
+        for (let t = tickMin; t <= tickMax; t++) {
+          const val = t * tickStep;
+          if (Math.abs(val) < 0.001) continue;
+
+          const xPos = cx + val * scaleX;
+          const yPos = cy - val * scaleY;
+
+          if (xPos > 15 && xPos < w - 15) {
+            xTicks.push(
+              <g key={`adv-xtick-${t}`}>
+                <line x1={xPos} y1={cy - 4} x2={xPos} y2={cy + 4} stroke={stroke} strokeWidth={1.5} />
                 <text
                   x={xPos}
                   y={cy + 12 + axisFontSize * 0.4}
@@ -431,35 +1023,16 @@ export default function ShapeComponent({
                   opacity={0.85}
                   className="select-none font-mono"
                 >
-                  {i}
+                  {piTicks ? formatPiFraction(val) : val.toString()}
                 </text>
-              </g>,
+              </g>
             );
           }
 
-          // Horizontal grid line (except axes center)
-          if (i !== 0 && yPos > 10 && yPos < h - 10) {
-            gridLines.push(
-              <line
-                key={`adv-grid-h-${i}`}
-                x1={15}
-                y1={yPos}
-                x2={w - 15}
-                y2={yPos}
-                stroke="rgba(148, 163, 184, 0.15)"
-                strokeWidth={0.8}
-              />,
-            );
+          if (yPos > 15 && yPos < h - 15) {
             yTicks.push(
-              <g key={`adv-ytick-${i}`}>
-                <line
-                  x1={cx - 4}
-                  y1={yPos}
-                  x2={cx + 4}
-                  y2={yPos}
-                  stroke={stroke}
-                  strokeWidth={1.5}
-                />
+              <g key={`adv-ytick-${t}`}>
+                <line x1={cx - 4} y1={yPos} x2={cx + 4} y2={yPos} stroke={stroke} strokeWidth={1.5} />
                 <text
                   x={cx - 10}
                   y={yPos + axisFontSize * 0.3}
@@ -470,14 +1043,14 @@ export default function ShapeComponent({
                   opacity={0.85}
                   className="select-none font-mono"
                 >
-                  {i}
+                  {piTicks ? formatPiFraction(val) : val.toString()}
                 </text>
-              </g>,
+              </g>
             );
           }
         }
 
-        // Multiple equations
+        // Multiple equations & Inequalities & Implicit Conics
         const equations = [
           {
             expr: element.equation || "",
@@ -496,119 +1069,242 @@ export default function ShapeComponent({
         ];
 
         const equationPaths: React.ReactNode[] = [];
-        const criticalPoints: {
-          x: number;
-          y: number;
-          color: string;
-          label: string;
-        }[] = [];
+        const inequalityFills: React.ReactNode[] = [];
+        const derivativePaths: React.ReactNode[] = [];
 
         equations.forEach(({ expr, color, label, min, max }, index) => {
-          const numMin =
-            min && !isNaN(parseFloat(min)) ? parseFloat(min) : undefined;
-          const numMax =
-            max && !isNaN(parseFloat(max)) ? parseFloat(max) : undefined;
           if (!expr) return;
 
-          let equationPath = "";
-          const verticalConstant = getVerticalLineConstant(expr);
-          if (verticalConstant !== null) {
-            const xPos = cx + verticalConstant * scaleX;
-            if (xPos >= 15 && xPos <= w - 15) {
-              equationPath = `M ${xPos} 15 L ${xPos} ${h - 15}`;
+          const parsed = parseInequality(expr);
+          const cleanExpr = parsed.cleanExpr;
+          const isImplicit = cleanExpr.includes("=") && cleanExpr.includes("x") && cleanExpr.includes("y");
+
+          // Implicit Equation / Conic Section
+          if (isImplicit) {
+            const minPlotX = (10 - cx) / scaleX;
+            const maxPlotX = (w - 10 - cx) / scaleX;
+            const minPlotY = (cy - h + 10) / scaleY;
+            const maxPlotY = (cy - 10) / scaleY;
+            const implicitPathD = generateImplicitContourPath(
+              cleanExpr,
+              minPlotX,
+              maxPlotX,
+              minPlotY,
+              maxPlotY,
+              cx,
+              cy,
+              scaleX,
+              scaleY,
+              cartesianVariables
+            );
+            if (implicitPathD) {
+              equationPaths.push(
+                <path
+                  key={`adv-implicit-${index}`}
+                  d={implicitPathD}
+                  fill="none"
+                  stroke={color}
+                  strokeWidth={3}
+                  className="pointer-events-none drop-shadow-sm transition-all"
+                />
+              );
             }
-          } else {
-            let first = true;
-            // Sample across width to build continuous curve
-            for (let px = 20; px <= w - 20; px += 2) {
-              const xVal = (px - cx) / scaleX;
-              if (numMin !== undefined && xVal < numMin) {
-                first = true;
-                continue;
-              }
-              if (numMax !== undefined && xVal > numMax) {
-                first = true;
-                continue;
-              }
-              const yVal = evaluateMathExpression(expr, xVal);
-              if (yVal !== null && !isNaN(yVal) && isFinite(yVal)) {
-                const py = cy - yVal * scaleY;
-                // Ensure path points remain reasonably bounded
-                if (py >= 0 && py <= h) {
-                  if (first) {
-                    equationPath += `M ${px} ${py}`;
-                    first = false;
-                  } else {
-                    equationPath += ` L ${px} ${py}`;
-                  }
-                } else {
-                  // Break path continuity if it goes out of range
-                  first = true;
-                }
-              }
+            return;
+          }
+
+          // Explicit Equation / Inequality
+          const numMin = min && !isNaN(parseFloat(min)) ? parseFloat(min) : undefined;
+          const numMax = max && !isNaN(parseFloat(max)) ? parseFloat(max) : undefined;
+
+          let curvePath = "";
+          let fillPoints: { px: number; py: number }[] = [];
+          let first = true;
+
+          for (let px = 20; px <= w - 20; px += 2) {
+            const xVal = (px - cx) / scaleX;
+            if (numMin !== undefined && xVal < numMin) {
+              first = true;
+              continue;
+            }
+            if (numMax !== undefined && xVal > numMax) {
+              first = true;
+              continue;
             }
 
-            // Calculate y-intercept critical point at x=0
-            const yAt0 = evaluateMathExpression(expr, 0);
-            if (
-              yAt0 !== null &&
-              !isNaN(yAt0) &&
-              isFinite(yAt0)
-            ) {
-              const ptYPos = cy - yAt0 * scaleY;
-              const ptXPos = cx;
-              if (ptYPos >= 0 && ptYPos <= h && ptXPos >= 0 && ptXPos <= w) {
-                criticalPoints.push({
-                  x: 0,
-                  y: yAt0,
-                  color,
-                  label: `${label} y-int`,
-                });
+            const yVal = evaluateMathExpression(cleanExpr, xVal, cartesianVariables);
+            if (yVal !== null && !isNaN(yVal) && isFinite(yVal)) {
+              const py = cy - yVal * scaleY;
+              if (py >= -h && py <= 2 * h) {
+                if (first) {
+                  curvePath += `M ${px} ${py}`;
+                  first = false;
+                } else {
+                  curvePath += ` L ${px} ${py}`;
+                }
+                fillPoints.push({ px, py });
+              } else {
+                first = true;
               }
             }
           }
 
-          if (equationPath) {
+          if (curvePath) {
+            // Shaded Inequality Fill Region
+            if (parsed.isInequality && fillPoints.length > 1) {
+              const boundaryY = parsed.op === "<" || parsed.op === "<=" ? h - 15 : 15;
+              const firstPt = fillPoints[0];
+              const lastPt = fillPoints[fillPoints.length - 1];
+              const fillD = `${curvePath} L ${lastPt.px} ${boundaryY} L ${firstPt.px} ${boundaryY} Z`;
+
+              inequalityFills.push(
+                <path
+                  key={`adv-ineq-${index}`}
+                  d={fillD}
+                  fill={color}
+                  opacity={0.2}
+                  className="pointer-events-none"
+                />
+              );
+            }
+
             equationPaths.push(
               <g key={`adv-eq-${index}`}>
                 <path
-                  d={equationPath}
+                  d={curvePath}
                   fill="none"
                   stroke="transparent"
                   strokeWidth={20}
-                  style={{
-                    pointerEvents: "stroke",
-                    cursor: "default",
-                  }}
-                  onPointerDown={(e) => {
-                    if (activeTool === "eraser" || (activeTool === "select" && !isSelected)) return;
-                  }}
+                  style={{ pointerEvents: "stroke", cursor: "default" }}
                 />
                 <path
-                  d={equationPath}
+                  d={curvePath}
                   fill="none"
                   stroke={color}
                   strokeWidth={3}
+                  strokeDasharray={parsed.isStrict ? "6 4" : undefined}
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   className="pointer-events-none drop-shadow-sm transition-all"
                 />
-              </g>,
+              </g>
             );
+          }
+
+          // Live Tangent / Derivative Curve f'(x)
+          if (showDerivative && !parsed.isInequality) {
+            let derivPath = "";
+            let dFirst = true;
+            for (let px = 20; px <= w - 20; px += 3) {
+              const xVal = (px - cx) / scaleX;
+              const yPlus = evaluateMathExpression(cleanExpr, xVal + 0.005, cartesianVariables);
+              const yMinus = evaluateMathExpression(cleanExpr, xVal - 0.005, cartesianVariables);
+              if (yPlus !== null && yMinus !== null) {
+                const dy = (yPlus - yMinus) / 0.01;
+                if (!isNaN(dy) && isFinite(dy)) {
+                  const py = cy - dy * scaleY;
+                  if (py >= 0 && py <= h) {
+                    if (dFirst) {
+                      derivPath += `M ${px} ${py}`;
+                      dFirst = false;
+                    } else {
+                      derivPath += ` L ${px} ${py}`;
+                    }
+                  } else {
+                    dFirst = true;
+                  }
+                }
+              }
+            }
+            if (derivPath) {
+              derivativePaths.push(
+                <path
+                  key={`adv-deriv-${index}`}
+                  d={derivPath}
+                  fill="none"
+                  stroke="#f59e0b"
+                  strokeWidth={2}
+                  strokeDasharray="4 4"
+                  className="pointer-events-none opacity-80"
+                />
+              );
+            }
           }
         });
 
-        // Parse plotted points
-        const plottedPointsList: { x: number; y: number }[] = [];
-        if (element.plottedPoints) {
-          const regex = /\((-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)\)/g;
-          let match;
-          while ((match = regex.exec(element.plottedPoints)) !== null) {
-            const px = parseFloat(match[1]);
-            const py = parseFloat(match[2]);
-            if (!isNaN(px) && !isNaN(py)) {
-              plottedPointsList.push({ x: px, y: py });
-            }
+        // 3. Critical Points Snapping (Roots, Y-Intercepts, Extrema, Intersections)
+        const criticalPointsList = calculateCriticalPoints(equations, minI, maxI, cartesianVariables);
+
+        // 4. Data Table Points & Auto-Fit Linear Regression
+        let regressionLineNode: React.ReactNode = null;
+        let regressionInfo: { slope: number; intercept: number; rSquared: number } | null = null;
+
+        if (showRegression && tablePoints.length >= 2) {
+          regressionInfo = calculateLinearRegression(tablePoints);
+          if (regressionInfo) {
+            const { slope, intercept } = regressionInfo;
+            const x1 = minI;
+            const y1 = slope * x1 + intercept;
+            const x2 = maxI;
+            const y2 = slope * x2 + intercept;
+
+            regressionLineNode = (
+              <line
+                x1={cx + x1 * scaleX}
+                y1={cy - y1 * scaleY}
+                x2={cx + x2 * scaleX}
+                y2={cy - y2 * scaleY}
+                stroke="#10b981"
+                strokeWidth={2}
+                strokeDasharray="6 3"
+                className="pointer-events-none drop-shadow-xs"
+              />
+            );
+          }
+        }
+
+        // 5. Live Tangent Line & Slope Inspection Probe
+        let inspectionLineNode: React.ReactNode = null;
+        let inspectionPointNode: React.ReactNode = null;
+
+        if (showInspection && equations[0]?.expr) {
+          const parsed0 = parseInequality(equations[0].expr);
+          const yProbe = evaluateMathExpression(parsed0.cleanExpr, inspectionX, cartesianVariables);
+          const yPlus = evaluateMathExpression(parsed0.cleanExpr, inspectionX + 0.005, cartesianVariables);
+          const yMinus = evaluateMathExpression(parsed0.cleanExpr, inspectionX - 0.005, cartesianVariables);
+
+          if (yProbe !== null && yPlus !== null && yMinus !== null) {
+            const slopeM = (yPlus - yMinus) / 0.01;
+            const cIntercept = yProbe - slopeM * inspectionX;
+
+            const tanX1 = inspectionX - 3;
+            const tanY1 = slopeM * tanX1 + cIntercept;
+            const tanX2 = inspectionX + 3;
+            const tanY2 = slopeM * tanX2 + cIntercept;
+
+            const px = cx + inspectionX * scaleX;
+            const py = cy - yProbe * scaleY;
+
+            inspectionLineNode = (
+              <line
+                x1={cx + tanX1 * scaleX}
+                y1={cy - tanY1 * scaleY}
+                x2={cx + tanX2 * scaleX}
+                y2={cy - tanY2 * scaleY}
+                stroke="#f59e0b"
+                strokeWidth={2.5}
+                className="pointer-events-none drop-shadow-sm"
+              />
+            );
+
+            inspectionPointNode = (
+              <g className="pointer-events-none">
+                <circle cx={px} cy={py} r={6} fill="#f59e0b" stroke="#ffffff" strokeWidth={2} />
+                <rect x={px - 45} y={py - 28} width="90" height="18" rx="4" fill="rgba(15, 23, 42, 0.9)" />
+                <text x={px} y={py - 16} fontSize="8" fontWeight="bold" fill="#fde047" textAnchor="middle" className="font-mono">
+                  {`x=${inspectionX.toFixed(1)}, m=${slopeM.toFixed(2)}`}
+                </text>
+              </g>
+            );
           }
         }
 
@@ -688,7 +1384,6 @@ export default function ShapeComponent({
                 const ptsStr = tempPointsList
                   .map((p) => `(${p.x.toFixed(2)},${p.y.toFixed(2)})`)
                   .join(", ");
-                
                 onUpdate({ plottedPoints: ptsStr });
                 setDraggingPointIdx(null);
               }
@@ -707,7 +1402,6 @@ export default function ShapeComponent({
                 const ptsStr = tempPointsList
                   .map((p) => `(${p.x.toFixed(2)},${p.y.toFixed(2)})`)
                   .join(", ");
-                
                 onUpdate({ plottedPoints: ptsStr });
                 setDraggingPointIdx(null);
               }
@@ -768,6 +1462,9 @@ export default function ShapeComponent({
 
             {/* Grid lines */}
             {gridLines}
+
+            {/* Inequality Region Shading */}
+            {inequalityFills}
 
             {/* X Axis */}
             <line
@@ -831,50 +1528,93 @@ export default function ShapeComponent({
             {xTicks}
             {yTicks}
 
-            {/* Equation Curves */}
+            {/* Derivative Curves */}
+            {derivativePaths}
+
+            {/* Tangent Line Probe */}
+            {inspectionLineNode}
+
+            {/* Equation Curves & Implicit Conics */}
             {equationPaths}
 
-            {/* Critical Points (e.g. Y-Intercepts) */}
-            {criticalPoints.map((pt, idx) => {
+            {/* Tangent Point Probe */}
+            {inspectionPointNode}
+
+            {/* Data Table Points */}
+            {tablePoints.map((pt, idx) => {
+              const px = cx + pt.x * scaleX;
+              const py = cy - pt.y * scaleY;
+              if (px >= 10 && px <= w - 10 && py >= 10 && py <= h - 10) {
+                return (
+                  <g key={`tbl-pt-${idx}`}>
+                    <circle cx={px} cy={py} r={5} fill="#0284c7" stroke="#ffffff" strokeWidth={1.5} />
+                  </g>
+                );
+              }
+              return null;
+            })}
+
+            {/* Auto-Fit Linear Regression Line */}
+            {regressionLineNode}
+
+            {/* Critical Points Snapping Highlights (Roots, Extrema, Intersections) */}
+            {criticalPointsList.map((pt, idx) => {
               const xPos = cx + pt.x * scaleX;
               const yPos = cy - pt.y * scaleY;
+              if (xPos < 10 || xPos > w - 10 || yPos < 10 || yPos > h - 10) return null;
+
               return (
-                <g key={`adv-crit-${idx}`} className="group/crit">
+                <g
+                  key={`adv-crit-${idx}`}
+                  className="group/crit cursor-pointer"
+                  onMouseEnter={() => setHoveredCritPoint(pt)}
+                  onMouseLeave={() => setHoveredCritPoint(null)}
+                >
                   <circle
                     cx={xPos}
                     cy={yPos}
-                    r={4}
+                    r={6}
                     fill={pt.color}
                     stroke="#ffffff"
-                    strokeWidth={1}
+                    strokeWidth={2}
+                    className="transition-transform hover:scale-125"
                   />
-                  {/* Subtle popover details on hover */}
+                  <circle
+                    cx={xPos}
+                    cy={yPos}
+                    r={10}
+                    fill="none"
+                    stroke={pt.color}
+                    strokeWidth={1}
+                    className="animate-ping opacity-40"
+                  />
+                  {/* Popover Tooltip on Hover */}
                   <g className="opacity-0 group-hover/crit:opacity-100 transition-opacity pointer-events-none">
                     <rect
-                      x={xPos - 30}
-                      y={yPos - 22}
-                      width="60"
-                      height="14"
-                      rx="3"
-                      fill="rgba(15, 23, 42, 0.9)"
+                      x={xPos - 45}
+                      y={yPos - 28}
+                      width="90"
+                      height="20"
+                      rx="4"
+                      fill="rgba(15, 23, 42, 0.95)"
                     />
                     <text
                       x={xPos}
-                      y={yPos - 12}
-                      fontSize="7"
+                      y={yPos - 15}
+                      fontSize="8"
                       fontWeight="bold"
                       fill="#ffffff"
                       textAnchor="middle"
                       className="font-mono"
                     >
-                      (0, {pt.y.toFixed(1)})
+                      {`${pt.label}: (${pt.x.toFixed(2)}, ${pt.y.toFixed(2)})`}
                     </text>
                   </g>
                 </g>
               );
             })}
 
-            {/* Plotted Lines */}
+            {/* Manual Plotted Lines */}
             {tempLinesList.map((line, idx) => {
               const x1Pos = cx + line.x1 * scaleX;
               const y1Pos = cy - line.y1 * scaleY;
@@ -958,12 +1698,11 @@ export default function ShapeComponent({
                 />
               )}
 
-            {/* Plotted Points */}
+            {/* Manual Plotted Points */}
             {tempPointsList.map((pt, idx) => {
               const xPos = cx + pt.x * scaleX;
               const yPos = cy - pt.y * scaleY;
 
-              // Only draw if point lies within visual bounds
               if (
                 xPos >= 10 &&
                 xPos <= w - 10 &&
@@ -1023,10 +1762,9 @@ export default function ShapeComponent({
               return null;
             })}
 
-            {/* Hovered Dynamic Coordinate HUD and Guides */}
+            {/* Hovered Dynamic Coordinate HUD */}
             {hoveredCoord && (
               <g>
-                {/* Horizontal guide dashed line from cursor to y-axis */}
                 <line
                   x1={cx + hoveredCoord.x * scaleX}
                   y1={cy - hoveredCoord.y * scaleY}
@@ -1037,7 +1775,6 @@ export default function ShapeComponent({
                   strokeDasharray="3,3"
                   opacity={0.8}
                 />
-                {/* Vertical guide dashed line from cursor to x-axis */}
                 <line
                   x1={cx + hoveredCoord.x * scaleX}
                   y1={cy - hoveredCoord.y * scaleY}
@@ -1048,7 +1785,6 @@ export default function ShapeComponent({
                   strokeDasharray="3,3"
                   opacity={0.8}
                 />
-                {/* Hover tracking circle */}
                 <circle
                   cx={cx + hoveredCoord.x * scaleX}
                   cy={cy - hoveredCoord.y * scaleY}
@@ -1057,7 +1793,6 @@ export default function ShapeComponent({
                   stroke="#ffffff"
                   strokeWidth={1.5}
                 />
-                {/* HUD Panel on the bottom right of the plane */}
                 <g transform={`translate(${w - 95}, ${h - 32})`}>
                   <rect
                     width="80"
@@ -1887,119 +2622,105 @@ export default function ShapeComponent({
       {isSelected && canWrite && element.shapeType === "advanced-cartesian" && (
         <div
           onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}
-          className="absolute left-full top-0 ml-4 bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-2xl shadow-xl p-4 w-[280px] z-30 pointer-events-auto animate-scale-up flex flex-col space-y-4 text-left select-text"
+          className="absolute left-full top-0 ml-4 bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-2xl shadow-xl p-3.5 w-[320px] z-30 pointer-events-auto animate-scale-up flex flex-col space-y-3 text-left select-text max-h-[85vh] overflow-y-auto"
         >
-          <div className="flex items-center space-x-2 pb-2 border-b border-slate-100">
-            <div className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg">
-              <TrendingUp className="w-4 h-4" />
+          {/* Header & Feature Tabs */}
+          <div className="flex flex-col space-y-2 pb-2 border-b border-slate-100">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <div className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg">
+                  <TrendingUp className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-xs text-slate-800">
+                    Advanced Plotter
+                  </h4>
+                  <p className="text-[10px] text-slate-400">
+                    Desmos Math Suite
+                  </p>
+                </div>
+              </div>
+              {/* Reset Pan / View */}
+              <button
+                onClick={() => {
+                  setGraphPan({ x: 0, y: 0 });
+                  onUpdate({ graphPanX: 0, graphPanY: 0 });
+                }}
+                className="px-2 py-1 text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-600 rounded transition-colors"
+                title="Center Graph View"
+              >
+                Recenter
+              </button>
             </div>
-            <div>
-              <h4 className="font-semibold text-xs text-slate-800">
-                Advanced Plotter
-              </h4>
-              <p className="text-[10px] text-slate-400">
-                Mini-Desmos Equation Plotter
-              </p>
+
+            {/* Tab Selector */}
+            <div className="grid grid-cols-5 gap-1 bg-slate-100/80 p-1 rounded-lg text-[10px] font-bold text-slate-600">
+              <button
+                onClick={() => setDesmosActiveTab("eq")}
+                className={`py-1 rounded text-center transition-colors ${
+                  desmosActiveTab === "eq" ? "bg-white text-indigo-600 shadow-xs" : "hover:text-slate-900"
+                }`}
+              >
+                Equations
+              </button>
+              <button
+                onClick={() => setDesmosActiveTab("sliders")}
+                className={`py-1 rounded text-center transition-colors ${
+                  desmosActiveTab === "sliders" ? "bg-white text-indigo-600 shadow-xs" : "hover:text-slate-900"
+                }`}
+              >
+                Sliders
+              </button>
+              <button
+                onClick={() => setDesmosActiveTab("table")}
+                className={`py-1 rounded text-center transition-colors ${
+                  desmosActiveTab === "table" ? "bg-white text-indigo-600 shadow-xs" : "hover:text-slate-900"
+                }`}
+              >
+                Table
+              </button>
+              <button
+                onClick={() => setDesmosActiveTab("grid")}
+                className={`py-1 rounded text-center transition-colors ${
+                  desmosActiveTab === "grid" ? "bg-white text-indigo-600 shadow-xs" : "hover:text-slate-900"
+                }`}
+              >
+                Grid
+              </button>
+              <button
+                onClick={() => setDesmosActiveTab("inspection")}
+                className={`py-1 rounded text-center transition-colors ${
+                  desmosActiveTab === "inspection" ? "bg-white text-indigo-600 shadow-xs" : "hover:text-slate-900"
+                }`}
+              >
+                Inspect
+              </button>
             </div>
           </div>
 
-          {/* Equation Input */}
-          <div className="flex flex-col space-y-1">
-            <label className="text-[10px] font-extrabold text-indigo-500 uppercase tracking-wider flex items-center justify-between">
-              <span>
-                Equation f(x){" "}
-                <span className="text-indigo-400 font-normal lowercase">
-                  (y1)
-                </span>
-              </span>
-            </label>
-            <div className="relative">
-              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-indigo-400 font-mono text-xs">
-                y =
-              </span>
-              <input
-                type="text"
-                value={equationInput}
-                onChange={(e) => {
-                  setEquationInput(e.target.value);
-                  onUpdate({ equation: e.target.value });
-                }}
-                placeholder="x^2 - 3"
-                className="w-full pl-7 pr-3 py-1.5 bg-slate-50 border border-indigo-200/50 rounded-lg text-xs font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:bg-white text-indigo-700"
-              />
-            </div>
-            <div className="flex space-x-2 mt-1">
-              <div className="flex-1 flex items-center space-x-1">
-                <span className="text-[10px] text-slate-400">Min x:</span>
-                <input
-                  type="text"
-                  value={element.equationMin || ""}
-                  onChange={(e) => onUpdate({ equationMin: e.target.value })}
-                  placeholder="-∞"
-                  className="w-full px-1.5 py-1 bg-slate-50 border border-slate-200 rounded text-[10px] font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                />
-              </div>
-              <div className="flex-1 flex items-center space-x-1">
-                <span className="text-[10px] text-slate-400">Max x:</span>
-                <input
-                  type="text"
-                  value={element.equationMax || ""}
-                  onChange={(e) => onUpdate({ equationMax: e.target.value })}
-                  placeholder="∞"
-                  className="w-full px-1.5 py-1 bg-slate-50 border border-slate-200 rounded text-[10px] font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                />
-              </div>
-            </div>
-
-            {/* Dynamic Equations Array */}
-            {equationsArray.map((eq, index) => (
-              <div key={eq.id || index} className="mt-2">
-                <label
-                  className="text-[10px] font-extrabold uppercase tracking-wider flex items-center justify-between mb-1"
-                  style={{ color: eq.color }}
-                >
+          {/* TAB 1: EQUATIONS & INEQUALITIES & DERIVATIVES */}
+          {desmosActiveTab === "eq" && (
+            <div className="flex flex-col space-y-3">
+              {/* Primary Equation */}
+              <div className="flex flex-col space-y-1">
+                <label className="text-[10px] font-extrabold text-indigo-500 uppercase tracking-wider flex items-center justify-between">
                   <span>
-                    Equation{" "}
-                    <span className="font-normal lowercase">
-                      (y{index + 2})
+                    Equation / Inequality{" "}
+                    <span className="text-indigo-400 font-normal lowercase">
+                      (y1)
                     </span>
                   </span>
-                  <button
-                    onClick={() => {
-                      const newEqs = equationsArray.filter(
-                        (_, i) => i !== index,
-                      );
-                      setEquationsArray(newEqs);
-                      onUpdate({ equations: newEqs });
-                    }}
-                    className="text-slate-400 hover:text-red-500"
-                  >
-                    <X size={12} />
-                  </button>
                 </label>
                 <div className="relative">
-                  <span
-                    className="absolute left-2.5 top-1/2 -translate-y-1/2 font-mono text-xs"
-                    style={{ color: eq.color }}
-                  >
-                    y =
-                  </span>
                   <input
                     type="text"
-                    value={eq.expr}
+                    value={equationInput}
                     onChange={(e) => {
-                      const newEqs = [...equationsArray];
-                      newEqs[index].expr = e.target.value;
-                      setEquationsArray(newEqs);
-                      onUpdate({ equations: newEqs });
+                      setEquationInput(e.target.value);
+                      onUpdate({ equation: e.target.value });
                     }}
-                    placeholder="x^2"
-                    className="w-full pl-7 pr-3 py-1.5 bg-slate-50 border rounded-lg text-xs font-mono focus:outline-none focus:ring-1 focus:bg-white"
-                    style={{
-                      color: eq.color,
-                      borderColor: `${eq.color}40`,
-                      outlineColor: eq.color,
-                    }}
+                    placeholder="y = a*x^2 + b*x + c, x^2 + y^2 = 16, or y > x^2 - 2"
+                    className="w-full px-2.5 py-1.5 bg-slate-50 border border-indigo-200/60 rounded-lg text-xs font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:bg-white text-indigo-700"
                   />
                 </div>
                 <div className="flex space-x-2 mt-1">
@@ -2007,13 +2728,8 @@ export default function ShapeComponent({
                     <span className="text-[10px] text-slate-400">Min x:</span>
                     <input
                       type="text"
-                      value={eq.min || ""}
-                      onChange={(e) => {
-                        const newEqs = [...equationsArray];
-                        newEqs[index].min = e.target.value;
-                        setEquationsArray(newEqs);
-                        onUpdate({ equations: newEqs });
-                      }}
+                      value={element.equationMin || ""}
+                      onChange={(e) => onUpdate({ equationMin: e.target.value })}
                       placeholder="-∞"
                       className="w-full px-1.5 py-1 bg-slate-50 border border-slate-200 rounded text-[10px] font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
                     />
@@ -2022,287 +2738,597 @@ export default function ShapeComponent({
                     <span className="text-[10px] text-slate-400">Max x:</span>
                     <input
                       type="text"
-                      value={eq.max || ""}
-                      onChange={(e) => {
-                        const newEqs = [...equationsArray];
-                        newEqs[index].max = e.target.value;
-                        setEquationsArray(newEqs);
-                        onUpdate({ equations: newEqs });
-                      }}
+                      value={element.equationMax || ""}
+                      onChange={(e) => onUpdate({ equationMax: e.target.value })}
                       placeholder="∞"
                       className="w-full px-1.5 py-1 bg-slate-50 border border-slate-200 rounded text-[10px] font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
                     />
                   </div>
                 </div>
+
+                {/* Additional Equations */}
+                {equationsArray.map((eq, index) => (
+                  <div key={eq.id || index} className="mt-2 pt-2 border-t border-slate-100">
+                    <label
+                      className="text-[10px] font-extrabold uppercase tracking-wider flex items-center justify-between mb-1"
+                      style={{ color: eq.color }}
+                    >
+                      <span>
+                        Equation{" "}
+                        <span className="font-normal lowercase">
+                          (y{index + 2})
+                        </span>
+                      </span>
+                      <button
+                        onClick={() => {
+                          const newEqs = equationsArray.filter((_, i) => i !== index);
+                          setEquationsArray(newEqs);
+                          onUpdate({ equations: newEqs });
+                        }}
+                        className="text-slate-400 hover:text-red-500"
+                      >
+                        <X size={12} />
+                      </button>
+                    </label>
+                    <input
+                      type="text"
+                      value={eq.expr}
+                      onChange={(e) => {
+                        const newEqs = [...equationsArray];
+                        newEqs[index].expr = e.target.value;
+                        setEquationsArray(newEqs);
+                        onUpdate({ equations: newEqs });
+                      }}
+                      placeholder="sin(a * x)"
+                      className="w-full px-2.5 py-1.5 bg-slate-50 border rounded-lg text-xs font-mono focus:outline-none focus:ring-1 focus:bg-white"
+                      style={{
+                        color: eq.color,
+                        borderColor: `${eq.color}50`,
+                      }}
+                    />
+                  </div>
+                ))}
+
+                <button
+                  onClick={() => {
+                    const EQUATION_COLORS = ["#ef4444", "#f59e0b", "#10b981", "#3b82f6", "#8b5cf6", "#ec4899"];
+                    const usedColors = new Set(equationsArray.map((eq) => eq.color).concat(["#6366f1"]));
+                    let nextColor = EQUATION_COLORS.find((c) => !usedColors.has(c)) || EQUATION_COLORS[equationsArray.length % EQUATION_COLORS.length];
+
+                    const newEqs = [...equationsArray, { id: Math.random().toString(), expr: "", color: nextColor }];
+                    setEquationsArray(newEqs);
+                    onUpdate({ equations: newEqs });
+                  }}
+                  className="mt-2 text-[10px] font-bold text-indigo-500 bg-indigo-50/60 hover:bg-indigo-100 py-1.5 px-2 rounded flex items-center justify-center w-full transition-colors"
+                >
+                  <Plus size={12} className="mr-1" /> Add Equation
+                </button>
               </div>
-            ))}
 
-            <button
-              onClick={() => {
-                const EQUATION_COLORS = [
-                  "#ef4444", // red
-                  "#f59e0b", // amber
-                  "#10b981", // emerald
-                  "#3b82f6", // blue
-                  "#8b5cf6", // violet
-                  "#ec4899", // pink
-                  "#14b8a6", // teal
-                  "#f97316", // orange
-                ];
-                const usedColors = new Set(
-                  equationsArray.map((eq) => eq.color).concat(["#6366f1"]),
-                );
-                let nextColor =
-                  EQUATION_COLORS.find((c) => !usedColors.has(c)) ||
-                  EQUATION_COLORS[
-                    equationsArray.length % EQUATION_COLORS.length
-                  ];
+              {/* Live Derivative Toggle */}
+              <div className="flex items-center justify-between p-2 bg-amber-50/60 border border-amber-200/60 rounded-xl">
+                <div className="flex flex-col">
+                  <span className="text-[11px] font-bold text-amber-900">
+                    Live Derivative f'(x)
+                  </span>
+                  <span className="text-[9px] text-amber-700">
+                    Plot dynamic tangent slope curve
+                  </span>
+                </div>
+                <button
+                  onClick={() => {
+                    const val = !showDerivative;
+                    setShowDerivative(val);
+                    onUpdate({ cartesianShowDerivative: val });
+                  }}
+                  className={`w-9 h-5 rounded-full transition-colors relative ${
+                    showDerivative ? "bg-amber-500" : "bg-slate-300"
+                  }`}
+                >
+                  <div
+                    className={`w-3.5 h-3.5 bg-white rounded-full absolute top-0.75 transition-transform ${
+                      showDerivative ? "left-4.5" : "left-0.75"
+                    }`}
+                  />
+                </button>
+              </div>
 
-                const newEqs = [
-                  ...equationsArray,
-                  { id: Math.random().toString(), expr: "", color: nextColor },
-                ];
-                setEquationsArray(newEqs);
-                onUpdate({ equations: newEqs });
-              }}
-              className="mt-2 text-[10px] font-bold text-indigo-500 bg-indigo-50/50 hover:bg-indigo-100 py-1.5 px-2 rounded flex items-center justify-center w-full transition-colors"
-            >
-              <Plus size={12} className="mr-1" /> Add Equation
-            </button>
+              {/* Presets */}
+              <div className="flex flex-col space-y-1">
+                <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">
+                  Presets
+                </label>
+                <div className="grid grid-cols-2 gap-1">
+                  <button
+                    onClick={() => {
+                      setEquationInput("a * x^2 + b * x + c");
+                      onUpdate({ equation: "a * x^2 + b * x + c" });
+                    }}
+                    className="bg-slate-100 hover:bg-indigo-100 hover:text-indigo-700 text-slate-700 text-[10px] py-1 px-1.5 rounded font-medium transition-colors text-left truncate"
+                  >
+                    Quadratic (a,b,c)
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEquationInput("x^2 + y^2 = 16");
+                      onUpdate({ equation: "x^2 + y^2 = 16" });
+                    }}
+                    className="bg-slate-100 hover:bg-indigo-100 hover:text-indigo-700 text-slate-700 text-[10px] py-1 px-1.5 rounded font-medium transition-colors text-left truncate"
+                  >
+                    Circle x²+y²=16
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEquationInput("y > x^2 - 2");
+                      onUpdate({ equation: "y > x^2 - 2" });
+                    }}
+                    className="bg-slate-100 hover:bg-indigo-100 hover:text-indigo-700 text-slate-700 text-[10px] py-1 px-1.5 rounded font-medium transition-colors text-left truncate"
+                  >
+                    Inequality Region
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEquationInput("sin(a * x)");
+                      onUpdate({ equation: "sin(a * x)" });
+                    }}
+                    className="bg-slate-100 hover:bg-indigo-100 hover:text-indigo-700 text-slate-700 text-[10px] py-1 px-1.5 rounded font-medium transition-colors text-left truncate"
+                  >
+                    Sine Wave sin(a*x)
+                  </button>
+                </div>
+              </div>
 
-            <span className="text-[9px] text-slate-400 leading-tight pt-1">
-              Try:{" "}
-              <code className="bg-slate-100 px-0.5 rounded font-mono">
-                2x - 1
-              </code>
-              ,{" "}
-              <code className="bg-slate-100 px-0.5 rounded font-mono">
-                x^2 - 3
-              </code>
-              ,{" "}
-              <code className="bg-slate-100 px-0.5 rounded font-mono">
-                sin(x)
-              </code>
-            </span>
-          </div>
-
-          {/* Quick Presets */}
-          <div className="flex flex-col space-y-1">
-            <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">
-              Quick Presets
-            </label>
-            <div className="flex space-x-1">
-              <button
-                onClick={() => {
-                  setEquationInput("x^2");
-                  onUpdate({ equation: "x^2" });
-                }}
-                className="flex-1 bg-slate-100 hover:bg-indigo-100 hover:text-indigo-700 text-slate-600 text-[10px] py-1 rounded font-medium transition-colors"
-              >
-                Parabola
-              </button>
-              <button
-                onClick={() => {
-                  setEquationInput("sin(x)");
-                  onUpdate({ equation: "sin(x)" });
-                }}
-                className="flex-1 bg-slate-100 hover:bg-indigo-100 hover:text-indigo-700 text-slate-600 text-[10px] py-1 rounded font-medium transition-colors"
-              >
-                Sine Wave
-              </button>
-              <button
-                onClick={() => {
-                  const pts = "(-3,3), (0,0), (3,3)";
-                  onUpdate({ plottedPoints: pts });
-                }}
-                className="flex-1 bg-slate-100 hover:bg-indigo-100 hover:text-indigo-700 text-slate-600 text-[10px] py-1 rounded font-medium transition-colors"
-              >
-                Points V
-              </button>
+              {/* Interactive Plotting Tools */}
+              <div className="flex flex-col space-y-1">
+                <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">
+                  Canvas Tools
+                </label>
+                <div className="grid grid-cols-3 gap-1">
+                  <button
+                    onClick={() =>
+                      setGraphInteractionMode(
+                        graphInteractionMode === "move" ? "none" : "move"
+                      )
+                    }
+                    className={`text-[10px] py-1 rounded font-medium transition-colors border ${
+                      graphInteractionMode === "move"
+                        ? "bg-blue-100 text-blue-700 border-blue-300 font-bold"
+                        : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                    }`}
+                  >
+                    Move
+                  </button>
+                  <button
+                    onClick={() =>
+                      setGraphInteractionMode(
+                        graphInteractionMode === "point" ? "none" : "point"
+                      )
+                    }
+                    className={`text-[10px] py-1 rounded font-medium transition-colors border ${
+                      graphInteractionMode === "point"
+                        ? "bg-indigo-100 text-indigo-700 border-indigo-300 font-bold"
+                        : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                    }`}
+                  >
+                    Point
+                  </button>
+                  <button
+                    onClick={() => {
+                      setGraphInteractionMode(
+                        graphInteractionMode === "line" ? "none" : "line"
+                      );
+                      setLineStartPoint(null);
+                    }}
+                    className={`text-[10px] py-1 rounded font-medium transition-colors border ${
+                      graphInteractionMode === "line"
+                        ? "bg-emerald-100 text-emerald-700 border-emerald-300 font-bold"
+                        : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                    }`}
+                  >
+                    Line
+                  </button>
+                </div>
+              </div>
             </div>
-          </div>
+          )}
 
-          {/* Interactive Graphing Tools */}
-          <div className="flex flex-col space-y-1">
-            <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">
-              Interactive Tools
-            </label>
-            <div className="grid grid-cols-2 gap-1">
-              <button
-                onClick={() =>
-                  setGraphInteractionMode(
-                    graphInteractionMode === "move" ? "none" : "move",
-                  )
-                }
-                className={`flex-1 text-[10px] py-1.5 rounded font-medium transition-colors border ${
-                  graphInteractionMode === "move"
-                    ? "bg-blue-100 text-blue-700 border-blue-300 shadow-sm"
-                    : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
-                }`}
-              >
-                Move
-              </button>
-              <button
-                onClick={() =>
-                  setGraphInteractionMode(
-                    graphInteractionMode === "point" ? "none" : "point",
-                  )
-                }
-                className={`flex-1 text-[10px] py-1.5 rounded font-medium transition-colors border ${
-                  graphInteractionMode === "point"
-                    ? "bg-indigo-100 text-indigo-700 border-indigo-300 shadow-sm"
-                    : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
-                }`}
-              >
-                Plot Point
-              </button>
-              <button
-                onClick={() => {
-                  setGraphInteractionMode(
-                    graphInteractionMode === "line" ? "none" : "line",
+          {/* TAB 2: INTERACTIVE VARIABLE SLIDERS & ANIMATIONS */}
+          {desmosActiveTab === "sliders" && (
+            <div className="flex flex-col space-y-3">
+              <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">
+                Dynamic Variable Sliders
+              </span>
+
+              {Object.entries(cartesianVariables).map(([varName, varObj]) => (
+                <div key={varName} className="p-2 bg-slate-50 border border-slate-200/80 rounded-xl flex flex-col space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-mono font-bold text-indigo-600">
+                      {varName} = {varObj.val.toFixed(2)}
+                    </span>
+                    <button
+                      onClick={() => {
+                        const updated = {
+                          ...cartesianVariables,
+                          [varName]: { ...varObj, isAnimating: !varObj.isAnimating },
+                        };
+                        setCartesianVariables(updated);
+                        onUpdate({ cartesianVariables: updated });
+                      }}
+                      className={`px-2 py-0.5 rounded text-[9px] font-bold transition-colors ${
+                        varObj.isAnimating
+                          ? "bg-emerald-500 text-white animate-pulse"
+                          : "bg-slate-200 text-slate-700 hover:bg-slate-300"
+                      }`}
+                    >
+                      {varObj.isAnimating ? "Pause" : "Play ▶"}
+                    </button>
+                  </div>
+
+                  {/* Slider Control */}
+                  <input
+                    type="range"
+                    min={varObj.min}
+                    max={varObj.max}
+                    step={varObj.step}
+                    value={varObj.val}
+                    onChange={(e) => {
+                      const updated = {
+                        ...cartesianVariables,
+                        [varName]: { ...varObj, val: parseFloat(e.target.value) },
+                      };
+                      setCartesianVariables(updated);
+                      onUpdate({ cartesianVariables: updated });
+                    }}
+                    className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                  />
+
+                  {/* Range Config */}
+                  <div className="flex space-x-2 text-[9px] text-slate-400 font-mono">
+                    <div className="flex items-center space-x-1">
+                      <span>min:</span>
+                      <input
+                        type="number"
+                        value={varObj.min}
+                        onChange={(e) => {
+                          const updated = {
+                            ...cartesianVariables,
+                            [varName]: { ...varObj, min: parseFloat(e.target.value) || -10 },
+                          };
+                          setCartesianVariables(updated);
+                          onUpdate({ cartesianVariables: updated });
+                        }}
+                        className="w-10 px-1 py-0.5 bg-white border border-slate-200 rounded"
+                      />
+                    </div>
+                    <div className="flex items-center space-x-1">
+                      <span>max:</span>
+                      <input
+                        type="number"
+                        value={varObj.max}
+                        onChange={(e) => {
+                          const updated = {
+                            ...cartesianVariables,
+                            [varName]: { ...varObj, max: parseFloat(e.target.value) || 10 },
+                          };
+                          setCartesianVariables(updated);
+                          onUpdate({ cartesianVariables: updated });
+                        }}
+                        className="w-10 px-1 py-0.5 bg-white border border-slate-200 rounded"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* TAB 3: DATA TABLES & LINEAR REGRESSION */}
+          {desmosActiveTab === "table" && (
+            <div className="flex flex-col space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">
+                  x/y Data Points Table
+                </span>
+                <button
+                  onClick={() => {
+                    const newPts = [...tablePoints, { x: 0, y: 0 }];
+                    setTablePoints(newPts);
+                    onUpdate({ cartesianTablePoints: newPts });
+                  }}
+                  className="px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded text-[10px] font-bold hover:bg-indigo-100"
+                >
+                  + Add Row
+                </button>
+              </div>
+
+              {/* Table Inputs */}
+              <div className="bg-slate-50 border border-slate-200/80 rounded-xl overflow-hidden text-xs">
+                <div className="grid grid-cols-3 bg-slate-100 font-bold px-2 py-1 text-slate-600 border-b border-slate-200">
+                  <span>x1</span>
+                  <span>y1</span>
+                  <span className="text-right">Action</span>
+                </div>
+                {tablePoints.map((pt, idx) => (
+                  <div key={idx} className="grid grid-cols-3 gap-1 px-2 py-1 items-center border-b border-slate-100 last:border-b-0">
+                    <input
+                      type="number"
+                      value={pt.x}
+                      onChange={(e) => {
+                        const newPts = [...tablePoints];
+                        newPts[idx].x = parseFloat(e.target.value) || 0;
+                        setTablePoints(newPts);
+                        onUpdate({ cartesianTablePoints: newPts });
+                      }}
+                      className="w-full px-1.5 py-0.5 bg-white border border-slate-200 rounded font-mono text-slate-800"
+                    />
+                    <input
+                      type="number"
+                      value={pt.y}
+                      onChange={(e) => {
+                        const newPts = [...tablePoints];
+                        newPts[idx].y = parseFloat(e.target.value) || 0;
+                        setTablePoints(newPts);
+                        onUpdate({ cartesianTablePoints: newPts });
+                      }}
+                      className="w-full px-1.5 py-0.5 bg-white border border-slate-200 rounded font-mono text-slate-800"
+                    />
+                    <div className="text-right">
+                      <button
+                        onClick={() => {
+                          const newPts = tablePoints.filter((_, i) => i !== idx);
+                          setTablePoints(newPts);
+                          onUpdate({ cartesianTablePoints: newPts });
+                        }}
+                        className="text-slate-400 hover:text-red-500"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Auto-Fit Linear Regression Toggle & Stats */}
+              <div className="p-2.5 bg-emerald-50/70 border border-emerald-200/80 rounded-xl flex flex-col space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-emerald-900">
+                    Auto-Fit Regression y ~ m*x + b
+                  </span>
+                  <button
+                    onClick={() => {
+                      const val = !showRegression;
+                      setShowRegression(val);
+                      onUpdate({ cartesianTableRegression: val });
+                    }}
+                    className={`w-9 h-5 rounded-full transition-colors relative ${
+                      showRegression ? "bg-emerald-600" : "bg-slate-300"
+                    }`}
+                  >
+                    <div
+                      className={`w-3.5 h-3.5 bg-white rounded-full absolute top-0.75 transition-transform ${
+                        showRegression ? "left-4.5" : "left-0.75"
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {showRegression && tablePoints.length >= 2 && (() => {
+                  const reg = calculateLinearRegression(tablePoints);
+                  if (!reg) return <span className="text-[10px] text-emerald-700">Need distinct points.</span>;
+                  return (
+                    <div className="flex flex-col space-y-1 font-mono text-[10px] text-emerald-800 bg-white/80 p-2 rounded-lg border border-emerald-200/50">
+                      <div><span className="font-bold">Model:</span> y = {reg.slope.toFixed(3)}x {reg.intercept >= 0 ? `+ ${reg.intercept.toFixed(3)}` : `- ${Math.abs(reg.intercept).toFixed(3)}`}</div>
+                      <div><span className="font-bold">Slope (m):</span> {reg.slope.toFixed(4)}</div>
+                      <div><span className="font-bold">R² score:</span> {(reg.rSquared * 100).toFixed(1)}%</div>
+                    </div>
                   );
-                  setLineStartPoint(null);
-                }}
-                className={`flex-1 text-[10px] py-1.5 rounded font-medium transition-colors border ${
-                  graphInteractionMode === "line"
-                    ? "bg-emerald-100 text-emerald-700 border-emerald-300 shadow-sm"
-                    : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
-                }`}
-              >
-                {graphInteractionMode === "line" && lineStartPoint
-                  ? "Click end point..."
-                  : "Plot Line"}
-              </button>
+                })()}
+              </div>
             </div>
-          </div>
-          {/* Plotted Points Input */}
-          <div className="flex flex-col space-y-1">
-            <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">
-              Plot Points (x,y)
-            </label>
-            <div className="flex space-x-2">
-              <input
-                type="text"
-                value={pointsInput}
-                onChange={(e) => {
-                  setPointsInput(e.target.value);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    const regex = /\((-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)\)/g;
-                    let match;
-                    const newPts = [];
-                    while ((match = regex.exec(pointsInput)) !== null) {
-                      const px = parseFloat(match[1]);
-                      const py = parseFloat(match[2]);
-                      if (!isNaN(px) && !isNaN(py)) {
-                        newPts.push({ x: px, y: py });
-                      }
-                    }
-                    if (newPts.length > 0) {
-                      const updatedPtsList = [...tempPointsList, ...newPts];
-                      setTempPointsList(updatedPtsList);
-                      const ptsStr = updatedPtsList.map(p => `(${p.x.toFixed(2)},${p.y.toFixed(2)})`).join(", ");
-                      onUpdate({ plottedPoints: ptsStr });
-                      setPointsInput("");
-                    }
-                  }
-                }}
-                placeholder="(-2,1), (0,-3)"
-                className="flex-1 min-w-0 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:bg-white text-slate-700"
-              />
-              <button 
-                onClick={() => {
-                    const regex = /\((-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)\)/g;
-                    let match;
-                    const newPts = [];
-                    while ((match = regex.exec(pointsInput)) !== null) {
-                      const px = parseFloat(match[1]);
-                      const py = parseFloat(match[2]);
-                      if (!isNaN(px) && !isNaN(py)) {
-                        newPts.push({ x: px, y: py });
-                      }
-                    }
-                    if (newPts.length > 0) {
-                      const updatedPtsList = [...tempPointsList, ...newPts];
-                      setTempPointsList(updatedPtsList);
-                      const ptsStr = updatedPtsList.map(p => `(${p.x.toFixed(2)},${p.y.toFixed(2)})`).join(", ");
-                      onUpdate({ plottedPoints: ptsStr });
-                      setPointsInput("");
-                    }
-                }}
-                className="px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-lg text-xs font-medium hover:bg-indigo-100 transition-colors"
-              >
-                Plot
-              </button>
-            </div>
-            <span className="text-[9px] text-slate-400 leading-tight">
-              Format:{" "}
-              <code className="bg-slate-100 px-0.5 rounded font-mono">
-                (x1,y1), (x2,y2)
-              </code>
-            </span>
-          </div>
+          )}
 
-          <div className="flex space-x-3">
-            {/* Zoom / Axis Scale Range */}
-            <div className="flex flex-col space-y-1 flex-1">
-              <div className="flex justify-between items-center">
+          {/* TAB 4: GRID MODES & PI TICKS & RANGE */}
+          {desmosActiveTab === "grid" && (
+            <div className="flex flex-col space-y-3">
+              {/* Grid Mode Selector */}
+              <div className="flex flex-col space-y-1">
                 <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">
-                  Axis Range
+                  Grid Style
                 </label>
-                <span className="text-xs font-bold text-indigo-600 font-mono">
-                  ±{rangeInput}
-                </span>
+                <div className="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-lg text-[10px] font-bold">
+                  <button
+                    onClick={() => {
+                      setGridMode("cartesian");
+                      onUpdate({ cartesianGridMode: "cartesian" });
+                    }}
+                    className={`py-1 rounded text-center transition-colors ${
+                      gridMode === "cartesian" ? "bg-white text-indigo-600 shadow-xs" : "text-slate-600"
+                    }`}
+                  >
+                    Cartesian
+                  </button>
+                  <button
+                    onClick={() => {
+                      setGridMode("polar");
+                      onUpdate({ cartesianGridMode: "polar" });
+                    }}
+                    className={`py-1 rounded text-center transition-colors ${
+                      gridMode === "polar" ? "bg-white text-indigo-600 shadow-xs" : "text-slate-600"
+                    }`}
+                  >
+                    Polar
+                  </button>
+                  <button
+                    onClick={() => {
+                      setGridMode("isometric");
+                      onUpdate({ cartesianGridMode: "isometric" });
+                    }}
+                    className={`py-1 rounded text-center transition-colors ${
+                      gridMode === "isometric" ? "bg-white text-indigo-600 shadow-xs" : "text-slate-600"
+                    }`}
+                  >
+                    Isometric
+                  </button>
+                </div>
               </div>
-              <input
-                type="range"
-                min="2"
-                max="20"
-                step="1"
-                value={rangeInput}
-                onChange={(e) => {
-                  const val = parseInt(e.target.value);
-                  setRangeInput(val);
-                  onUpdate({ cartesianRange: val });
-                }}
-                className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-600"
-              />
-              <div className="flex justify-between text-[8px] text-slate-400 font-mono">
-                <span>±2</span>
-                <span>±20</span>
-              </div>
-            </div>
 
-            {/* Axis Font Size */}
-            <div className="flex flex-col space-y-1 flex-1">
-              <div className="flex justify-between items-center">
-                <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">
-                  Number Size
-                </label>
-                <span className="text-xs font-bold text-indigo-600 font-mono">
-                  {axisFontSize}px
-                </span>
+              {/* Pi Ticks Switch */}
+              <div className="flex items-center justify-between p-2.5 bg-slate-50 border border-slate-200/80 rounded-xl">
+                <div className="flex flex-col">
+                  <span className="text-xs font-bold text-slate-800">
+                    Trig π Ticks
+                  </span>
+                  <span className="text-[9px] text-slate-500">
+                    Label axes in terms of π fractions
+                  </span>
+                </div>
+                <button
+                  onClick={() => {
+                    const val = !piTicks;
+                    setPiTicks(val);
+                    onUpdate({ cartesianPiTicks: val });
+                  }}
+                  className={`w-9 h-5 rounded-full transition-colors relative ${
+                    piTicks ? "bg-indigo-600" : "bg-slate-300"
+                  }`}
+                >
+                  <div
+                    className={`w-3.5 h-3.5 bg-white rounded-full absolute top-0.75 transition-transform ${
+                      piTicks ? "left-4.5" : "left-0.75"
+                    }`}
+                  />
+                </button>
               </div>
-              <input
-                type="range"
-                min="6"
-                max="20"
-                step="1"
-                value={axisFontSize}
-                onChange={(e) => {
-                  const val = parseInt(e.target.value);
-                  setAxisFontSize(val);
-                  onUpdate({ axisFontSize: val });
-                }}
-                className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-600"
-              />
-              <div className="flex justify-between text-[8px] text-slate-400 font-mono">
-                <span>6px</span>
-                <span>20px</span>
+
+              {/* Axis Range Slider */}
+              <div className="flex flex-col space-y-1">
+                <div className="flex justify-between items-center">
+                  <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">
+                    Axis Range
+                  </label>
+                  <span className="text-xs font-bold text-indigo-600 font-mono">
+                    ±{rangeInput}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="2"
+                  max="20"
+                  step="1"
+                  value={rangeInput}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value);
+                    setRangeInput(val);
+                    onUpdate({ cartesianRange: val });
+                  }}
+                  className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                />
+              </div>
+
+              {/* Number Font Size */}
+              <div className="flex flex-col space-y-1">
+                <div className="flex justify-between items-center">
+                  <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">
+                    Font Size
+                  </label>
+                  <span className="text-xs font-bold text-indigo-600 font-mono">
+                    {axisFontSize}px
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="6"
+                  max="20"
+                  step="1"
+                  value={axisFontSize}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value);
+                    setAxisFontSize(val);
+                    onUpdate({ axisFontSize: val });
+                  }}
+                  className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                />
               </div>
             </div>
-          </div>
+          )}
+
+          {/* TAB 5: TANGENT & SLOPE INSPECTION PROBE */}
+          {desmosActiveTab === "inspection" && (
+            <div className="flex flex-col space-y-3">
+              <div className="flex items-center justify-between p-2.5 bg-amber-50/70 border border-amber-200/80 rounded-xl">
+                <div className="flex flex-col">
+                  <span className="text-xs font-bold text-amber-900">
+                    Tangent & Slope Probe
+                  </span>
+                  <span className="text-[9px] text-amber-700">
+                    Inspect instantaneous slope f'(x)
+                  </span>
+                </div>
+                <button
+                  onClick={() => {
+                    const val = !showInspection;
+                    setShowInspection(val);
+                    onUpdate({ cartesianShowInspection: val });
+                  }}
+                  className={`w-9 h-5 rounded-full transition-colors relative ${
+                    showInspection ? "bg-amber-500" : "bg-slate-300"
+                  }`}
+                >
+                  <div
+                    className={`w-3.5 h-3.5 bg-white rounded-full absolute top-0.75 transition-transform ${
+                      showInspection ? "left-4.5" : "left-0.75"
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {showInspection && (
+                <div className="flex flex-col space-y-2 p-2.5 bg-slate-50 border border-slate-200/80 rounded-xl">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-bold text-slate-700">
+                      Probe x-location:
+                    </span>
+                    <span className="text-xs font-mono font-bold text-amber-600">
+                      x = {inspectionX.toFixed(2)}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={-rangeInput}
+                    max={rangeInput}
+                    step={0.1}
+                    value={inspectionX}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value);
+                      setInspectionX(val);
+                      onUpdate({ cartesianInspectionX: val });
+                    }}
+                    className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                  />
+
+                  {/* Readout stats */}
+                  {element.equation && (() => {
+                    const parsed = parseInequality(element.equation);
+                    const yVal = evaluateMathExpression(parsed.cleanExpr, inspectionX, cartesianVariables);
+                    const yPlus = evaluateMathExpression(parsed.cleanExpr, inspectionX + 0.005, cartesianVariables);
+                    const yMinus = evaluateMathExpression(parsed.cleanExpr, inspectionX - 0.005, cartesianVariables);
+
+                    if (yVal !== null && yPlus !== null && yMinus !== null) {
+                      const slope = (yPlus - yMinus) / 0.01;
+                      return (
+                        <div className="flex flex-col space-y-1 font-mono text-[10px] text-slate-700 bg-white p-2 rounded border border-slate-200/60 mt-1">
+                          <div><span className="font-bold text-slate-500">Point:</span> ({inspectionX.toFixed(2)}, {yVal.toFixed(2)})</div>
+                          <div><span className="font-bold text-amber-600">Slope m = f'(x):</span> {slope.toFixed(4)}</div>
+                          <div><span className="font-bold text-indigo-600">Tangent:</span> y = {slope.toFixed(2)}x {yVal - slope * inspectionX >= 0 ? `+ ${(yVal - slope * inspectionX).toFixed(2)}` : `- ${Math.abs(yVal - slope * inspectionX).toFixed(2)}`}</div>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

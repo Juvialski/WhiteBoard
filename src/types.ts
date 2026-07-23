@@ -86,6 +86,14 @@ export interface ShapeElement {
   }[];
   cartesianRange?: number; // axis maximum scale (e.g., 5 or 10)
   axisFontSize?: number; // font size for axis labels
+  cartesianGridMode?: 'cartesian' | 'polar' | 'isometric';
+  cartesianPiTicks?: boolean;
+  cartesianVariables?: { [name: string]: { min: number; max: number; step: number; val: number; isAnimating?: boolean } };
+  cartesianTablePoints?: { x: number; y: number }[];
+  cartesianTableRegression?: boolean;
+  cartesianShowDerivative?: boolean;
+  cartesianShowInspection?: boolean;
+  cartesianInspectionX?: number;
   locked?: boolean;
 }
 
