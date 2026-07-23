@@ -141,13 +141,14 @@ export default function ImageComponent({
       <div
         onPointerDown={onSelect}
         className={`absolute select-none flex flex-col justify-between transition-shadow duration-150 group ${cursorClass} ${
-          isSelected ? 'ring-2 ring-blue-600 shadow-xl z-20' : 'z-10'
+          isSelected ? 'ring-2 ring-blue-600 shadow-xl' : ''
         } ${element.id.startsWith('pdf-page-') ? 'shadow-lg bg-white border border-slate-200' : ''}`}
         style={{
           left: element.x,
           top: element.y,
           width: element.width,
           height: element.height,
+          zIndex: isSelected ? 40 : (element.id.startsWith('pdf-page-') ? 1 : (element.zIndex ?? 10)),
         }}
         id={`image-${element.id}`}
       >

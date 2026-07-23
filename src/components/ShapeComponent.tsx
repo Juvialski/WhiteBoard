@@ -2350,13 +2350,14 @@ export default function ShapeComponent({
     <div
       onPointerDown={onSelect}
       className={`absolute select-none flex flex-col justify-between transition-shadow duration-150 group ${cursorClass} ${
-        isSelected ? "z-20" : "hover:shadow-xs"
+        isSelected ? "" : "hover:shadow-xs"
       }`}
       style={{
         left: element.x,
         top: element.y,
         width: element.width,
         height: element.height,
+        zIndex: isSelected ? 40 : (element.zIndex ?? 10),
       }}
       id={`shape-${element.id}`}
     >

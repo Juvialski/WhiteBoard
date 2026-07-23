@@ -1003,6 +1003,21 @@ export default function WhiteboardCanvas({
     return elements.filter((el) => el.type === "image" && el.id.startsWith("pdf-page-")) as ImageElement[];
   }, [elements]);
 
+  const sortedElements = React.useMemo(() => {
+    return [...elements].sort((a, b) => {
+      const aIsPdf = a.id.startsWith("pdf-page-");
+      const bIsPdf = b.id.startsWith("pdf-page-");
+
+      if (aIsPdf && !bIsPdf) return -1;
+      if (!aIsPdf && bIsPdf) return 1;
+
+      const zA = typeof a.zIndex === "number" ? a.zIndex : (aIsPdf ? -1 : 10);
+      const zB = typeof b.zIndex === "number" ? b.zIndex : (bIsPdf ? -1 : 10);
+
+      return zA - zB;
+    });
+  }, [elements]);
+
   const handleJumpToPdfPage = React.useCallback((pageIndex: number) => {
     const page = pdfPages[pageIndex];
     if (!page) return;
@@ -4310,7 +4325,7 @@ export default function WhiteboardCanvas({
         >
           {/* 1. Interactive DOM elements Layer (Sticky notes, Shapes, Textboxes) */}
           <div className="absolute inset-0 pointer-events-none z-10">
-            {elements.map((el) => {
+            {sortedElements.map((el) => {
               if (el.type === "drawing") return null;
               
               const isSelected = selectedIds.includes(el.id);

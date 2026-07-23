@@ -180,7 +180,7 @@ export default function TextComponent({
     <div
       onPointerDown={onSelect}
       className={`absolute select-none flex flex-col justify-between transition-all duration-150 rounded-xl group p-2.5 ${cursorClass} ${
-        isSelected ? 'ring-2 ring-blue-500 bg-blue-50/20 z-20 shadow-md' : 'hover:bg-slate-50/40'
+        isSelected ? 'ring-2 ring-blue-500 bg-blue-50/20 shadow-md' : 'hover:bg-slate-50/40'
       }`}
       style={{
         left: element.x,
@@ -191,6 +191,7 @@ export default function TextComponent({
         borderColor: element.borderColor || (isSelected ? '#3b82f6' : 'transparent'),
         borderStyle: element.borderStyle || 'none',
         borderWidth: element.borderStyle && element.borderStyle !== 'none' ? `${element.borderWidth || 1}px` : '0px',
+        zIndex: isSelected ? 40 : (element.zIndex ?? 10),
       }}
       id={`text-${element.id}`}
     >

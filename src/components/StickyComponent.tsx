@@ -96,7 +96,7 @@ export default function StickyComponent({
     <div
       onPointerDown={onSelect}
       className={`absolute select-none rounded-xl p-4 flex flex-col justify-between transition-shadow duration-150 group ${cursorClass} ${
-        isSelected ? 'ring-2 ring-blue-600 shadow-xl z-20' : 'shadow-md shadow-slate-200/50 hover:shadow-lg'
+        isSelected ? 'ring-2 ring-blue-600 shadow-xl' : 'shadow-md shadow-slate-200/50 hover:shadow-lg'
       }`}
       style={{
         left: element.x,
@@ -104,6 +104,7 @@ export default function StickyComponent({
         width: element.width,
         height: element.height,
         backgroundColor: element.color,
+        zIndex: isSelected ? 40 : (element.zIndex ?? 10),
       }}
       id={`sticky-${element.id}`}
     >
