@@ -297,6 +297,106 @@ function extractEquationVariables(equations: string[]): string[] {
   return Array.from(detected);
 }
 
+function renderMathText(str: string): React.ReactNode {
+  if (!str) return null;
+
+  const regex = /\^(\(([^)]+)\)|\{([^}]+)\}|([+-]?[0-9a-zA-Z.]+))/;
+  const match = str.match(regex);
+
+  if (!match) {
+    return <span key={str}>{formatTerm(str)}</span>;
+  }
+
+  const index = match.index!;
+  const before = str.substring(0, index);
+  const matchedText = match[0];
+  const exponentContent = match[2] || match[3] || match[4] || "";
+  const after = str.substring(index + matchedText.length);
+
+  return (
+    <React.Fragment key={str}>
+      {before && renderMathText(before)}
+      <sup className="relative -top-1 text-[75%] font-semibold ml-0.5 mr-0.5 text-indigo-600 font-sans select-all">
+        {renderMathText(exponentContent)}
+      </sup>
+      {after && renderMathText(after)}
+    </React.Fragment>
+  );
+}
+
+function formatTerm(term: string): React.ReactNode[] {
+  const tokenRegex = /(sin|cos|tan|log|ln|sqrt|csc|sec|cot|sinh|cosh|tanh|abs|exp|f\(x\)|g\(x\)|π|[a-zA-Z]|[0-9.]+|[^a-zA-Z0-9.\s]+|\s+)/gi;
+  const tokens = term.match(tokenRegex) || [term];
+
+  const functions = new Set(["sin", "cos", "tan", "log", "ln", "sqrt", "csc", "sec", "cot", "sinh", "cosh", "tanh", "abs", "exp"]);
+  const operatorsWithSpace = new Set(["+", "-", "=", "·", "≤", "≥", "≠", "<", ">"]);
+
+  return tokens.map((token, i) => {
+    const trimmed = token.trim();
+    if (!trimmed) {
+      return <span key={i}> </span>;
+    }
+
+    const lower = trimmed.toLowerCase();
+
+    if (functions.has(lower)) {
+      return (
+        <span key={i} className="font-sans not-italic font-bold text-slate-700/90 mx-0.5">
+          {trimmed}
+        </span>
+      );
+    }
+
+    if (lower === "f(x)" || lower === "g(x)") {
+      const fnName = trimmed[0];
+      return (
+        <span key={i} className="font-serif">
+          <span className="italic font-bold text-slate-900">{fnName}</span>
+          <span className="font-sans not-italic font-semibold text-slate-800">(x)</span>
+        </span>
+      );
+    }
+
+    if (trimmed === "π" || lower === "pi") {
+      return (
+        <span key={i} className="font-sans not-italic text-slate-900 mx-px">
+          π
+        </span>
+      );
+    }
+
+    if (/^[a-zA-Z]$/.test(trimmed)) {
+      return (
+        <span key={i} className="font-serif italic font-bold text-indigo-950 mx-px">
+          {trimmed}
+        </span>
+      );
+    }
+
+    if (/^[0-9.]+$/.test(trimmed)) {
+      return (
+        <span key={i} className="font-sans not-italic text-slate-800">
+          {trimmed}
+        </span>
+      );
+    }
+
+    if (operatorsWithSpace.has(trimmed)) {
+      return (
+        <span key={i} className="font-sans not-italic text-slate-500/80 mx-1">
+          {trimmed}
+        </span>
+      );
+    }
+
+    return (
+      <span key={i} className="font-sans not-italic text-slate-600">
+        {trimmed}
+      </span>
+    );
+  });
+}
+
 /**
  * Formats mathematical expressions into Desmos-style clean math representation with superscripts & symbols
  */
@@ -325,22 +425,10 @@ function formatMathDisplay(expr: string): React.ReactNode {
     .replace(/\bpi\b/gi, "π")
     .replace(/\bsqrt\b/gi, "√");
 
-  // Superscript map for exponents
-  const superMap: Record<string, string> = {
-    "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
-    "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",
-    "+": "⁺", "-": "⁻", "x": "ˣ", "y": "ʸ", "n": "ⁿ",
-    "a": "ᵃ", "b": "ᵇ", "c": "ᶜ", "m": "ᵐ", "k": "ᵏ"
-  };
-
-  text = text.replace(/\^([0-9a-zA-Z+-]+)/g, (_, exp) => {
-    return exp.split("").map((c: string) => superMap[c] || c).join("");
-  });
-
   return (
-    <span className="font-serif italic tracking-wide text-slate-900 font-medium select-text">
-      {text}
-    </span>
+    <div className="inline-flex items-center flex-wrap gap-y-0.5 text-slate-900 select-text">
+      {renderMathText(text)}
+    </div>
   );
 }
 
