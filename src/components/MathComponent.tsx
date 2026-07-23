@@ -144,7 +144,12 @@ export default function MathComponent({
   };
 
   const insertTemplate = (latex: string) => {
-    if (!textareaRef.current) return;
+    if (!textareaRef.current) {
+      const newText = text ? text + " " + latex : latex;
+      setText(newText);
+      onUpdate({ text: newText });
+      return;
+    }
     const start = textareaRef.current.selectionStart;
     const end = textareaRef.current.selectionEnd;
     const newText = text.substring(0, start) + latex + text.substring(end);
@@ -330,8 +335,12 @@ export default function MathComponent({
                           e.stopPropagation();
                           if (!isEditing) {
                             setIsEditing(true);
+                            setTimeout(() => {
+                              insertTemplate(tmpl.latex);
+                            }, 50);
+                          } else {
+                            insertTemplate(tmpl.latex);
                           }
-                          insertTemplate(tmpl.latex);
                           setActivePopover(null);
                         }}
                         className="px-2 py-1.5 rounded-lg text-xs text-left cursor-pointer hover:bg-slate-50 flex flex-col"
