@@ -29,11 +29,11 @@ interface FontFamilyOption {
 }
 
 const FONT_FAMILIES: FontFamilyOption[] = [
-  { id: 'sans', name: 'Sans', fontClass: 'font-sans' },
-  { id: 'serif', name: 'Serif', fontClass: 'font-serif' },
-  { id: 'mono', name: 'Mono', fontClass: 'font-mono' },
-  { id: 'handwritten', name: 'Handdrawn', fontStyleObj: { fontFamily: "'Caveat', 'Comic Sans MS', 'Kalam', cursive, sans-serif" } },
-  { id: 'display', name: 'Display', fontClass: 'font-sans font-black tracking-tight' }
+  { id: 'sans', name: 'Sans', fontStyleObj: { fontFamily: "'Plus Jakarta Sans', sans-serif" } },
+  { id: 'serif', name: 'Serif', fontStyleObj: { fontFamily: "'EB Garamond', serif" } },
+  { id: 'mono', name: 'Mono', fontStyleObj: { fontFamily: "'Fira Code', monospace" } },
+  { id: 'handwritten', name: 'Handdrawn', fontStyleObj: { fontFamily: "'Caveat', cursive, sans-serif" } },
+  { id: 'display', name: 'Display', fontStyleObj: { fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 800 } }
 ];
 
 const TEXT_COLORS = [
@@ -250,22 +250,23 @@ export default function TextComponent({
   const currentFontFamily = FONT_FAMILIES.find(f => f.id === element.fontFamily) || FONT_FAMILIES[0];
 
   const getFontFamilyStyle = () => {
-    if (element.fontFamily === 'handwritten') {
-      return { fontFamily: "'Caveat', 'Comic Sans MS', 'Kalam', cursive, sans-serif" };
+    switch (element.fontFamily) {
+      case 'serif':
+        return { fontFamily: "'EB Garamond', serif" };
+      case 'mono':
+        return { fontFamily: "'Fira Code', monospace" };
+      case 'handwritten':
+        return { fontFamily: "'Caveat', cursive, sans-serif" };
+      case 'display':
+        return { fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 800 };
+      case 'sans':
+      default:
+        return { fontFamily: "'Plus Jakarta Sans', sans-serif" };
     }
-    return {};
   };
 
   const getFontFamilyClass = () => {
-    switch (element.fontFamily) {
-      case 'serif': return 'font-serif';
-      case 'mono': return 'font-mono';
-      case 'display': return 'font-sans font-black tracking-tight';
-      case 'handwritten': return '';
-      case 'sans':
-      default:
-        return 'font-sans';
-    }
+    return '';
   };
 
   const cursorClass = element.locked
@@ -361,7 +362,7 @@ export default function TextComponent({
       {/* Floating Lucidspark Formatting Action Bar */}
       {isSelected && !isDraggingOrResizing && (
         <div 
-          onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} 
+          onPointerDown={(e) => { e.stopPropagation(); }} 
           onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
           className="absolute -top-14 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-2xl shadow-xl px-2 py-1.5 flex items-center space-x-1 z-40 animate-fade-in max-w-[90vw] overflow-x-auto scrollbar-none lucidspark-action-bar"
         >
