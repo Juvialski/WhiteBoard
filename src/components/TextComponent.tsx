@@ -364,7 +364,7 @@ export default function TextComponent({
         <div 
           onPointerDown={(e) => { e.stopPropagation(); }} 
           onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
-          className="absolute -top-14 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-2xl shadow-xl px-2 py-1.5 flex items-center space-x-1 z-40 animate-fade-in max-w-[90vw] overflow-x-auto scrollbar-none lucidspark-action-bar"
+          className="absolute -top-14 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-2xl shadow-xl px-2 py-1.5 flex items-center space-x-1 flex-wrap md:flex-nowrap gap-y-1 z-40 animate-fade-in max-w-[95vw] lucidspark-action-bar"
         >
           {/* Reaction & Lock */}
           <div className="flex items-center space-x-0.5 pr-1.5 border-r border-slate-100 shrink-0">
