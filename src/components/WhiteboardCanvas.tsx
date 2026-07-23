@@ -26,12 +26,14 @@ import {
   Whiteboard,
   Collaborator,
   ConnectorElement,
+  MathElement,
 } from "../types";
 
 import Toolbar, { Tool } from "./Toolbar";
 import StickyComponent from "./StickyComponent";
 import ShapeComponent from "./ShapeComponent";
 import TextComponent from "./TextComponent";
+import MathComponent from "./MathComponent";
 import ImageComponent from "./ImageComponent";
 import AudioComponent from "./AudioComponent";
 import StampComponent from "./StampComponent";
@@ -139,6 +141,20 @@ const compressImage = (file: File): Promise<CompressedImage | null> => {
     reader.readAsDataURL(file);
   });
 };
+
+// Helper to sanitize objects for Firestore (removes undefined fields)
+function sanitizeForFirestore(obj: any): any {
+  if (obj === null || obj === undefined || typeof obj !== "object") return obj;
+  if (Array.isArray(obj)) return obj.map(sanitizeForFirestore);
+  const clean: any = {};
+  for (const key of Object.keys(obj)) {
+    const val = obj[key];
+    if (val !== undefined) {
+      clean[key] = sanitizeForFirestore(val);
+    }
+  }
+  return clean;
+}
 
 // Helper to convert drawing points into a smooth SVG path (Quadratic Bezier)
 function getSvgPathFromPoints(points: Point[]): string {
@@ -423,6 +439,25 @@ const ElementWrapper = React.memo(({
     return (
       <div className={isInteractive ? "pointer-events-auto" : "pointer-events-none"}>
         <TextComponent
+          element={el}
+          isSelected={isSelected}
+          currentUser={currentUser}
+          zoom={zoom}
+          onSelect={onSelect}
+          onUpdate={onUpdate}
+          onDelete={onDelete}
+          isDraggingOrResizing={isDraggingOrResizing}
+          activeTool={activeTool}
+          canWrite={canWrite}
+        />
+      </div>
+    );
+  }
+
+  if (el.type === "math") {
+    return (
+      <div className={isInteractive ? "pointer-events-auto" : "pointer-events-none"}>
+        <MathComponent
           element={el}
           isSelected={isSelected}
           currentUser={currentUser}
@@ -1622,10 +1657,11 @@ export default function WhiteboardCanvas({
           blobUpdates[blobId][id] = deleteField();
         } else {
           const { id: _, ...data } = item.data;
+          const cleanData = sanitizeForFirestore(data);
           if (isDraw) {
-            blobUpdates[blobId][id] = { ...data, points: simplifyPoints(data.points, 1.2) };
+            blobUpdates[blobId][id] = { ...cleanData, points: simplifyPoints(cleanData.points, 1.2) };
           } else {
-            blobUpdates[blobId][id] = data;
+            blobUpdates[blobId][id] = cleanData;
           }
         }
       });
@@ -1667,11 +1703,11 @@ export default function WhiteboardCanvas({
     const isDrawing = (elementData && elementData.type === 'drawing') || 
                       (actionType === 'delete' && currentElements.find(el => el.id === elementId)?.type === 'drawing');
 
-    let processedData = elementData;
+    let processedData = elementData ? sanitizeForFirestore(elementData) : elementData;
     if (isDrawing && elementData && elementData.type === 'drawing') {
       processedData = {
-        ...elementData,
-        points: simplifyPoints(elementData.points, 1.2) // Downscale point coordinate resolution to optimize Firestore sizes
+        ...processedData,
+        points: simplifyPoints(processedData.points, 1.2) // Downscale point coordinate resolution to optimize Firestore sizes
       };
     }
 
@@ -1751,9 +1787,9 @@ export default function WhiteboardCanvas({
             data: { [elementId]: deleteField() }
           }, { merge: true });
         } else {
-          let payload = processedData;
+          let payload = sanitizeForFirestore(processedData);
           if (isDraw) {
-             payload = { ...processedData, points: simplifyPoints(processedData.points, 1.2) };
+             payload = { ...payload, points: simplifyPoints(payload.points, 1.2) };
           }
           await setDoc(doc(db, "whiteboards", boardId, "elements", blobId), {
             data: { [elementId]: payload }
@@ -1817,8 +1853,9 @@ export default function WhiteboardCanvas({
     pushToUndo({ type: "add", elementId: id, afterData: newAudio });
     setActiveTool("select");
     setSelectedId(id);
+    setIsDragging(false);
     showSyncToast("Voice comment attached!", "success");
-  }, [pendingVoiceCoords, panX, panY, currentUser.name, elements.length, saveElementLocallyAndSync, pushToUndo, showSyncToast]);
+  }, [pendingVoiceCoords, panX, panY, currentUser.name, elements.length, saveElementLocallyAndSync, pushToUndo, showSyncToast, setIsDragging]);
 
   const handleSaveStamp = React.useCallback((stampType: any, label?: string, signatureUrl?: string) => {
     const coords = pendingStampCoords || { x: -panX + 200, y: -panY + 200 };
@@ -1831,8 +1868,8 @@ export default function WhiteboardCanvas({
       width: 140,
       height: 60,
       stampType,
-      label,
-      signatureDataUrl: signatureUrl,
+      ...(label ? { label } : {}),
+      ...(signatureUrl ? { signatureDataUrl: signatureUrl } : {}),
       zIndex: elements.length + 1,
       updatedAt: Date.now(),
     } as any;
@@ -1841,8 +1878,9 @@ export default function WhiteboardCanvas({
     pushToUndo({ type: "add", elementId: id, afterData: newStamp });
     setActiveTool("select");
     setSelectedId(id);
+    setIsDragging(false);
     showSyncToast("Stamp placed!", "success");
-  }, [pendingStampCoords, panX, panY, elements.length, saveElementLocallyAndSync, pushToUndo, showSyncToast]);
+  }, [pendingStampCoords, panX, panY, elements.length, saveElementLocallyAndSync, pushToUndo, showSyncToast, setIsDragging]);
 
 
   // Synchronize unsaved changes on tab close or navigation away, and handle instant online/offline syncing
@@ -2371,19 +2409,16 @@ export default function WhiteboardCanvas({
 
     if (activeTool === "math") {
       const id = "math-" + Date.now() + Math.floor(Math.random() * 100);
-      const newMathBox: TextElement = {
+      const newMathBox: MathElement = {
         id,
-        type: "text",
+        type: "math",
         x: coords.x - 120,
         y: coords.y - 30,
         width: 240,
         height: 60,
-        text: "f(x) = x² + 2x + 1",
+        text: "f(x) = x^2 + 2x + 1",
         color: "#1e1b4b",
         fontSize: 20,
-        fontFamily: "mono",
-        fontWeight: "bold",
-        textAlign: "center",
         backgroundColor: "#e0e7ff",
         borderStyle: "solid",
         borderColor: "#6366f1",
@@ -3808,6 +3843,12 @@ export default function WhiteboardCanvas({
             } else if (el.type === "text") {
               baseElement.color = el.color || "#1e293b";
               baseElement.fontSize = el.fontSize || 16;
+            } else if (el.type === "math") {
+              baseElement.color = el.color || "#1e1b4b";
+              baseElement.fontSize = el.fontSize || 20;
+              baseElement.backgroundColor = el.backgroundColor || "#e0e7ff";
+              baseElement.borderStyle = el.borderStyle || "solid";
+              baseElement.borderColor = el.borderColor || "#6366f1";
             }
             await saveElementLocallyAndSync(id, baseElement);
             createdIds.push(id);

@@ -59,7 +59,7 @@ export default function AudioComponent({
 
   return (
     <div
-      onClick={onSelect}
+      onPointerDown={onSelect}
       style={{
         transform: `translate(${element.x}px, ${element.y}px)`,
         zIndex: element.zIndex || 10,

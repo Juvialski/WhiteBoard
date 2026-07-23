@@ -1,4 +1,4 @@
-export type ElementType = "sticky" | "shape" | "text" | "drawing" | "image" | "connector" | "audio" | "stamp";
+export type ElementType = "sticky" | "shape" | "text" | "drawing" | "image" | "connector" | "audio" | "stamp" | "math";
 
 export type ShapeType =
   | "rect"
@@ -122,6 +122,26 @@ export interface TextElement {
   locked?: boolean;
 }
 
+export interface MathElement {
+  id: string;
+  type: "math";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  text: string; // The LaTeX string
+  color: string; // text/formula color
+  fontSize: number;
+  backgroundColor?: string; // background fill color
+  borderColor?: string;
+  borderStyle?: "none" | "solid" | "dashed";
+  borderWidth?: number;
+  reactions?: Record<string, string[]>; // emoji -> array of userNames
+  zIndex: number;
+  updatedAt?: number;
+  locked?: boolean;
+}
+
 export interface DrawingElement {
   id: string;
   type: "drawing";
@@ -188,7 +208,8 @@ export type BoardElement =
   | ImageElement
   | ConnectorElement
   | AudioElement
-  | StampElement;
+  | StampElement
+  | MathElement;
 
 export interface Collaborator {
   id: string;

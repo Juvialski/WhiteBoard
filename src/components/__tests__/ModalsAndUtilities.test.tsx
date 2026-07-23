@@ -44,8 +44,8 @@ describe('Modals & Workspace Utilities Test Suite', () => {
 
   describe('Minimap Component', () => {
     const dummyElements: BoardElement[] = [
-      { id: '1', type: 'sticky', x: 0, y: 0, width: 100, height: 100, text: 'A', color: '#fff', updatedAt: Date.now() },
-      { id: '2', type: 'shape', x: 500, y: 500, width: 200, height: 200, shapeType: 'rect', updatedAt: Date.now() },
+      { id: '1', type: 'sticky', x: 0, y: 0, width: 100, height: 100, text: 'A', color: '#fff', zIndex: 1, updatedAt: Date.now() },
+      { id: '2', type: 'shape', x: 500, y: 500, width: 200, height: 200, shapeType: 'rect', text: '', color: '#3b82f6', borderColor: '#2563eb', zIndex: 2, updatedAt: Date.now() },
     ];
 
     it('renders minimap container and triggers onPanTo on map click', () => {
