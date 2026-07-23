@@ -642,7 +642,15 @@ export default function Toolbar({
           (activeTool === "select" &&
             hasColorableSelection &&
             !hideColorMenuOverride)) && (
-          <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-xl p-3 flex flex-col space-y-2.5 absolute bottom-16 left-1/2 -translate-x-1/2 md:bottom-auto md:left-16 md:top-10 md:translate-x-0 w-48 animate-fade-in z-40">
+          <div
+            className={`bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-xl p-3 flex flex-col space-y-2.5 absolute transition-all duration-200 z-40 w-48 animate-fade-in ${
+              showShapeMenu && activeTool === "shape"
+                ? "bottom-[19.5rem] left-1/2 -translate-x-1/2 md:bottom-auto md:left-[17.5rem] md:top-10 md:translate-x-0"
+                : showGraphMenu && isGraphTool
+                  ? "bottom-[19.5rem] left-1/2 -translate-x-1/2 md:bottom-auto md:left-[19.5rem] md:top-24 md:translate-x-0"
+                  : "bottom-16 left-1/2 -translate-x-1/2 md:bottom-auto md:left-16 md:top-10 md:translate-x-0"
+            }`}
+          >
             <div className="flex items-center justify-between border-b border-slate-100 pb-1">
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                 Palette Color

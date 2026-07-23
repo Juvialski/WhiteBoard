@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import { ShapeElement, UserProfile, ShapeType } from "../types";
 import {
   Smile,
@@ -272,6 +272,79 @@ function generateImplicitContourPath(
 }
 
 /**
+ * Scans equation expressions to extract dynamic single-letter variables (e.g. a, b, c, m, k)
+ */
+function extractEquationVariables(equations: string[]): string[] {
+  const reserved = new Set([
+    "x", "y", "e", "pi", "sin", "cos", "tan", "asin", "acos", "atan",
+    "sinh", "cosh", "tanh", "log", "ln", "exp", "sqrt", "abs", "min",
+    "max", "floor", "ceil", "round", "sign", "rad", "deg"
+  ]);
+
+  const detected = new Set<string>();
+
+  equations.forEach((expr) => {
+    if (!expr) return;
+    const tokens = expr.match(/\b[a-zA-Z]+\b/g) || [];
+    tokens.forEach((token: string) => {
+      const lower = token.toLowerCase();
+      if (!reserved.has(lower) && lower.length === 1) {
+        detected.add(lower);
+      }
+    });
+  });
+
+  return Array.from(detected);
+}
+
+/**
+ * Formats mathematical expressions into Desmos-style clean math representation with superscripts & symbols
+ */
+function formatMathDisplay(expr: string): React.ReactNode {
+  if (!expr || !expr.trim()) return null;
+
+  let text = expr.trim();
+
+  // Prepend y = if no explicit equality/inequality exists
+  if (
+    !text.toLowerCase().startsWith("y") &&
+    !text.toLowerCase().startsWith("f(x)") &&
+    !text.includes("=") &&
+    !text.includes(">") &&
+    !text.includes("<")
+  ) {
+    text = `y = ${text}`;
+  }
+
+  // Symbol replacement
+  text = text
+    .replace(/\*/g, " · ")
+    .replace(/<=/g, " ≤ ")
+    .replace(/>=/g, " ≥ ")
+    .replace(/!=/g, " ≠ ")
+    .replace(/\bpi\b/gi, "π")
+    .replace(/\bsqrt\b/gi, "√");
+
+  // Superscript map for exponents
+  const superMap: Record<string, string> = {
+    "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
+    "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",
+    "+": "⁺", "-": "⁻", "x": "ˣ", "y": "ʸ", "n": "ⁿ",
+    "a": "ᵃ", "b": "ᵇ", "c": "ᶜ", "m": "ᵐ", "k": "ᵏ"
+  };
+
+  text = text.replace(/\^([0-9a-zA-Z+-]+)/g, (_, exp) => {
+    return exp.split("").map((c: string) => superMap[c] || c).join("");
+  });
+
+  return (
+    <span className="font-serif italic tracking-wide text-slate-900 font-medium select-text">
+      {text}
+    </span>
+  );
+}
+
+/**
  * Calculates critical points: y-intercepts, roots (x-intercepts), extrema (peaks/troughs), intersections
  */
 interface CriticalPointItem {
@@ -538,25 +611,45 @@ export default function ShapeComponent({
   // Desmos Feature States
   const [cartesianVariables, setCartesianVariables] = useState<
     Record<string, { min: number; max: number; step: number; val: number; isAnimating?: boolean }>
-  >(
-    element.cartesianVariables || {
-      a: { min: -10, max: 10, step: 0.1, val: 2 },
-      b: { min: -5, max: 5, step: 0.1, val: 1 },
-      c: { min: -5, max: 5, step: 0.1, val: 0 },
-      m: { min: -10, max: 10, step: 0.1, val: 1 },
-      k: { min: -10, max: 10, step: 0.1, val: 0 },
-    }
-  );
+  >(element.cartesianVariables || {});
+
+  const [customAddedVars, setCustomAddedVars] = useState<string[]>([]);
 
   const [tablePoints, setTablePoints] = useState<{ x: number; y: number }[]>(
-    element.cartesianTablePoints || [
-      { x: -2, y: 4 },
-      { x: -1, y: 1 },
-      { x: 0, y: 0 },
-      { x: 1, y: 1 },
-      { x: 2, y: 4 },
-    ]
+    element.cartesianTablePoints || []
   );
+
+  // Auto-detect dynamic equation variables (e.g. a, b, c, m, k)
+  const detectedVarNames = useMemo(() => {
+    const allExprs = [equationInput, ...equationsArray.map((e) => e.expr)];
+    return extractEquationVariables(allExprs);
+  }, [equationInput, equationsArray]);
+
+  // Sync detected variables into cartesianVariables
+  useEffect(() => {
+    if (detectedVarNames.length === 0) return;
+    let hasNew = false;
+    const updated = { ...cartesianVariables };
+    detectedVarNames.forEach((vName) => {
+      if (!updated[vName]) {
+        updated[vName] = { min: -10, max: 10, step: 0.1, val: 1 };
+        hasNew = true;
+      }
+    });
+    if (hasNew) {
+      setCartesianVariables(updated);
+      onUpdate({ cartesianVariables: updated });
+    }
+  }, [detectedVarNames]);
+
+  // Active variable names list (detected from equations or manually added)
+  const activeVarsList = useMemo(() => {
+    const set = new Set([...detectedVarNames, ...customAddedVars]);
+    if (element.cartesianVariables) {
+      Object.keys(element.cartesianVariables).forEach((k) => set.add(k));
+    }
+    return Array.from(set);
+  }, [detectedVarNames, customAddedVars, element.cartesianVariables]);
 
   const [showRegression, setShowRegression] = useState(
     element.cartesianTableRegression ?? false
@@ -2546,7 +2639,10 @@ export default function ShapeComponent({
               <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Equations</span>
               {element.equation && (
                 <div className="flex items-center justify-between text-xs text-slate-700 bg-slate-50 px-2 py-1.5 rounded border border-slate-100">
-                  <span className="truncate pr-2"><span className="text-indigo-500 font-mono font-medium">y1=</span> {element.equation}</span>
+                  <span className="truncate pr-2 flex items-center space-x-1">
+                    <span className="text-indigo-500 font-mono font-medium text-[11px]">y1:</span>
+                    <span className="font-serif italic text-indigo-950 font-medium">{formatMathDisplay(element.equation)}</span>
+                  </span>
                   <button onClick={() => {
                     setEquationInput("");
                     onUpdate({ equation: "", equationMin: "", equationMax: "" });
@@ -2557,7 +2653,10 @@ export default function ShapeComponent({
               )}
               {element.equations?.map((eq, i) => (
                 <div key={eq.id} className="flex items-center justify-between text-xs text-slate-700 bg-slate-50 px-2 py-1.5 rounded border border-slate-100">
-                  <span className="truncate pr-2"><span className="text-indigo-500 font-mono font-medium">y{i+2}=</span> {eq.expr}</span>
+                  <span className="truncate pr-2 flex items-center space-x-1">
+                    <span className="font-mono font-medium text-[11px]" style={{ color: eq.color }}>y{i+2}:</span>
+                    <span className="font-serif italic text-slate-900 font-medium">{formatMathDisplay(eq.expr)}</span>
+                  </span>
                   <button onClick={() => {
                     const newEqs = element.equations?.filter(e => e.id !== eq.id);
                     onUpdate({ equations: newEqs });
@@ -2723,6 +2822,12 @@ export default function ShapeComponent({
                     className="w-full px-2.5 py-1.5 bg-slate-50 border border-indigo-200/60 rounded-lg text-xs font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:bg-white text-indigo-700"
                   />
                 </div>
+                {equationInput && (
+                  <div className="flex items-center space-x-1.5 mt-1 px-2.5 py-1 bg-indigo-50/60 border border-indigo-100 rounded-md text-xs">
+                    <span className="text-[10px] font-sans font-bold text-indigo-400 uppercase tracking-wider">Preview:</span>
+                    {formatMathDisplay(equationInput)}
+                  </div>
+                )}
                 <div className="flex space-x-2 mt-1">
                   <div className="flex-1 flex items-center space-x-1">
                     <span className="text-[10px] text-slate-400">Min x:</span>
@@ -2935,90 +3040,159 @@ export default function ShapeComponent({
           {/* TAB 2: INTERACTIVE VARIABLE SLIDERS & ANIMATIONS */}
           {desmosActiveTab === "sliders" && (
             <div className="flex flex-col space-y-3">
-              <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">
-                Dynamic Variable Sliders
-              </span>
-
-              {Object.entries(cartesianVariables).map(([varName, varObj]) => (
-                <div key={varName} className="p-2 bg-slate-50 border border-slate-200/80 rounded-xl flex flex-col space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-mono font-bold text-indigo-600">
-                      {varName} = {varObj.val.toFixed(2)}
-                    </span>
-                    <button
-                      onClick={() => {
-                        const updated = {
-                          ...cartesianVariables,
-                          [varName]: { ...varObj, isAnimating: !varObj.isAnimating },
-                        };
-                        setCartesianVariables(updated);
-                        onUpdate({ cartesianVariables: updated });
-                      }}
-                      className={`px-2 py-0.5 rounded text-[9px] font-bold transition-colors ${
-                        varObj.isAnimating
-                          ? "bg-emerald-500 text-white animate-pulse"
-                          : "bg-slate-200 text-slate-700 hover:bg-slate-300"
-                      }`}
-                    >
-                      {varObj.isAnimating ? "Pause" : "Play ▶"}
-                    </button>
-                  </div>
-
-                  {/* Slider Control */}
-                  <input
-                    type="range"
-                    min={varObj.min}
-                    max={varObj.max}
-                    step={varObj.step}
-                    value={varObj.val}
-                    onChange={(e) => {
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">
+                  Dynamic Variable Sliders
+                </span>
+                <button
+                  onClick={() => {
+                    const pool = ["a", "b", "c", "m", "k", "n", "p", "q"];
+                    const unused = pool.find((v) => !activeVarsList.includes(v)) || `v${activeVarsList.length + 1}`;
+                    setCustomAddedVars([...customAddedVars, unused]);
+                    if (!cartesianVariables[unused]) {
                       const updated = {
                         ...cartesianVariables,
-                        [varName]: { ...varObj, val: parseFloat(e.target.value) },
+                        [unused]: { min: -10, max: 10, step: 0.1, val: 1 },
                       };
                       setCartesianVariables(updated);
                       onUpdate({ cartesianVariables: updated });
-                    }}
-                    className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
-                  />
+                    }
+                  }}
+                  className="px-2 py-0.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded text-[10px] font-bold transition-colors"
+                >
+                  + Add Slider
+                </button>
+              </div>
 
-                  {/* Range Config */}
-                  <div className="flex space-x-2 text-[9px] text-slate-400 font-mono">
-                    <div className="flex items-center space-x-1">
-                      <span>min:</span>
-                      <input
-                        type="number"
-                        value={varObj.min}
-                        onChange={(e) => {
-                          const updated = {
-                            ...cartesianVariables,
-                            [varName]: { ...varObj, min: parseFloat(e.target.value) || -10 },
-                          };
-                          setCartesianVariables(updated);
-                          onUpdate({ cartesianVariables: updated });
-                        }}
-                        className="w-10 px-1 py-0.5 bg-white border border-slate-200 rounded"
-                      />
-                    </div>
-                    <div className="flex items-center space-x-1">
-                      <span>max:</span>
-                      <input
-                        type="number"
-                        value={varObj.max}
-                        onChange={(e) => {
-                          const updated = {
-                            ...cartesianVariables,
-                            [varName]: { ...varObj, max: parseFloat(e.target.value) || 10 },
-                          };
-                          setCartesianVariables(updated);
-                          onUpdate({ cartesianVariables: updated });
-                        }}
-                        className="w-10 px-1 py-0.5 bg-white border border-slate-200 rounded"
-                      />
-                    </div>
+              {activeVarsList.length === 0 ? (
+                <div className="p-4 bg-slate-50 border border-slate-200/80 rounded-2xl flex flex-col items-center justify-center text-center space-y-2">
+                  <div className="p-2 bg-indigo-50 text-indigo-600 rounded-full">
+                    <Sliders className="w-4 h-4" />
                   </div>
+                  <span className="text-xs font-bold text-slate-700">No Variables Inputted</span>
+                  <p className="text-[10px] text-slate-500 leading-relaxed">
+                    Type variables like <code className="bg-slate-200/70 text-indigo-700 px-1 py-0.5 rounded font-mono font-bold">a</code>, <code className="bg-slate-200/70 text-indigo-700 px-1 py-0.5 rounded font-mono font-bold">b</code>, or <code className="bg-slate-200/70 text-indigo-700 px-1 py-0.5 rounded font-mono font-bold">m</code> directly into your equations (e.g. <code className="bg-slate-200/70 text-indigo-700 px-1 py-0.5 rounded font-mono font-bold">y = a*x^2 + b</code>) to automatically generate live sliders.
+                  </p>
+                  <button
+                    onClick={() => {
+                      const unused = "a";
+                      setCustomAddedVars([...customAddedVars, unused]);
+                      if (!cartesianVariables[unused]) {
+                        const updated = {
+                          ...cartesianVariables,
+                          [unused]: { min: -10, max: 10, step: 0.1, val: 1 },
+                        };
+                        setCartesianVariables(updated);
+                        onUpdate({ cartesianVariables: updated });
+                      }
+                    }}
+                    className="mt-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] rounded-lg shadow-xs transition-all"
+                  >
+                    + Add Variable Slider
+                  </button>
                 </div>
-              ))}
+              ) : (
+                activeVarsList.map((varName) => {
+                  const varObj = cartesianVariables[varName] || { min: -10, max: 10, step: 0.1, val: 1 };
+                  return (
+                    <div key={varName} className="p-2.5 bg-slate-50 border border-slate-200/80 rounded-xl flex flex-col space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-mono font-bold text-indigo-600">
+                          {varName} = {varObj.val.toFixed(2)}
+                        </span>
+                        <div className="flex items-center space-x-1">
+                          <button
+                            onClick={() => {
+                              const updated = {
+                                ...cartesianVariables,
+                                [varName]: { ...varObj, isAnimating: !varObj.isAnimating },
+                              };
+                              setCartesianVariables(updated);
+                              onUpdate({ cartesianVariables: updated });
+                            }}
+                            className={`px-2 py-0.5 rounded text-[9px] font-bold transition-colors ${
+                              varObj.isAnimating
+                                ? "bg-emerald-500 text-white animate-pulse"
+                                : "bg-slate-200 text-slate-700 hover:bg-slate-300"
+                            }`}
+                          >
+                            {varObj.isAnimating ? "Pause" : "Play ▶"}
+                          </button>
+                          {customAddedVars.includes(varName) && !detectedVarNames.includes(varName) && (
+                            <button
+                              onClick={() => {
+                                setCustomAddedVars(customAddedVars.filter((v) => v !== varName));
+                                const updated = { ...cartesianVariables };
+                                delete updated[varName];
+                                setCartesianVariables(updated);
+                                onUpdate({ cartesianVariables: updated });
+                              }}
+                              className="text-slate-400 hover:text-red-500 p-0.5"
+                              title="Remove Slider"
+                            >
+                              <X size={12} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Slider Control */}
+                      <input
+                        type="range"
+                        min={varObj.min}
+                        max={varObj.max}
+                        step={varObj.step}
+                        value={varObj.val}
+                        onChange={(e) => {
+                          const updated = {
+                            ...cartesianVariables,
+                            [varName]: { ...varObj, val: parseFloat(e.target.value) },
+                          };
+                          setCartesianVariables(updated);
+                          onUpdate({ cartesianVariables: updated });
+                        }}
+                        className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                      />
+
+                      {/* Range Config */}
+                      <div className="flex space-x-2 text-[9px] text-slate-400 font-mono">
+                        <div className="flex items-center space-x-1">
+                          <span>min:</span>
+                          <input
+                            type="number"
+                            value={varObj.min}
+                            onChange={(e) => {
+                              const updated = {
+                                ...cartesianVariables,
+                                [varName]: { ...varObj, min: parseFloat(e.target.value) || -10 },
+                              };
+                              setCartesianVariables(updated);
+                              onUpdate({ cartesianVariables: updated });
+                            }}
+                            className="w-10 px-1 py-0.5 bg-white border border-slate-200 rounded"
+                          />
+                        </div>
+                        <div className="flex items-center space-x-1">
+                          <span>max:</span>
+                          <input
+                            type="number"
+                            value={varObj.max}
+                            onChange={(e) => {
+                              const updated = {
+                                ...cartesianVariables,
+                                [varName]: { ...varObj, max: parseFloat(e.target.value) || 10 },
+                              };
+                              setCartesianVariables(updated);
+                              onUpdate({ cartesianVariables: updated });
+                            }}
+                            className="w-10 px-1 py-0.5 bg-white border border-slate-200 rounded"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
             </div>
           )}
 
