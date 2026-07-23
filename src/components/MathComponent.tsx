@@ -164,15 +164,24 @@ export default function MathComponent({
         ? 'cursor-pointer hover:bg-rose-50 hover:ring-2 hover:ring-rose-500 hover:ring-offset-1 transition-all' 
         : 'cursor-default';
 
-  // Render KaTeX HTML
-  const renderKaTeX = () => {
+  // Memoize Compiled KaTeX HTML to prevent expensive re-parsing on every pointer drag event
+  const memoizedKatexHtml = React.useMemo(() => {
     const rawLatex = element.text || "f(x) = x^2";
     try {
-      const html = katex.renderToString(rawLatex, {
+      return katex.renderToString(rawLatex, {
         throwOnError: false,
         displayMode: true,
         trust: false,
       });
+    } catch (err) {
+      return null;
+    }
+  }, [element.text]);
+
+  // Render KaTeX HTML
+  const renderKaTeX = () => {
+    const rawLatex = element.text || "f(x) = x^2";
+    if (memoizedKatexHtml) {
       return (
         <div 
           className="katex-container select-text cursor-text flex items-center justify-center w-full h-full overflow-auto text-slate-800"
@@ -180,22 +189,21 @@ export default function MathComponent({
             fontSize: `${element.fontSize || 20}px`,
             color: element.color || '#1e1b4b'
           }}
-          dangerouslySetInnerHTML={{ __html: html }}
+          dangerouslySetInnerHTML={{ __html: memoizedKatexHtml }}
         />
       );
-    } catch (err) {
-      return (
-        <div className="text-rose-500 text-xs font-mono break-all p-1">
-          {rawLatex}
-        </div>
-      );
     }
+    return (
+      <div className="text-rose-500 text-xs font-mono break-all p-1">
+        {rawLatex}
+      </div>
+    );
   };
 
   return (
     <div
       onPointerDown={onSelect}
-      className={`absolute select-none flex flex-col justify-between transition-all duration-150 rounded-2xl group p-3 ${cursorClass} ${
+      className={`absolute select-none flex flex-col justify-between transition-shadow duration-150 rounded-2xl group p-3 ${cursorClass} ${
         isSelected ? 'ring-2 ring-blue-500 bg-blue-50/20 shadow-md' : 'hover:bg-slate-50/40'
       }`}
       style={{
