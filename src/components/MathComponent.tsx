@@ -94,7 +94,11 @@ export default function MathComponent({
     }
   }, [isEditing]);
 
-  const handleBlur = () => {
+  const handleBlur = (e: React.FocusEvent<HTMLTextAreaElement>) => {
+    // If focus is moving to the formatting toolbar, keep editing!
+    if (e.relatedTarget && (e.relatedTarget as HTMLElement).closest('.lucidspark-action-bar')) {
+      return;
+    }
     setIsEditing(false);
     setActivePopover(null);
     if (text !== element.text) {
@@ -227,6 +231,12 @@ export default function MathComponent({
               value={text}
               onChange={handleTextChange}
               onBlur={handleBlur}
+              onPointerDown={(e) => {
+                e.stopPropagation();
+              }}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+              }}
               className="w-full flex-1 bg-white/80 border border-slate-300 rounded-lg p-2 font-mono text-sm resize-none focus:outline-none focus:ring-1 focus:ring-indigo-500"
               style={{ color: element.color || '#1e1b4b' }}
               placeholder="Enter LaTeX equation..."
@@ -259,9 +269,9 @@ export default function MathComponent({
       {/* Floating Formatting Action Bar */}
       {isSelected && !isDraggingOrResizing && (
         <div 
-          onPointerDown={(e) => e.stopPropagation()} 
-          onMouseDown={(e) => e.stopPropagation()}
-          className="absolute -top-14 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-2xl shadow-xl px-2 py-1.5 flex items-center space-x-1 z-40 animate-fade-in max-w-[90vw] overflow-x-auto scrollbar-none"
+          onPointerDown={(e) => { e.stopPropagation(); }} 
+          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+          className="absolute -top-14 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-2xl shadow-xl px-2 py-1.5 flex items-center space-x-1 flex-wrap md:flex-nowrap gap-y-1 z-40 animate-fade-in max-w-[95vw] lucidspark-action-bar"
         >
           {/* Reaction & Lock */}
           <div className="flex items-center space-x-0.5 pr-1.5 border-r border-slate-100 shrink-0">
