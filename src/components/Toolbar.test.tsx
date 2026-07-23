@@ -1,7 +1,26 @@
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
-import Toolbar from './Toolbar';
+import Toolbar, { Tool } from './Toolbar';
+import { ShapeType } from '../types';
+
+interface ToolbarProps {
+  activeTool: Tool;
+  onChangeTool: (tool: Tool) => void;
+  activeColor: string;
+  onChangeColor: (color: string) => void;
+  activeShape: ShapeType;
+  onChangeShape: (shape: ShapeType) => void;
+  onClearBoard: () => void;
+  zoom: number;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onZoomReset: () => void;
+  strokeWidth: number;
+  onChangeStrokeWidth: (width: number) => void;
+  gridMode: "dots" | "math" | "none";
+  onChangeGridMode: (mode: "dots" | "math" | "none") => void;
+}
 
 describe('Toolbar', () => {
   const defaultProps = {
@@ -12,6 +31,7 @@ describe('Toolbar', () => {
     activeShape: 'rect' as const,
     onChangeShape: vi.fn(),
     onClearBoard: vi.fn(),
+    onOpenClearModal: vi.fn(),
     zoom: 1,
     onZoomIn: vi.fn(),
     onZoomOut: vi.fn(),
@@ -26,7 +46,7 @@ describe('Toolbar', () => {
     render(<Toolbar {...defaultProps} />);
     expect(screen.getByTitle('Select & Edit (V)')).toBeTruthy();
     expect(screen.getByTitle('Pan Canvas (H)')).toBeTruthy();
-    expect(screen.getByTitle('Clear Board')).toBeTruthy();
+    expect(screen.getByTitle('Clear Whiteboard Canvas')).toBeTruthy();
   });
 
   it('calls onChangeTool when a tool is clicked', () => {
@@ -39,12 +59,12 @@ describe('Toolbar', () => {
   });
 
   it('calls onClearBoard when trash is clicked', () => {
-    const onClearBoard = vi.fn();
-    render(<Toolbar {...defaultProps} onClearBoard={onClearBoard} />);
+    const onOpenClearModal = vi.fn();
+    render(<Toolbar {...defaultProps} onOpenClearModal={onOpenClearModal} />);
     
-    const clearButton = screen.getByTitle('Clear Board');
+    const clearButton = screen.getByTitle('Clear Whiteboard Canvas');
     fireEvent.click(clearButton);
-    expect(onClearBoard).toHaveBeenCalled();
+    expect(onOpenClearModal).toHaveBeenCalled();
   });
 
   it('calls zoom handlers', () => {
