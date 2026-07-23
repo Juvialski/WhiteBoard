@@ -99,6 +99,7 @@ export default function TextComponent({
       if (scrollHeight > element.height) {
         onUpdate({ height: Math.max(scrollHeight + 16, 40) });
       }
+      textareaRef.current.style.height = '';
     }
   }, [text, isEditing]);
 
