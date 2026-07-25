@@ -78,17 +78,35 @@ export default function WorkspaceTimer({ isOpen, onClose, onTimerSync, syncedSta
               playSoundAlert();
               return 0;
             }
+            if (prev % 5 === 0 && onTimerSync) {
+              onTimerSync({
+                isRunning: true,
+                mode: 'timer',
+                remainingSeconds: prev - 1,
+                totalSeconds
+              });
+            }
             return prev - 1;
           });
         } else {
-          setStopwatchSeconds((prev) => prev + 1);
+          setStopwatchSeconds((prev) => {
+            if (prev % 5 === 0 && onTimerSync) {
+              onTimerSync({
+                isRunning: true,
+                mode: 'stopwatch',
+                remainingSeconds: prev + 1,
+                totalSeconds
+              });
+            }
+            return prev + 1;
+          });
         }
       }, 1000);
     }
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isRunning, mode, soundEnabled]);
+  }, [isRunning, mode, soundEnabled, onTimerSync, totalSeconds]);
 
   if (!isOpen) return null;
 
