@@ -1,6 +1,10 @@
 {
-  "name": "Collaborative Whiteboard Workspace",
-  "description": "A collaborative real-time digital whiteboard featuring separate student boards, sticky notes, shapes, drawing tools, and live cursor tracking powered by Firebase.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "name": "Collaborative Whiteboard",
+  "description": "An interactive digital whiteboard featuring real-time synchronization, shapes, connectors, freehand drawing, hand-written ink correction, and AI-powered visual solvers.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

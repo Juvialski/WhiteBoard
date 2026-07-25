@@ -145,6 +145,13 @@ export default function TextComponent({
     }
   }, [isEditing]);
 
+  useEffect(() => {
+    if (!canWrite) {
+      setIsEditing(false);
+      setActivePopover(null);
+    }
+  }, [canWrite]);
+
   // Adjust height on text change to prevent vertical truncation without scrolling/reflow jumps
   useEffect(() => {
     if (isEditing && textareaRef.current) {

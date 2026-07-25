@@ -94,6 +94,13 @@ export default function MathComponent({
     }
   }, [isEditing]);
 
+  useEffect(() => {
+    if (!canWrite) {
+      setIsEditing(false);
+      setActivePopover(null);
+    }
+  }, [canWrite]);
+
   const handleBlur = (e: React.FocusEvent<HTMLTextAreaElement>) => {
     // If focus is moving to the formatting toolbar, keep editing!
     if (e.relatedTarget && (e.relatedTarget as HTMLElement).closest('.lucidspark-action-bar')) {

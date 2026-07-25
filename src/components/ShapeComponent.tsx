@@ -882,6 +882,15 @@ export default function ShapeComponent({
     }
   }, [isEditing]);
 
+  useEffect(() => {
+    if (!canWrite) {
+      setIsEditing(false);
+      setShowEmojiPicker(false);
+      setShowColorPicker(false);
+      setShowMathPanel(false);
+    }
+  }, [canWrite]);
+
   const handleBlur = () => {
     setIsEditing(false);
     if (text !== element.text) {

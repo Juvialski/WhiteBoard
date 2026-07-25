@@ -34,6 +34,13 @@ export default function ImageComponent({
   const [isCropping, setIsCropping] = useState(false);
   const [crop, setCrop] = useState({ top: 0, left: 0, right: 0, bottom: 0 });
 
+  useEffect(() => {
+    if (!canWrite) {
+      setIsCropping(false);
+      setShowEmojiPicker(false);
+    }
+  }, [canWrite]);
+
   const handleEmojiClick = (emoji: string, e: React.MouseEvent) => {
     e.stopPropagation();
     const currentReactions = element.reactions || {};

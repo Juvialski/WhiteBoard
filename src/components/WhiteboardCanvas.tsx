@@ -781,6 +781,9 @@ export default function WhiteboardCanvas({
             });
           } else if (msg.type === "timer_sync") {
             setSyncedTimerState(msg.state);
+            if (msg.state && msg.state.isRunning) {
+              setIsTimerOpen(true);
+            }
           } else if (msg.type === "pong") {
             setWsLatency(Date.now() - msg.id);
           }
@@ -3401,6 +3404,7 @@ export default function WhiteboardCanvas({
 
   // Update specific values of an element
   const handleUpdateElement = React.useCallback((id: string, updates: Partial<BoardElement>) => {
+    if (!canWrite) return;
     const el = elementsRef.current.find((e) => e.id === id);
     if (el) {
       // Create a 'beforeData' object containing only the keys that are being updated
@@ -3420,7 +3424,7 @@ export default function WhiteboardCanvas({
     saveElementLocallyAndSync(id, updates, true).catch((err) =>
       console.error("Error updating element:", err)
     );
-  }, [pushToUndo, saveElementLocallyAndSync]);
+  }, [pushToUndo, saveElementLocallyAndSync, canWrite]);
 
   // Color change handler that also updates selected element colors
   const handleColorChange = async (color: string) => {
@@ -3428,6 +3432,10 @@ export default function WhiteboardCanvas({
     const activeSelection =
       selectedIds.length > 0 ? selectedIds : selectedId ? [selectedId] : [];
     if (activeSelection.length > 0) {
+      if (!canWrite) {
+        triggerReadOnlyAlert();
+        return;
+      }
       await Promise.all(
         activeSelection.map(async (id) => {
           try {

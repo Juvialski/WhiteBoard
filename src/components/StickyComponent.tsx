@@ -45,6 +45,13 @@ export default function StickyComponent({
     }
   }, [isEditing]);
 
+  useEffect(() => {
+    if (!canWrite) {
+      setIsEditing(false);
+      setShowEmojiPicker(false);
+    }
+  }, [canWrite]);
+
   const handleBlur = () => {
     setIsEditing(false);
     if (text !== element.text) {
