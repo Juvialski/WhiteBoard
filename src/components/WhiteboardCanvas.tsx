@@ -703,19 +703,23 @@ export default function WhiteboardCanvas({
 
             // Smooth camera follow logic when actively following a target user
             if (followedUserIdRef.current === msg.userId) {
-              if (msg.x !== undefined && msg.y !== undefined && containerRef.current) {
-                const rect = containerRef.current.getBoundingClientRect();
-                const curZoom = zoomRef.current || 1;
-                const targetPanX = rect.width / 2 - msg.x * curZoom;
-                const targetPanY = rect.height / 2 - msg.y * curZoom;
-                setPanX((prev) => prev + (targetPanX - prev) * 0.35);
-                setPanY((prev) => prev + (targetPanY - prev) * 0.35);
+              if (msg.panX !== undefined && msg.panY !== undefined) {
+                setPanX((prev) => prev + (msg.panX - prev) * 0.35);
+                setPanY((prev) => prev + (msg.panY - prev) * 0.35);
+                if (msg.zoom !== undefined) {
+                  setZoom((prev) => prev + (msg.zoom - prev) * 0.35);
+                }
               }
             }
           } else if (msg.type === "request_follow") {
             if (currentUser.role !== "teacher" && msg.teacherId) {
               setFollowedUserId(msg.teacherId);
               showSyncToast(`${msg.teacherName || "Teacher"} is sharing view! Following screen...`, "info");
+            }
+          } else if (msg.type === "stop_follow") {
+            if (currentUser.role !== "teacher") {
+              setFollowedUserId(null);
+              showSyncToast(`Teacher has stopped sharing their view.`, "info");
             }
           } else if (msg.type === "drawing_stream") {
             // Stream sketch points real-time
@@ -4094,6 +4098,13 @@ export default function WhiteboardCanvas({
                 }
                 showSyncToast("Started Presenter Mode! Team will follow your screen.", "success");
               } else {
+                if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                  wsRef.current.send(JSON.stringify({
+                    type: "stop_follow",
+                    boardId,
+                    teacherId: currentUser.id,
+                  }));
+                }
                 showSyncToast("Exited Presenter Mode.", "info");
               }
             }}

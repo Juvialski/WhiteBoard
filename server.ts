@@ -331,8 +331,11 @@ const startServer = async () => {
           msg.type === "drawing_stream" ||
           msg.type === "drawing_stream_end" ||
           msg.type === "element_update" ||
+          msg.type === "element_focus" ||
           msg.type === "laser_point" ||
-          msg.type === "timer_sync"
+          msg.type === "timer_sync" ||
+          msg.type === "request_follow" ||
+          msg.type === "stop_follow"
         ) {
           const boardId = msg.boardId || currentBoardId;
           if (boardId && rooms.has(boardId)) {
