@@ -33,6 +33,11 @@ import {
   Mic,
   Stamp,
   Calculator,
+  Settings,
+  X,
+  HelpCircle,
+  MoreHorizontal,
+  LayoutGrid,
 } from "lucide-react";
 import { ShapeType } from "../types";
 
@@ -199,6 +204,41 @@ const SHAPES: { type: ShapeType; label: string; icon: React.ReactNode }[] = [
   },
 ];
 
+const GRAPH_TOOLS: { type: Tool; label: string; icon: React.ReactNode }[] = [
+  {
+    type: "advanced-cartesian",
+    label: "Advanced Cartesian",
+    icon: <TrendingUp className="w-4 h-4" />,
+  },
+  {
+    type: "cartesian",
+    label: "Basic Cartesian",
+    icon: <Grid className="w-4 h-4" />,
+  },
+  {
+    type: "numberline",
+    label: "Number Line",
+    icon: (
+      <svg
+        className="w-4 h-4"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M 3 12 L 21 12" strokeWidth="2.5" />
+        <path d="M 6 9 L 3 12 L 6 15" strokeWidth="2.5" />
+        <path d="M 18 9 L 21 12 L 18 15" strokeWidth="2.5" />
+        <path d="M 12 9 L 12 15" strokeWidth="2.5" />
+        <path d="M 7 10 L 7 14" />
+        <path d="M 17 10 L 17 14" />
+      </svg>
+    ),
+  },
+];
+
 export default function Toolbar({
   activeTool,
   onChangeTool,
@@ -227,16 +267,8 @@ export default function Toolbar({
   isTimerOpen = false,
 }: ToolbarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [showShapeMenu, setShowShapeMenu] = useState(false);
-  const [showGraphMenu, setShowGraphMenu] = useState(false);
-  const [showColorMenu, setShowColorMenu] = useState(false);
-  const [hideColorMenuOverride, setHideColorMenuOverride] = useState(false);
-
-  useEffect(() => {
-    if (hasColorableSelection) {
-      setHideColorMenuOverride(false);
-    }
-  }, [hasColorableSelection]);
+  const [showSettingsPanel, setShowSettingsPanel] = useState(true);
+  const [isMobileMoreOpen, setIsMobileMoreOpen] = useState(false);
 
   const isGraphTool =
     activeTool === "cartesian" ||
@@ -244,82 +276,117 @@ export default function Toolbar({
     activeTool === "numberline";
   const activeGraphMode = isGraphTool ? activeTool : "advanced-cartesian";
 
-  const GRAPH_TOOLS: { type: Tool; label: string; icon: React.ReactNode }[] = [
+  // Re-organize tools into clean logical groupings to reduce cognitive overhead
+  const toolGroups = [
     {
-      type: "advanced-cartesian",
-      label: "Advanced Cartesian",
-      icon: <TrendingUp className="w-4 h-4" />,
+      id: "navigation",
+      label: "Navigation",
+      items: [
+        { id: "select", icon: <MousePointer className="w-5 h-5" />, label: "Select & Edit", shortcut: "V" },
+        { id: "pan", icon: <Hand className="w-5 h-5" />, label: "Pan Canvas", shortcut: "H" },
+        { id: "eraser", icon: <Eraser className="w-5 h-5" />, label: "Eraser Tool", shortcut: "E" },
+      ]
     },
     {
-      type: "cartesian",
-      label: "Basic Cartesian",
-      icon: <Grid className="w-4 h-4" />,
+      id: "drawing",
+      label: "Drawing",
+      items: [
+        { id: "pencil", icon: <Pen className="w-5 h-5" />, label: "Pencil Draw", shortcut: "P" },
+        { id: "highlighter", icon: <Highlighter className="w-5 h-5" />, label: "Highlighter", shortcut: "" },
+        { id: "laser", icon: <Flame className="w-5 h-5 text-rose-500" />, label: "Laser Pointer", shortcut: "" },
+      ]
     },
     {
-      type: "numberline",
-      label: "Number Line",
-      icon: (
-        <svg
-          className="w-4 h-4"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M 3 12 L 21 12" strokeWidth="2.5" />
-          <path d="M 6 9 L 3 12 L 6 15" strokeWidth="2.5" />
-          <path d="M 18 9 L 21 12 L 18 15" strokeWidth="2.5" />
-          <path d="M 12 9 L 12 15" strokeWidth="2.5" />
-          <path d="M 7 10 L 7 14" />
-          <path d="M 17 10 L 17 14" />
-        </svg>
-      ),
+      id: "elements",
+      label: "Elements",
+      items: [
+        { id: "text", icon: <Type className="w-5 h-5" />, label: "Text Box", shortcut: "T" },
+        { id: "sticky", icon: <StickyNote className="w-5 h-5" />, label: "Sticky Note", shortcut: "N" },
+        { id: "math", icon: <Calculator className="w-5 h-5 text-indigo-500" />, label: "Math Equation", shortcut: "" },
+        { id: "shape", icon: <Square className="w-5 h-5" />, label: "Shapes Picker", shortcut: "S" },
+        { id: "graph_menu", icon: <TrendingUp className="w-5 h-5" />, label: "Grid Graphs", shortcut: "G" },
+        { id: "connector", icon: <CornerDownRight className="w-5 h-5" />, label: "Connector Arrow", shortcut: "L" },
+      ]
     },
+    {
+      id: "collaboration",
+      label: "Interaction",
+      items: [
+        { id: "audio", icon: <Mic className="w-5 h-5 text-amber-500" />, label: "Voice Annotation", shortcut: "" },
+        { id: "stamp", icon: <Stamp className="w-5 h-5 text-emerald-500" />, label: "Feedback Stamps", shortcut: "" },
+      ]
+    }
   ];
 
-  const tools: {
-    id: Tool | "graph_menu";
-    icon: React.ReactNode;
-    label: string;
-    shortcut?: string;
-  }[] = [
-    {
-      id: "select",
-      icon: <MousePointer className="w-5 h-5" />,
-      label: "Select & Edit (V)",
-    },
-    { id: "pan", icon: <Hand className="w-5 h-5" />, label: "Pan Canvas (H)" },
-    {
-      id: "pencil",
-      icon: <Pen className="w-5 h-5" />,
-      label: "Pen Drawing (P)",
-    },
-    {
-      id: "highlighter",
-      icon: <Highlighter className="w-5 h-5" />,
-      label: "Highlighter",
-    },
-    {
-      id: "sticky",
-      icon: <StickyNote className="w-5 h-5" />,
-      label: "Sticky Note (N)",
-    },
-    { id: "shape", icon: <Square className="w-5 h-5" />, label: "Shapes (S)" },
-    {
-      id: "graph_menu",
-      icon: <TrendingUp className="w-5 h-5" />,
-      label: "Graphs (G)",
-    },
-    { id: "text", icon: <Type className="w-5 h-5" />, label: "Text Box (T)" },
-    { id: "audio", icon: <Mic className="w-5 h-5 text-amber-500" />, label: "Voice Comment / Audio Pin" },
-    { id: "stamp", icon: <Stamp className="w-5 h-5 text-emerald-500" />, label: "Stamps & Signatures" },
-    { id: "math", icon: <Calculator className="w-5 h-5 text-indigo-500" />, label: "Math Equation Callout" },
-    { id: "connector", icon: <CornerDownRight className="w-5 h-5" />, label: "Connector Line (L)" },
-    { id: "laser", icon: <Flame className="w-5 h-5 text-rose-500" />, label: "Laser Pointer (Laser Trail)" },
-    { id: "eraser", icon: <Eraser className="w-5 h-5" />, label: "Eraser (E)" },
-  ];
+  const hasSettings = [
+    "pencil",
+    "highlighter",
+    "laser",
+    "shape",
+    "sticky",
+    "text",
+    "math",
+    "connector",
+    "cartesian",
+    "numberline",
+    "advanced-cartesian",
+  ].includes(activeTool) || (activeTool === "select" && hasColorableSelection);
+
+  const getToolDisplayName = () => {
+    if (activeTool === "select" && hasColorableSelection) return "Selection Theme";
+    if (activeTool === "pencil") return "Pencil Settings";
+    if (activeTool === "highlighter") return "Highlighter Settings";
+    if (activeTool === "laser") return "Laser Pointer Settings";
+    if (activeTool === "shape") return "Shape Settings";
+    if (activeTool === "sticky") return "Sticky Note Settings";
+    if (activeTool === "text") return "Text Settings";
+    if (activeTool === "math") return "Math Formula Settings";
+    if (activeTool === "connector") return "Connector Settings";
+    if (isGraphTool) return "Graph Settings";
+    return "";
+  };
+
+  const getToolIcon = () => {
+    if (activeTool === "select") return <MousePointer className="w-4 h-4 text-blue-600" />;
+    if (activeTool === "pencil") return <Pen className="w-4 h-4 text-blue-600" />;
+    if (activeTool === "highlighter") return <Highlighter className="w-4 h-4 text-blue-600" />;
+    if (activeTool === "laser") return <Flame className="w-4 h-4 text-rose-500" />;
+    if (activeTool === "shape") return <Square className="w-4 h-4 text-blue-600" />;
+    if (activeTool === "sticky") return <StickyNote className="w-4 h-4 text-blue-600" />;
+    if (activeTool === "text") return <Type className="w-4 h-4 text-blue-600" />;
+    if (activeTool === "math") return <Calculator className="w-4 h-4 text-indigo-600" />;
+    if (activeTool === "connector") return <CornerDownRight className="w-4 h-4 text-blue-600" />;
+    if (isGraphTool) return <TrendingUp className="w-4 h-4 text-blue-600" />;
+    return null;
+  };
+
+  const getToolTipText = () => {
+    if (activeTool === "pencil") return "Freehand pencil sketch. Select active color and line stroke weight below.";
+    if (activeTool === "highlighter") return "Semi-transparent highlighter to annotate text, models or layouts.";
+    if (activeTool === "laser") return "Temporary laser pointer to draw attention. Auto-fades in 2 seconds.";
+    if (activeTool === "shape") return "Place shapes onto the canvas. Links perfectly with connection arrows.";
+    if (activeTool === "sticky") return "Standard sticky notes. Double-click after creation to write messages.";
+    if (activeTool === "text") return "Annotate specific zones with precise styled text blocks.";
+    if (activeTool === "math") return "Renders advanced KaTeX mathematical equations on the board.";
+    if (activeTool === "connector") return "Links shapes together using top, bottom, left or right socket anchors.";
+    if (isGraphTool) return "Draw a standard cartesian graph or number line coordinates automatically.";
+    if (activeTool === "select" && hasColorableSelection) return "Update the background or outline color of selected elements.";
+    return "";
+  };
+
+  const isColorable = [
+    "pencil",
+    "highlighter",
+    "laser",
+    "shape",
+    "sticky",
+    "text",
+    "math",
+    "connector",
+    "cartesian",
+    "numberline",
+    "advanced-cartesian",
+  ].includes(activeTool) || (activeTool === "select" && hasColorableSelection);
 
   const topOffsetClass = isZenMode || isTopBarHidden ? "md:top-3" : "md:top-16 lg:md:top-20";
 
@@ -330,21 +397,21 @@ export default function Toolbar({
       <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-md p-1 sm:p-1.5 flex items-center space-x-0.5 sm:space-x-1 shrink-0">
         <button
           onClick={onZoomOut}
-          className="p-1 sm:p-2 rounded-xl text-slate-600 hover:bg-slate-100 flex items-center justify-center cursor-pointer"
+          className="p-1 sm:p-2 rounded-xl text-slate-600 hover:bg-slate-100 flex items-center justify-center cursor-pointer transition-colors"
           title="Zoom Out"
         >
           <ZoomOut className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
         </button>
         <button
           onClick={onZoomReset}
-          className="py-1 px-1 sm:px-2 text-[10px] sm:text-[11px] font-bold text-slate-600 hover:bg-slate-100 rounded-lg text-center font-mono whitespace-nowrap min-w-[2.2rem] sm:min-w-[3rem] cursor-pointer"
+          className="py-1 px-1 sm:px-2 text-[10px] sm:text-[11px] font-bold text-slate-600 hover:bg-slate-100 rounded-lg text-center font-mono whitespace-nowrap min-w-[2.2rem] sm:min-w-[3rem] cursor-pointer transition-colors"
           title="Reset Zoom"
         >
           {Math.round(zoom * 100)}%
         </button>
         <button
           onClick={onZoomIn}
-          className="p-1 sm:p-2 rounded-xl text-slate-600 hover:bg-slate-100 flex items-center justify-center cursor-pointer"
+          className="p-1 sm:p-2 rounded-xl text-slate-600 hover:bg-slate-100 flex items-center justify-center cursor-pointer transition-colors"
           title="Zoom In"
         >
           <ZoomIn className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
@@ -418,7 +485,7 @@ export default function Toolbar({
 
       {/* Full Screen / Zen Mode Toggle */}
       {onToggleZenMode && (
-        <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-md p-1 sm:p-1.5 flex items-center shrink-0">
+        <div className="hidden md:flex bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-md p-1 sm:p-1.5 items-center shrink-0">
           <button
             onClick={onToggleZenMode}
             className="p-1.5 sm:p-2 rounded-xl text-slate-500 hover:bg-slate-100 flex items-center justify-center transition-all cursor-pointer"
@@ -431,7 +498,7 @@ export default function Toolbar({
 
       {/* Sprint Timer Button */}
       {onToggleTimer && (
-        <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-md p-1 sm:p-1.5 flex items-center shrink-0">
+        <div className="hidden md:flex bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-md p-1 sm:p-1.5 items-center shrink-0">
           <button
             onClick={onToggleTimer}
             className={`p-1.5 sm:p-2 rounded-xl flex items-center justify-center transition-all cursor-pointer ${
@@ -448,7 +515,7 @@ export default function Toolbar({
 
       {/* Keyboard Shortcuts Button */}
       {onOpenShortcuts && (
-        <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-md p-1 sm:p-1.5 flex items-center shrink-0">
+        <div className="hidden md:flex bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-md p-1 sm:p-1.5 items-center shrink-0">
           <button
             onClick={onOpenShortcuts}
             className="p-1.5 sm:p-2 rounded-xl text-slate-500 hover:text-blue-600 hover:bg-slate-100 flex items-center justify-center transition-all cursor-pointer"
@@ -461,7 +528,7 @@ export default function Toolbar({
 
       {/* Clear Board Button */}
       {onOpenClearModal && (
-        <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-md p-1 sm:p-1.5 flex items-center shrink-0">
+        <div className="hidden md:flex bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-md p-1 sm:p-1.5 items-center shrink-0">
           <button
             onClick={onOpenClearModal}
             className="p-1.5 sm:p-2 rounded-xl text-slate-500 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition-all cursor-pointer"
@@ -484,11 +551,11 @@ export default function Toolbar({
         >
           <button
             onClick={() => setIsCollapsed(false)}
-            className="bg-white/95 backdrop-blur-md hover:bg-white text-slate-700 hover:text-blue-600 border border-slate-200/90 shadow-md hover:shadow-lg rounded-2xl px-3 py-2.5 flex items-center space-x-2 text-xs font-bold cursor-pointer transition-all hover:scale-105 active:scale-95 group"
+            className="bg-white/95 backdrop-blur-md hover:bg-white text-slate-700 hover:text-blue-600 border border-slate-200/90 shadow-md hover:shadow-lg rounded-2xl px-3.5 py-3 flex items-center space-x-2 text-xs font-bold cursor-pointer transition-all hover:scale-105 active:scale-95 group"
             title="Show Toolbar"
           >
             <PenTool className="w-4 h-4 text-blue-600" />
-            <span className="text-xs font-bold">Tools</span>
+            <span className="text-xs font-bold tracking-wide">Workspace Tools</span>
             <ChevronRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-600 transition-colors" />
           </button>
         </div>
@@ -505,79 +572,170 @@ export default function Toolbar({
         className={`fixed md:absolute bottom-3 left-1/2 -translate-x-1/2 md:translate-x-0 md:left-3 md:bottom-auto z-30 flex flex-col items-center md:items-start space-y-2 transition-all duration-300 max-w-[98vw] ${topOffsetClass}`}
         id="whiteboard-toolbar"
       >
-        {/* Primary Toolbar */}
-        <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-xl p-1.5 flex flex-row md:flex-col items-center space-x-1 md:space-x-0 md:space-y-1 max-w-full overflow-x-auto scrollbar-none">
-          {/* Hide Toolbar Header */}
-          <div className="hidden md:flex items-center justify-between px-1 pt-0.5 pb-1 border-b border-slate-100/80 mb-0.5 w-full">
-            <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider pl-0.5">Tools</span>
-            <button
-              onClick={() => setIsCollapsed(true)}
-              className="p-0.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
-              title="Hide Toolbar"
-            >
-              <ChevronLeft className="w-3.5 h-3.5" />
-            </button>
-          </div>
-          {tools.map((t) => {
-            const isActive = activeTool === t.id;
-            return (
-              <div key={t.id} className="relative group shrink-0">
+        {/* Primary Segmented Toolbar */}
+        <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-xl p-1.5 flex flex-row md:flex-col items-center max-w-full overflow-x-auto scrollbar-none space-x-1 md:space-x-0 md:space-y-1">
+          {/* Toolbar Header (Desktop Only) */}
+          <div className="hidden md:flex items-center justify-between px-1.5 pt-0.5 pb-1 border-b border-slate-100 mb-1 w-full">
+            <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest pl-0.5">Tools</span>
+            <div className="flex items-center space-x-0.5">
+              {hasSettings && (
                 <button
+                  onClick={() => setShowSettingsPanel(!showSettingsPanel)}
+                  className={`p-1 rounded-lg transition-all cursor-pointer ${
+                    showSettingsPanel ? "text-blue-600 hover:bg-blue-50" : "text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+                  }`}
+                  title={showSettingsPanel ? "Hide Tool Settings" : "Show Tool Settings"}
+                >
+                  <Settings className="w-3.5 h-3.5" />
+                </button>
+              )}
+              <button
+                onClick={() => setIsCollapsed(true)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+                title="Hide Toolbar"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Grouped Tools Renderer (Desktop Only) */}
+          <div className="hidden md:flex flex-col items-center space-y-1 w-full">
+            {toolGroups.map((group, groupIdx) => (
+              <React.Fragment key={group.id}>
+                {groupIdx > 0 && <div className="w-full h-px bg-slate-100 my-1" />}
+                <div className="flex flex-col items-center space-y-1 w-full">
+                  {group.items.map((t) => {
+                    const isActive = activeTool === t.id;
+                    const isGraphActive = t.id === "graph_menu" && isGraphTool;
+                    const showActive = isActive || isGraphActive;
+                    
+                    return (
+                      <div key={t.id} className="relative group shrink-0 w-full flex justify-center">
+                        <button
+                          onClick={() => {
+                            if (showActive) {
+                              setShowSettingsPanel(!showSettingsPanel);
+                            } else {
+                              if (t.id === "graph_menu") {
+                                onChangeTool(activeGraphMode as Tool);
+                              } else {
+                                onChangeTool(t.id as Tool);
+                              }
+                              setShowSettingsPanel(true);
+                            }
+                          }}
+                          className={`p-2.5 sm:p-3 rounded-xl flex items-center justify-center transition-all cursor-pointer ${
+                            showActive
+                              ? "bg-blue-600 text-white shadow-md shadow-blue-600/15 scale-105"
+                              : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                          }`}
+                          title={t.label}
+                        >
+                          {t.id === "shape"
+                            ? SHAPES.find((s) => s.type === activeShape)?.icon || t.icon
+                            : t.id === "graph_menu"
+                              ? GRAPH_TOOLS.find((g) => g.type === activeGraphMode)?.icon || t.icon
+                              : t.icon}
+                        </button>
+
+                        {/* Desktop Tooltip */}
+                        <div className="hidden md:block absolute left-16 top-1/2 -translate-y-1/2 bg-slate-900 text-white text-[11px] px-2.5 py-1 rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150 whitespace-nowrap shadow-md z-50">
+                          {t.label} {t.shortcut && <span className="ml-1.5 text-slate-400 font-mono font-bold text-[9px] bg-slate-800 px-1 py-0.5 rounded">({t.shortcut})</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </React.Fragment>
+            ))}
+          </div>
+
+          {/* Compact Primary Tools Renderer (Mobile Only) */}
+          <div className="flex md:hidden items-center space-x-1 shrink-0">
+            {[
+              { id: "select", icon: <MousePointer className="w-4.5 h-4.5" />, label: "Select" },
+              { id: "pan", icon: <Hand className="w-4.5 h-4.5" />, label: "Pan" },
+              { id: "eraser", icon: <Eraser className="w-4.5 h-4.5" />, label: "Eraser" },
+              { id: "pencil", icon: <Pen className="w-4.5 h-4.5" />, label: "Pencil" },
+              { id: "graph_menu", icon: GRAPH_TOOLS.find((g) => g.type === activeGraphMode)?.icon || <TrendingUp className="w-4.5 h-4.5" />, label: "Graphs" },
+              { id: "shape", icon: SHAPES.find((s) => s.type === activeShape)?.icon || <Square className="w-4.5 h-4.5" />, label: "Shapes" },
+              { id: "text", icon: <Type className="w-4.5 h-4.5" />, label: "Text" },
+            ].map((t) => {
+              const isActive = t.id === "graph_menu" ? isGraphTool : activeTool === t.id;
+              return (
+                <button
+                  key={t.id}
                   onClick={() => {
-                    if (t.id === "graph_menu") {
-                      onChangeTool(activeGraphMode as Tool);
-                      setShowGraphMenu(true);
-                      setShowShapeMenu(false);
-                      setShowColorMenu(true);
+                    if (isActive) {
+                      setShowSettingsPanel(!showSettingsPanel);
                     } else {
-                      onChangeTool(t.id as Tool);
-                      setShowGraphMenu(false);
-                      if (t.id === "shape") {
-                        setShowShapeMenu(true);
+                      if (t.id === "graph_menu") {
+                        onChangeTool(activeGraphMode as Tool);
                       } else {
-                        setShowShapeMenu(false);
+                        onChangeTool(t.id as Tool);
                       }
-                      if (
-                        [
-                          "sticky",
-                          "shape",
-                          "pencil",
-                          "highlighter",
-                          "text",
-                          "cartesian",
-                          "numberline",
-                          "advanced-cartesian",
-                          "connector",
-                        ].includes(t.id)
-                      ) {
-                        setShowColorMenu(true);
-                      } else {
-                        setShowColorMenu(false);
-                      }
+                      setShowSettingsPanel(true);
                     }
+                    setIsMobileMoreOpen(false);
                   }}
-                  className={`p-2.5 sm:p-3 rounded-xl flex items-center justify-center transition-all ${
-                    isActive || (t.id === "graph_menu" && isGraphTool)
-                      ? "bg-blue-600 text-white shadow-md shadow-blue-600/15 scale-105"
-                      : "text-slate-600 hover:bg-slate-100"
+                  className={`p-2.5 rounded-xl flex items-center justify-center transition-all cursor-pointer shrink-0 ${
+                    isActive
+                      ? "bg-blue-600 text-white shadow-sm scale-105 font-bold"
+                      : "text-slate-600 hover:bg-slate-50"
                   }`}
                   title={t.label}
                 >
-                  {t.id === "shape"
-                    ? SHAPES.find((s) => s.type === activeShape)?.icon || t.icon
-                    : t.id === "graph_menu"
-                      ? GRAPH_TOOLS.find((g) => g.type === activeGraphMode)
-                          ?.icon || t.icon
-                      : t.icon}
+                  {t.icon}
                 </button>
+              );
+            })}
 
-                {/* Desktop Tooltip */}
-                <div className="hidden md:block absolute left-16 top-1/2 -translate-y-1/2 bg-slate-900 text-white text-xs px-2.5 py-1 rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150 whitespace-nowrap shadow-md">
-                  {t.label}
-                </div>
-              </div>
-            );
-          })}
+            {/* Mobile-Only More Tools Toggle Button */}
+            {(() => {
+              const secondaryTools = [
+                "highlighter",
+                "laser",
+                "sticky",
+                "math",
+                "connector",
+                "audio",
+                "stamp",
+                "cartesian",
+                "numberline",
+                "advanced-cartesian",
+              ];
+              const isSecondaryActive = secondaryTools.includes(activeTool) || isGraphTool;
+              
+              const getSecondaryActiveIcon = () => {
+                if (activeTool === "highlighter") return <Highlighter className="w-4.5 h-4.5" />;
+                if (activeTool === "laser") return <Flame className="w-4.5 h-4.5 text-rose-500" />;
+                if (activeTool === "sticky") return <StickyNote className="w-4.5 h-4.5" />;
+                if (activeTool === "math") return <Calculator className="w-4.5 h-4.5 text-indigo-500" />;
+                if (isGraphTool) return <TrendingUp className="w-4.5 h-4.5" />;
+                if (activeTool === "connector") return <CornerDownRight className="w-4.5 h-4.5" />;
+                if (activeTool === "audio") return <Mic className="w-4.5 h-4.5 text-amber-500" />;
+                if (activeTool === "stamp") return <Stamp className="w-4.5 h-4.5 text-emerald-500" />;
+                return <LayoutGrid className="w-4.5 h-4.5" />;
+              };
+
+              return (
+                <button
+                  onClick={() => setIsMobileMoreOpen(!isMobileMoreOpen)}
+                  className={`p-2.5 rounded-xl flex items-center justify-center transition-all cursor-pointer shrink-0 border border-transparent ${
+                    isSecondaryActive
+                      ? "bg-blue-600 text-white shadow-sm scale-105"
+                      : isMobileMoreOpen
+                        ? "bg-slate-100 text-slate-800 border-slate-200/60"
+                        : "text-slate-600 hover:bg-slate-50"
+                  }`}
+                  title="More Tools"
+                >
+                  {getSecondaryActiveIcon()}
+                </button>
+              );
+            })()}
+          </div>
           
           {/* Mobile Collapse Button */}
           <button
@@ -585,142 +743,172 @@ export default function Toolbar({
             className="md:hidden p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer shrink-0 ml-1 border-l border-slate-100 pl-2"
             title="Hide Toolbar"
           >
-            <ChevronLeft className="w-4 h-4 rotate-180 md:rotate-0" />
+            <ChevronLeft className="w-4 h-4 rotate-180" />
           </button>
         </div>
 
-        {/* Floating Submenu Panels (Shapes Selector, Color Picker, Pen stroke) */}
-        {showShapeMenu && activeTool === "shape" && (
-          <div
-            className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-xl p-2 flex flex-col space-y-1 absolute bottom-16 left-1/2 -translate-x-1/2 md:bottom-auto md:left-16 md:top-10 md:translate-x-0 w-44 max-h-[280px] sm:max-h-[320px] overflow-y-auto animate-fade-in z-40"
-            style={{ scrollbarWidth: "thin" }}
-          >
-            <div className="text-[10px] font-bold text-slate-400 px-2 py-1 uppercase tracking-wider sticky top-0 bg-white/95 z-10 border-b border-slate-50 mb-1">
-              Select Shape
-            </div>
-            {SHAPES.map((s) => (
-              <button
-                key={s.type}
-                onClick={() => {
-                  onChangeShape(s.type);
-                  setShowShapeMenu(false);
-                }}
-                className={`w-full text-left px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-2 transition-colors cursor-pointer ${
-                  activeShape === s.type
-                    ? "bg-blue-50 text-blue-600"
-                    : "text-slate-600 hover:bg-slate-50"
-                }`}
-              >
-                <span className="text-slate-500">{s.icon}</span>
-                <span>{s.label}</span>
-              </button>
-            ))}
+        {/* Mobile "More Tools" Grid Popover */}
+        {isMobileMoreOpen && (
+          <div className="md:hidden bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-2xl p-3 grid grid-cols-4 gap-2 absolute bottom-16 left-1/2 -translate-x-1/2 w-[94vw] max-w-[320px] animate-fade-in z-40">
+            {[
+              { id: "highlighter", icon: <Highlighter className="w-5 h-5 text-slate-600" />, label: "Highlight" },
+              { id: "laser", icon: <Flame className="w-5 h-5 text-rose-500" />, label: "Laser" },
+              { id: "sticky", icon: <StickyNote className="w-5 h-5 text-slate-600" />, label: "Sticky" },
+              { id: "math", icon: <Calculator className="w-5 h-5 text-indigo-500" />, label: "Math" },
+              { id: "connector", icon: <CornerDownRight className="w-5 h-5 text-slate-600" />, label: "Connector" },
+              { id: "audio", icon: <Mic className="w-5 h-5 text-amber-500" />, label: "Voice" },
+              { id: "stamp", icon: <Stamp className="w-5 h-5 text-emerald-500" />, label: "Stamps" },
+            ].map((t) => {
+              const isActive = activeTool === t.id;
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => {
+                    onChangeTool(t.id as Tool);
+                    setShowSettingsPanel(true);
+                    setIsMobileMoreOpen(false);
+                  }}
+                  className={`p-2 rounded-xl flex flex-col items-center justify-center space-y-1 transition-all border cursor-pointer ${
+                    isActive
+                      ? "bg-blue-50 border-blue-200 text-blue-600 font-bold"
+                      : "bg-slate-50/50 border-transparent hover:bg-slate-100 text-slate-600"
+                  }`}
+                >
+                  {t.icon}
+                  <span className="text-[10px] font-bold tracking-tight">{t.label}</span>
+                </button>
+              );
+            })}
           </div>
         )}
 
-        {showGraphMenu && isGraphTool && (
+        {/* UNIFIED PROPERTIES PANEL: Merges shape menu, graph selector, line width, and color palette */}
+        {hasSettings && showSettingsPanel && (
           <div
-            className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-xl p-2 flex flex-col space-y-1 absolute bottom-16 left-1/2 -translate-x-1/2 md:bottom-auto md:left-16 md:top-24 md:translate-x-0 w-52 max-h-[280px] sm:max-h-[320px] overflow-y-auto animate-fade-in z-40"
-            style={{ scrollbarWidth: "thin" }}
-          >
-            <div className="text-[10px] font-bold text-slate-400 px-2 py-1 uppercase tracking-wider sticky top-0 bg-white/95 z-10 border-b border-slate-50 mb-1">
-              Select Graph
-            </div>
-            {GRAPH_TOOLS.map((g) => (
-              <button
-                key={g.type}
-                onClick={() => {
-                  onChangeTool(g.type);
-                  setShowGraphMenu(false);
-                }}
-                className={`w-full text-left px-3 py-2 rounded-lg text-xs font-semibold flex items-center space-x-2 transition-colors cursor-pointer ${
-                  activeTool === g.type
-                    ? "bg-blue-50 text-blue-600"
-                    : "text-slate-600 hover:bg-slate-50"
-                }`}
-              >
-                <span className="text-slate-500">{g.icon}</span>
-                <span>{g.label}</span>
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* Color Picker Panel */}
-        {(showColorMenu ||
-          (activeTool === "select" &&
-            hasColorableSelection &&
-            !hideColorMenuOverride)) && (
-          <div
-            className={`bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-xl p-3 flex flex-col space-y-2.5 absolute transition-all duration-200 z-40 w-48 animate-fade-in ${
-              showShapeMenu && activeTool === "shape"
-                ? "bottom-[19.5rem] left-1/2 -translate-x-1/2 md:bottom-auto md:left-[17.5rem] md:top-10 md:translate-x-0"
-                : showGraphMenu && isGraphTool
-                  ? "bottom-[19.5rem] left-1/2 -translate-x-1/2 md:bottom-auto md:left-[19.5rem] md:top-24 md:translate-x-0"
-                  : "bottom-16 left-1/2 -translate-x-1/2 md:bottom-auto md:left-16 md:top-10 md:translate-x-0"
+            className={`bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-xl p-3.5 flex flex-col space-y-3.5 absolute transition-all duration-200 z-40 w-[94vw] max-w-[280px] animate-fade-in ${
+              isCollapsed
+                ? "bottom-16 left-1/2 -translate-x-1/2 md:bottom-auto md:left-20 md:top-10 md:translate-x-0"
+                : "bottom-20 left-1/2 -translate-x-1/2 md:bottom-auto md:left-20 md:top-10 md:translate-x-0"
             }`}
           >
-            <div className="flex items-center justify-between border-b border-slate-100 pb-1">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                Palette Color
-              </span>
+            {/* Properties Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+              <div className="flex items-center space-x-1.5 font-bold text-slate-900 text-xs">
+                {getToolIcon()}
+                <span>{getToolDisplayName()}</span>
+              </div>
               <button
-                onClick={() => {
-                  setShowColorMenu(false);
-                  setHideColorMenuOverride(true);
-                }}
-                className="text-slate-400 hover:text-slate-600 text-xs font-medium"
+                onClick={() => setShowSettingsPanel(false)}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer p-0.5 hover:bg-slate-100 rounded-md transition-colors"
+                title="Collapse Panel"
               >
-                Close
+                <X className="w-3.5 h-3.5" />
               </button>
             </div>
 
-            <div className="grid grid-cols-4 gap-2">
-              {STICKY_COLORS.map((color) => {
-                const isSelected = activeColor === color.hex;
-                const isDarkColor = [
-                  "#e11d48",
-                  "#f97316",
-                  "#059669",
-                  "#2563eb",
-                  "#7c3aed",
-                  "#64748b",
-                  "#000000",
-                ].includes(color.hex);
-                return (
-                  <button
-                    key={color.hex}
-                    onClick={() => onChangeColor(color.hex)}
-                    className={`h-8 rounded-lg border relative transition-all ${
-                      isSelected
-                        ? "ring-2 ring-blue-600 ring-offset-1 border-white scale-105"
-                        : "border-slate-200"
-                    }`}
-                    style={{ backgroundColor: color.hex }}
-                    title={color.name}
-                  >
-                    {isSelected && (
-                      <div
-                        className={`absolute inset-0 m-auto w-2 h-2 rounded-full shadow-xs ${isDarkColor ? "bg-white" : "bg-slate-800"}`}
-                      />
-                    )}
-                  </button>
-                );
-              })}
-            </div>
+            {/* Shape-specific Selection Grid */}
+            {activeTool === "shape" && (
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Shape Type
+                </span>
+                <div className="grid grid-cols-2 gap-1.5 max-h-[140px] overflow-y-auto pr-0.5" style={{ scrollbarWidth: "thin" }}>
+                  {SHAPES.map((s) => {
+                    const isSelected = activeShape === s.type;
+                    return (
+                      <button
+                        key={s.type}
+                        onClick={() => onChangeShape(s.type)}
+                        className={`px-2 py-1.5 rounded-xl text-[11px] font-semibold flex items-center space-x-2 transition-all cursor-pointer border ${
+                          isSelected
+                            ? "bg-blue-50 text-blue-600 border-blue-200"
+                            : "bg-slate-50 text-slate-600 border-transparent hover:bg-slate-100"
+                        }`}
+                      >
+                        <span className={isSelected ? "text-blue-600" : "text-slate-500 shrink-0"}>{s.icon}</span>
+                        <span className="truncate">{s.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Graph-specific System Segmented Selector */}
+            {isGraphTool && (
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Graph System
+                </span>
+                <div className="flex flex-col space-y-1">
+                  {GRAPH_TOOLS.map((g) => {
+                    const isSelected = activeTool === g.type;
+                    return (
+                      <button
+                        key={g.type}
+                        onClick={() => onChangeTool(g.type)}
+                        className={`w-full text-left px-3 py-1.5 rounded-xl text-[11px] font-semibold flex items-center space-x-2 transition-all cursor-pointer border ${
+                          isSelected
+                            ? "bg-blue-50 text-blue-600 border-blue-200 shadow-xs"
+                            : "bg-slate-50 text-slate-600 border-transparent hover:bg-slate-100"
+                        }`}
+                      >
+                        <span className={isSelected ? "text-blue-600" : "text-slate-500 shrink-0"}>{g.icon}</span>
+                        <span>{g.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Drawing Tool Type Selector */}
+            {(activeTool === "pencil" || activeTool === "highlighter" || activeTool === "laser") && (
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Pencil Type
+                </span>
+                <div className="flex space-x-1">
+                  {[
+                    { id: "pencil", label: "Pencil", icon: <Pen className="w-3.5 h-3.5" /> },
+                    { id: "highlighter", label: "Highlight", icon: <Highlighter className="w-3.5 h-3.5" /> },
+                    { id: "laser", label: "Laser", icon: <Flame className="w-3.5 h-3.5 text-rose-500" /> },
+                  ].map((item) => {
+                    const isSelected = activeTool === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => {
+                          onChangeTool(item.id as Tool);
+                          setShowSettingsPanel(true);
+                        }}
+                        className={`flex-1 py-1.5 px-2 rounded-xl border text-[10px] font-bold transition-all cursor-pointer flex items-center justify-center space-x-1 ${
+                          isSelected
+                            ? "bg-blue-50 text-blue-600 border-blue-200 shadow-xs scale-102"
+                            : "bg-slate-50 text-slate-500 border-transparent hover:bg-slate-100"
+                        }`}
+                      >
+                        {item.icon}
+                        <span className="truncate">{item.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* Stroke Thickness Panel for Drawing Tools */}
             {(activeTool === "pencil" || activeTool === "highlighter") && (
-              <div className="border-t border-slate-100 pt-2.5 space-y-1">
+              <div className="space-y-1.5">
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                  Line Size
+                  Stroke Weight
                 </span>
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center space-x-1">
                   {[2, 4, 8, 16].map((w) => (
                     <button
                       key={w}
                       onClick={() => onChangeStrokeWidth(w)}
-                      className={`flex-1 py-1 rounded border text-xs font-semibold ${
+                      className={`flex-1 py-1 rounded-xl border text-[11px] font-bold transition-all cursor-pointer ${
                         strokeWidth === w
                           ? "bg-blue-50 text-blue-600 border-blue-200"
                           : "bg-slate-50 text-slate-500 border-transparent hover:bg-slate-100"
@@ -732,6 +920,58 @@ export default function Toolbar({
                 </div>
               </div>
             )}
+
+            {/* Dynamic Palette Color Selector */}
+            {isColorable && (
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Color Theme
+                </span>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {STICKY_COLORS.map((color) => {
+                    const isSelected = activeColor === color.hex;
+                    const isDarkColor = [
+                      "#e11d48",
+                      "#f97316",
+                      "#059669",
+                      "#2563eb",
+                      "#7c3aed",
+                      "#64748b",
+                      "#000000",
+                    ].includes(color.hex);
+                    return (
+                      <button
+                        key={color.hex}
+                        onClick={() => onChangeColor(color.hex)}
+                        className={`h-7 rounded-lg border relative transition-all cursor-pointer ${
+                          isSelected
+                            ? "ring-2 ring-blue-500 ring-offset-1 border-white scale-105"
+                            : "border-slate-200/65 hover:scale-105"
+                        }`}
+                        style={{ backgroundColor: color.hex }}
+                        title={color.name}
+                      >
+                        {isSelected && (
+                          <div
+                            className={`absolute inset-0 m-auto w-1.5 h-1.5 rounded-full shadow-xs ${isDarkColor ? "bg-white" : "bg-slate-800"}`}
+                          />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Dynamic Pedagogical Action Tip footer */}
+            <div className="bg-slate-50/80 rounded-xl p-2.5 border border-slate-100">
+              <div className="flex items-start space-x-1.5">
+                <HelpCircle className="w-3.5 h-3.5 text-slate-400 mt-0.5 shrink-0" />
+                <p className="text-[10px] text-slate-500 leading-normal font-medium">
+                  {getToolTipText()}
+                </p>
+              </div>
+            </div>
           </div>
         )}
       </div>

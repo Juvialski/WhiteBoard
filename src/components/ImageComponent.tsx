@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ImageElement, UserProfile } from '../types';
 import { Smile, Trash2, Maximize2, X, Crop, Check, Lock, Unlock } from 'lucide-react';
 
