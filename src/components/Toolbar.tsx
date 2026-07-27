@@ -292,8 +292,8 @@ export default function Toolbar({
       label: "Drawing",
       items: [
         { id: "pencil", icon: <Pen className="w-5 h-5" />, label: "Pencil Draw", shortcut: "P" },
-        { id: "highlighter", icon: <Highlighter className="w-5 h-5" />, label: "Highlighter", shortcut: "" },
-        { id: "laser", icon: <Flame className="w-5 h-5 text-rose-500" />, label: "Laser Pointer", shortcut: "" },
+        { id: "highlighter", icon: <Highlighter className="w-5 h-5" />, label: "Highlighter", shortcut: "I" },
+        { id: "laser", icon: <Flame className="w-5 h-5 text-rose-500" />, label: "Laser Pointer", shortcut: "K" },
       ]
     },
     {
@@ -302,7 +302,7 @@ export default function Toolbar({
       items: [
         { id: "text", icon: <Type className="w-5 h-5" />, label: "Text Box", shortcut: "T" },
         { id: "sticky", icon: <StickyNote className="w-5 h-5" />, label: "Sticky Note", shortcut: "N" },
-        { id: "math", icon: <Calculator className="w-5 h-5 text-indigo-500" />, label: "Math Equation", shortcut: "" },
+        { id: "math", icon: <Calculator className="w-5 h-5 text-indigo-500" />, label: "Math Equation", shortcut: "M" },
         { id: "shape", icon: <Square className="w-5 h-5" />, label: "Shapes Picker", shortcut: "S" },
         { id: "graph_menu", icon: <TrendingUp className="w-5 h-5" />, label: "Grid Graphs", shortcut: "G" },
         { id: "connector", icon: <CornerDownRight className="w-5 h-5" />, label: "Connector Arrow", shortcut: "L" },
@@ -312,8 +312,8 @@ export default function Toolbar({
       id: "collaboration",
       label: "Interaction",
       items: [
-        { id: "audio", icon: <Mic className="w-5 h-5 text-amber-500" />, label: "Voice Annotation", shortcut: "" },
-        { id: "stamp", icon: <Stamp className="w-5 h-5 text-emerald-500" />, label: "Feedback Stamps", shortcut: "" },
+        { id: "audio", icon: <Mic className="w-5 h-5 text-amber-500" />, label: "Voice Annotation", shortcut: "U" },
+        { id: "stamp", icon: <Stamp className="w-5 h-5 text-emerald-500" />, label: "Feedback Stamps", shortcut: "O" },
       ]
     }
   ];
@@ -820,8 +820,8 @@ export default function Toolbar({
             onMouseLeave={resetAutoHideTimer}
             className={`bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-xl p-3.5 flex flex-col space-y-3.5 absolute transition-all duration-200 z-40 w-[94vw] max-w-[280px] animate-fade-in ${
               isCollapsed
-                ? "bottom-16 left-1/2 -translate-x-1/2 md:bottom-auto md:left-20 md:top-10 md:translate-x-0"
-                : "bottom-20 left-1/2 -translate-x-1/2 md:bottom-auto md:left-20 md:top-10 md:translate-x-0"
+                ? "bottom-16 left-1/2 -translate-x-1/2 md:bottom-auto md:left-24 md:top-10 md:translate-x-0"
+                : "bottom-20 left-1/2 -translate-x-1/2 md:bottom-auto md:left-24 md:top-10 md:translate-x-0"
             }`}
           >
             {/* Properties Header */}

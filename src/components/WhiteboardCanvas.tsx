@@ -1204,9 +1204,11 @@ export default function WhiteboardCanvas({
           // Adjust canvas internal size to actual display size (supports high DPI)
           const rect = canvas.getBoundingClientRect();
           const dpr = window.devicePixelRatio || 1;
-          if (canvas.width !== rect.width * dpr || canvas.height !== rect.height * dpr) {
-            canvas.width = rect.width * dpr;
-            canvas.height = rect.height * dpr;
+          const width = Math.round(rect.width * dpr);
+          const height = Math.round(rect.height * dpr);
+          if (canvas.width !== width || canvas.height !== height) {
+            canvas.width = width;
+            canvas.height = height;
             ctx.scale(dpr, dpr);
           }
           drawLaserTrails(ctx, rect.width, rect.height);
@@ -3610,18 +3612,23 @@ export default function WhiteboardCanvas({
 
       if (key === "v" && !(e.ctrlKey || e.metaKey)) setActiveTool("select");
       else if (key === "h" && !(e.ctrlKey || e.metaKey)) setActiveTool("pan");
-      else if (["p", "n", "s", "t", "l", "e", "g"].includes(key) && !(e.ctrlKey || e.metaKey)) {
+      else if (["p", "i", "k", "n", "s", "t", "m", "l", "e", "g", "u", "o"].includes(key) && !(e.ctrlKey || e.metaKey)) {
         if (!canWrite) {
           triggerReadOnlyAlert();
           return;
         }
         if (key === "p") setActiveTool("pencil");
+        else if (key === "i") setActiveTool("highlighter");
+        else if (key === "k") setActiveTool("laser");
         else if (key === "n") setActiveTool("sticky");
         else if (key === "s") setActiveTool("shape");
         else if (key === "g") setActiveTool("cartesian");
         else if (key === "t") setActiveTool("text");
+        else if (key === "m") setActiveTool("math");
         else if (key === "l") setActiveTool("connector");
         else if (key === "e") setActiveTool("eraser");
+        else if (key === "u") setActiveTool("audio");
+        else if (key === "o") setActiveTool("stamp");
       } else if (e.key === "Delete" || e.key === "Backspace") {
         if (!canWrite) {
           triggerReadOnlyAlert();
@@ -4995,12 +5002,6 @@ export default function WhiteboardCanvas({
             />
           )}
 
-          {/* New High Performance Laser Pointer Canvas Layer */}
-          <canvas
-            ref={laserCanvasRef}
-            className="absolute inset-0 w-full h-full pointer-events-none z-25"
-          />
-
           {/* 2. Global Svg Vector Overlay (Connector Lines, Drawings, Sketches) */}
           <svg
             width="100%"
@@ -5179,6 +5180,13 @@ export default function WhiteboardCanvas({
           />
 
         </div>
+
+        {/* New High Performance Laser Pointer Canvas Layer outside of transformed container */}
+        <canvas
+          ref={laserCanvasRef}
+          className="absolute inset-0 w-full h-full pointer-events-none"
+          style={{ zIndex: 25 }}
+        />
       </div>
 
 
