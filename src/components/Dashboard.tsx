@@ -1087,7 +1087,7 @@ export default function Dashboard({
       {/* Admin Panel Modal */}
       {isAdminPanelOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4 animate-in fade-in duration-200" id="admin-panel-overlay">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200 border border-slate-100">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-6xl md:max-w-7xl max-h-[92vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200 border border-slate-100">
             {/* Modal Header */}
             <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
               <div className="flex items-center space-x-3">
@@ -1240,16 +1240,21 @@ export default function Dashboard({
                 </div>
 
                 {/* Board-by-board stats list */}
-                <div className="bg-slate-50 rounded-2xl border border-slate-200 p-4.5 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Today's Usage Breakdown by Board</h4>
-                    <span className="text-[10px] text-slate-400 font-medium">All figures represent operations logged today</span>
+                <div className="bg-slate-50 rounded-2xl border border-slate-200 p-5 space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Today's Usage Breakdown by Board</h4>
+                      <p className="text-[10px] text-slate-500 mt-0.5">Real-time resource logs calculated for all collaborative rooms.</p>
+                    </div>
+                    <span className="text-[10px] bg-white border border-slate-200 text-slate-500 px-2.5 py-1 rounded-md font-semibold self-start sm:self-auto">
+                      Rooms active today: {boards.filter(b => (b.dailyReads?.[todayStr] || 0) > 0 || (b.dailyWrites?.[todayStr] || 0) > 0).length}
+                    </span>
                   </div>
-                  <div className="max-h-48 overflow-y-auto border border-slate-200 rounded-xl overflow-hidden bg-white">
+                  <div className="max-h-80 overflow-y-auto border border-slate-200/85 rounded-xl overflow-hidden bg-white shadow-xs">
                     <table className="w-full text-left text-xs border-collapse">
                       <thead>
-                        <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold text-[10px] uppercase tracking-wider">
-                          <th className="p-3">Board Name</th>
+                        <tr className="bg-slate-50/75 backdrop-blur-xs border-b border-slate-200 text-slate-500 font-bold text-[10px] uppercase tracking-wider sticky top-0 z-10">
+                          <th className="p-3 pl-4">Board Name</th>
                           <th className="p-3">Created By</th>
                           <th className="p-3 text-center">Reads Today</th>
                           <th className="p-3 text-center">Writes Today</th>
@@ -1259,7 +1264,7 @@ export default function Dashboard({
                       <tbody className="divide-y divide-slate-100">
                         {boards.length === 0 ? (
                           <tr>
-                            <td colSpan={5} className="p-4 text-center text-slate-400 italic">
+                            <td colSpan={5} className="p-6 text-center text-slate-400 italic">
                               No boards deployed yet.
                             </td>
                           </tr>
@@ -1270,12 +1275,24 @@ export default function Dashboard({
                             const boardTeacherWrites = b.teacherDailyWrites?.[todayStr] || 0;
 
                             return (
-                              <tr key={b.id} className="hover:bg-slate-50/40 transition-colors">
-                                <td className="p-3 font-semibold text-slate-800 max-w-[200px] truncate">{b.name}</td>
-                                <td className="p-3 text-slate-500">{b.createdBy}</td>
-                                <td className="p-3 text-center font-mono font-bold text-indigo-600">{boardReads.toLocaleString()}</td>
-                                <td className="p-3 text-center font-mono font-bold text-blue-600">{boardWrites.toLocaleString()}</td>
-                                <td className="p-3 text-center font-mono text-slate-500">{boardTeacherWrites.toLocaleString()}</td>
+                              <tr key={b.id} className="hover:bg-slate-50/50 transition-colors">
+                                <td className="p-3 pl-4 font-bold text-slate-800 max-w-[280px] truncate">{b.name}</td>
+                                <td className="p-3 text-slate-500 font-medium">{b.createdBy}</td>
+                                <td className="p-3 text-center">
+                                  <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold font-mono bg-indigo-50 text-indigo-700 border border-indigo-100">
+                                    {boardReads.toLocaleString()}
+                                  </span>
+                                </td>
+                                <td className="p-3 text-center">
+                                  <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold font-mono bg-blue-50 text-blue-700 border border-blue-100">
+                                    {boardWrites.toLocaleString()}
+                                  </span>
+                                </td>
+                                <td className="p-3 text-center">
+                                  <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold font-mono bg-slate-100 text-slate-600 border border-slate-250">
+                                    {boardTeacherWrites.toLocaleString()}
+                                  </span>
+                                </td>
                               </tr>
                             );
                           })
@@ -1394,33 +1411,33 @@ export default function Dashboard({
                           
                           return (
                             <div className="min-w-[400px]">
-                              <svg viewBox="0 0 500 200" className="w-full h-48 select-none">
+                              <svg viewBox="0 0 800 200" className="w-full h-48 select-none">
                                 {/* Grid lines */}
-                                <line x1="40" y1="20" x2="480" y2="20" stroke="#f1f5f9" strokeWidth="1" strokeDasharray="3 3" />
-                                <line x1="40" y1="70" x2="480" y2="70" stroke="#f1f5f9" strokeWidth="1" strokeDasharray="3 3" />
-                                <line x1="40" y1="120" x2="480" y2="120" stroke="#f1f5f9" strokeWidth="1" strokeDasharray="3 3" />
-                                <line x1="40" y1="170" x2="480" y2="170" stroke="#cbd5e1" strokeWidth="1" />
+                                <line x1="50" y1="20" x2="760" y2="20" stroke="#f1f5f9" strokeWidth="1" strokeDasharray="3 3" />
+                                <line x1="50" y1="70" x2="760" y2="70" stroke="#f1f5f9" strokeWidth="1" strokeDasharray="3 3" />
+                                <line x1="50" y1="120" x2="760" y2="120" stroke="#f1f5f9" strokeWidth="1" strokeDasharray="3 3" />
+                                <line x1="50" y1="170" x2="760" y2="170" stroke="#cbd5e1" strokeWidth="1" />
                                 
                                 {/* Axis Labels */}
-                                <text x="35" y="24" className="text-[9px] fill-slate-400 font-mono font-bold" textAnchor="end">
+                                <text x="45" y="24" className="text-[9px] fill-slate-400 font-mono font-bold" textAnchor="end">
                                   {maxVal.toLocaleString()}
                                 </text>
-                                <text x="35" y="99" className="text-[9px] fill-slate-400 font-mono font-bold" textAnchor="end">
+                                <text x="45" y="99" className="text-[9px] fill-slate-400 font-mono font-bold" textAnchor="end">
                                   {Math.round(maxVal / 2).toLocaleString()}
                                 </text>
-                                <text x="35" y="174" className="text-[9px] fill-slate-400 font-mono font-bold" textAnchor="end">
+                                <text x="45" y="174" className="text-[9px] fill-slate-400 font-mono font-bold" textAnchor="end">
                                   0
                                 </text>
                                 
                                 {/* Bars */}
                                 {chartData.map((d, index) => {
                                   const totalBars = chartData.length;
-                                  const chartWidth = 440;
+                                  const chartWidth = 710;
                                   const groupWidth = chartWidth / totalBars;
-                                  const barWidth = Math.max(3, groupWidth * 0.22);
-                                  const gap = groupWidth * 0.08;
+                                  const barWidth = Math.max(4, groupWidth * 0.28);
+                                  const gap = groupWidth * 0.1;
                                   
-                                  const xGroupStart = 40 + (index * groupWidth) + (groupWidth - (barWidth * 2 + gap)) / 2;
+                                  const xGroupStart = 50 + (index * groupWidth) + (groupWidth - (barWidth * 2 + gap)) / 2;
                                   const xReads = xGroupStart;
                                   const xWrites = xGroupStart + barWidth + gap;
                                   
@@ -1437,7 +1454,7 @@ export default function Dashboard({
                                     <g key={d.date} className="group cursor-pointer">
                                       {/* Background column highlights on hover */}
                                       <rect
-                                        x={40 + (index * groupWidth)}
+                                        x={50 + (index * groupWidth)}
                                         y="10"
                                         width={groupWidth}
                                         height="160"
@@ -1466,7 +1483,7 @@ export default function Dashboard({
                                       
                                       {/* Hover activation hit box */}
                                       <rect
-                                        x={40 + (index * groupWidth)}
+                                        x={50 + (index * groupWidth)}
                                         y="10"
                                         width={groupWidth}
                                         height="165"
@@ -1477,7 +1494,7 @@ export default function Dashboard({
                                       
                                       {/* Date labels on X-axis */}
                                       <text 
-                                        x={40 + (index * groupWidth) + groupWidth / 2} 
+                                        x={50 + (index * groupWidth) + groupWidth / 2} 
                                         y="188" 
                                         className={`text-[9px] font-mono font-bold text-center transition-colors ${
                                           isSelected ? 'fill-slate-900 font-extrabold' : 'fill-slate-400'

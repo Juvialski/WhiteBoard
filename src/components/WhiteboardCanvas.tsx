@@ -1423,16 +1423,7 @@ export default function WhiteboardCanvas({
       setSyncStatus('offline');
     });
 
-    const timeout = setTimeout(() => {
-      // CRITICAL QUOTA OPTIMIZATION:
-      // If WebSocket is successfully connected, unsubscribe the Firestore listener to prevent continuous read billing!
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        unsubscribe();
-      }
-    }, 4000);
-
     return () => {
-      clearTimeout(timeout);
       unsubscribe();
     };
   }, [boardId]);
@@ -1872,7 +1863,7 @@ export default function WhiteboardCanvas({
     const newStamp: BoardElement = {
       id,
       type: "stamp",
-      x: coords.x - 60,
+      x: coords.x - 70,
       y: coords.y - 30,
       width: 140,
       height: 60,
@@ -3906,10 +3897,10 @@ export default function WhiteboardCanvas({
         }`}
       >
         {/* Left Floating Island */}
-        <div className="pointer-events-auto bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/80 shadow-md hover:shadow-lg p-1 sm:p-1.5 flex items-center space-x-1 sm:space-x-1.5 shrink min-w-0 overflow-x-auto scrollbar-none">
+        <div className="pointer-events-auto bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/80 shadow-md hover:shadow-lg p-1 sm:p-1.5 flex items-center space-x-1 sm:space-x-1.5 shrink min-w-0 overflow-x-auto scrollbar-none touch-manipulation">
           <button
             onClick={onBackToDashboard}
-            className="p-1 sm:p-1.5 hover:bg-slate-100/80 rounded-xl text-slate-600 hover:text-slate-900 transition-colors flex items-center space-x-1 font-bold text-xs cursor-pointer shrink-0"
+            className="p-1.5 sm:p-2 min-h-[36px] sm:min-h-[40px] hover:bg-slate-100/80 active:bg-slate-200 rounded-xl text-slate-600 hover:text-slate-900 transition-colors flex items-center space-x-1 font-bold text-xs cursor-pointer shrink-0 touch-manipulation"
           >
             <ChevronLeft className="w-4 h-4" />
             <span className="hidden md:inline">All Boards</span>
@@ -3919,29 +3910,33 @@ export default function WhiteboardCanvas({
 
           <div className="flex items-center space-x-1 sm:space-x-2 shrink min-w-0">
             <h2 className="text-xs sm:text-sm font-semibold leading-tight text-slate-900 flex items-center space-x-1">
-              <span className="truncate max-w-[70px] sm:max-w-[180px]" title={boardName}>{boardName}</span>
+              <span className="truncate max-w-[90px] sm:max-w-[180px]" title={boardName}>{boardName}</span>
               
-              <div className="hidden sm:flex items-center space-x-1.5">
-                <span className="bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold">
-                  Active
-                </span>
-                {/* Write minimization & offline sync badges */}
+              <div className="hidden sm:flex items-center space-x-1">
+                {/* Unified Sync & WS Status Indicator */}
                 {syncStatus === "synced" && (
-                  <span className="bg-emerald-50 text-emerald-700 border border-emerald-100 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold flex items-center space-x-1">
-                    <span className="w-1 h-1 rounded-full bg-emerald-500"></span>
-                    <span>Synced</span>
+                  <span 
+                    className={`border px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center space-x-1.5 transition-colors ${
+                      wsConnected 
+                        ? "bg-emerald-50 text-emerald-700 border-emerald-200/80" 
+                        : "bg-slate-50 text-slate-700 border-slate-200/80"
+                    }`}
+                    title={`Cloud: Synced | WebSockets: ${wsConnected ? `Connected (${wsLatency ?? 0}ms)` : "Disconnected"}`}
+                  >
+                    <span className={`w-1.5 h-1.5 rounded-full ${wsConnected ? "bg-emerald-500 animate-pulse" : "bg-slate-400"}`} />
+                    <span>{wsConnected ? "Live" : "Synced"}</span>
                   </span>
                 )}
                 {syncStatus === "saving-cloud" && (
-                  <span className="bg-blue-50 text-blue-700 border border-blue-100 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold flex items-center space-x-1">
+                  <span className="bg-blue-50 text-blue-700 border border-blue-200/80 px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center space-x-1.5">
                     <Loader2 className="w-2.5 h-2.5 animate-spin text-blue-500" />
-                    <span>Syncing</span>
+                    <span>Syncing...</span>
                   </span>
                 )}
                 {syncStatus === "saved-local" && (
-                  <span className="bg-amber-50 text-amber-700 border border-amber-100 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold flex items-center space-x-1" title="Offline-ready local buffer active. Synced to cloud once you pause or others join.">
-                    <span className="w-1 h-1 rounded-full bg-amber-500 animate-pulse"></span>
-                    <span>Local Buffer ({activeUsersCount === 1 ? "Solo" : "Collaborating"})</span>
+                  <span className="bg-amber-50 text-amber-700 border border-amber-200/80 px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center space-x-1.5" title="Offline-ready local buffer active. Synced to cloud once you pause or others join.">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                    <span>Local Buffer</span>
                   </span>
                 )}
                 {syncStatus === "offline" && (
@@ -3950,31 +3945,12 @@ export default function WhiteboardCanvas({
                       showSyncToast("Attempting to force sync offline progress...", "info");
                       flushPendingChanges();
                     }}
-                    className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-100 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold flex items-center space-x-1 cursor-pointer transition-colors"
+                    className="bg-rose-50 hover:bg-rose-100 active:bg-rose-200 text-rose-700 border border-rose-200/80 px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center space-x-1.5 cursor-pointer transition-colors touch-manipulation"
                     title="No internet connection detected or Firestore offline. Click to manually force synchronize progress with Cloud."
                   >
-                    <span className="w-1 h-1 rounded-full bg-rose-500 animate-pulse"></span>
-                    <span>Offline (Sync Now)</span>
+                    <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
+                    <span>Offline (Sync)</span>
                   </button>
-                )}
-
-                {/* WebSocket Status Indicator with Real-Time latency */}
-                {wsConnected ? (
-                  <span
-                    className="bg-purple-50 text-purple-700 border border-purple-100 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold flex items-center space-x-1"
-                    title="Connected to low-latency real-time WebSockets. Cursors and active drawings stream at 60fps."
-                  >
-                    <Zap className="w-2.5 h-2.5 text-purple-600 animate-pulse" />
-                    <span>Real-time WS {wsLatency !== null ? `(${wsLatency}ms)` : ""}</span>
-                  </span>
-                ) : (
-                  <span
-                    className="bg-slate-50 text-slate-500 border border-slate-100 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-extrabold flex items-center space-x-1"
-                    title="Disconnected from real-time WebSockets. Reverting to Firestore presence."
-                  >
-                    <ZapOff className="w-2.5 h-2.5 text-slate-400" />
-                    <span>Standard Sync</span>
-                  </span>
                 )}
               </div>
 
@@ -3998,9 +3974,9 @@ export default function WhiteboardCanvas({
           <button
             onClick={handleUndo}
             disabled={undoStack.length === 0}
-            className={`p-1.5 md:px-2.5 md:py-1 rounded-xl flex items-center space-x-1 font-bold text-xs transition-all cursor-pointer shrink-0 ${
+            className={`p-1.5 min-h-[36px] sm:min-h-[40px] md:px-2.5 md:py-1 rounded-xl flex items-center space-x-1 font-bold text-xs transition-all cursor-pointer shrink-0 touch-manipulation ${
               undoStack.length > 0
-                ? "bg-slate-100 border border-slate-200/80 text-slate-700 hover:bg-slate-200 hover:text-slate-950 hover:scale-[1.02] active:scale-[0.98]"
+                ? "bg-slate-100 border border-slate-200/80 text-slate-700 hover:bg-slate-200 active:bg-slate-300 hover:text-slate-950 hover:scale-[1.02] active:scale-[0.98]"
                 : "text-slate-300 bg-slate-50 border border-slate-150 cursor-not-allowed"
             }`}
             title="Undo last action (Ctrl+Z)"
@@ -4019,9 +3995,9 @@ export default function WhiteboardCanvas({
           <button
             onClick={handleRedo}
             disabled={redoStack.length === 0}
-            className={`p-1.5 md:px-2.5 md:py-1 rounded-xl flex items-center space-x-1 font-bold text-xs transition-all cursor-pointer shrink-0 ${
+            className={`p-1.5 min-h-[36px] sm:min-h-[40px] md:px-2.5 md:py-1 rounded-xl flex items-center space-x-1 font-bold text-xs transition-all cursor-pointer shrink-0 touch-manipulation ${
               redoStack.length > 0
-                ? "bg-slate-100 border border-slate-200/80 text-slate-700 hover:bg-slate-200 hover:text-slate-950 hover:scale-[1.02] active:scale-[0.98]"
+                ? "bg-slate-100 border border-slate-200/80 text-slate-700 hover:bg-slate-200 active:bg-slate-300 hover:text-slate-950 hover:scale-[1.02] active:scale-[0.98]"
                 : "text-slate-300 bg-slate-50 border border-slate-150 cursor-not-allowed"
             }`}
             title="Redo last action (Ctrl+Y)"
@@ -4248,10 +4224,10 @@ export default function WhiteboardCanvas({
           <div className="relative md:hidden flex items-center">
             <button
               onClick={() => setIsHeaderMenuOpen(!isHeaderMenuOpen)}
-              className={`p-1.5 rounded-xl border transition-all cursor-pointer ${
+              className={`min-w-[36px] min-h-[36px] sm:min-w-[40px] sm:min-h-[40px] p-1.5 rounded-xl border transition-all cursor-pointer flex items-center justify-center touch-manipulation active:scale-95 ${
                 isHeaderMenuOpen
                   ? "bg-slate-100 border-slate-300 text-slate-800"
-                  : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+                  : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 active:bg-slate-200"
               }`}
               title="More Options"
             >

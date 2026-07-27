@@ -392,29 +392,29 @@ export default function Toolbar({
 
   // Reusable Bottom Bar Component with Zoom, Grid, Shortcuts, and Clear Modal
   const renderBottomControls = () => (
-    <div className="fixed top-14 left-2.5 md:top-auto md:bottom-6 md:left-6 z-20 flex items-center gap-1 sm:gap-2 max-w-[calc(100vw-1.5rem)] overflow-x-auto scrollbar-none">
+    <div className="fixed top-14 left-2 md:top-auto md:bottom-6 md:left-6 z-20 flex items-center gap-1.5 sm:gap-2 max-w-[calc(100vw-1rem)] overflow-x-auto scrollbar-none touch-manipulation">
       {/* Zoom Controls */}
       <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-md p-1 sm:p-1.5 flex items-center space-x-0.5 sm:space-x-1 shrink-0">
         <button
           onClick={onZoomOut}
-          className="p-1 sm:p-2 rounded-xl text-slate-600 hover:bg-slate-100 flex items-center justify-center cursor-pointer transition-colors"
+          className="p-1.5 sm:p-2 min-w-[36px] min-h-[36px] sm:min-w-[40px] sm:min-h-[40px] rounded-xl text-slate-600 hover:bg-slate-100 active:bg-slate-200 flex items-center justify-center cursor-pointer transition-colors touch-manipulation"
           title="Zoom Out"
         >
-          <ZoomOut className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+          <ZoomOut className="w-4 h-4" />
         </button>
         <button
           onClick={onZoomReset}
-          className="py-1 px-1 sm:px-2 text-[10px] sm:text-[11px] font-bold text-slate-600 hover:bg-slate-100 rounded-lg text-center font-mono whitespace-nowrap min-w-[2.2rem] sm:min-w-[3rem] cursor-pointer transition-colors"
+          className="py-1 px-1.5 sm:px-2 min-h-[36px] sm:min-h-[40px] text-[11px] font-bold text-slate-600 hover:bg-slate-100 active:bg-slate-200 rounded-lg text-center font-mono whitespace-nowrap min-w-[2.5rem] sm:min-w-[3rem] flex items-center justify-center cursor-pointer transition-colors touch-manipulation"
           title="Reset Zoom"
         >
           {Math.round(zoom * 100)}%
         </button>
         <button
           onClick={onZoomIn}
-          className="p-1 sm:p-2 rounded-xl text-slate-600 hover:bg-slate-100 flex items-center justify-center cursor-pointer transition-colors"
+          className="p-1.5 sm:p-2 min-w-[36px] min-h-[36px] sm:min-w-[40px] sm:min-h-[40px] rounded-xl text-slate-600 hover:bg-slate-100 active:bg-slate-200 flex items-center justify-center cursor-pointer transition-colors touch-manipulation"
           title="Zoom In"
         >
-          <ZoomIn className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+          <ZoomIn className="w-4 h-4" />
         </button>
       </div>
 
@@ -423,15 +423,15 @@ export default function Toolbar({
         <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-md p-1 sm:p-1.5 flex items-center space-x-0.5 sm:space-x-1 shrink-0">
           <button
             onClick={() => onChangeGridMode("dots")}
-            className={`p-1.5 sm:p-2 rounded-xl transition-all flex items-center justify-center cursor-pointer ${
+            className={`p-1.5 sm:p-2 min-w-[36px] min-h-[36px] sm:min-w-[40px] sm:min-h-[40px] rounded-xl transition-all flex items-center justify-center cursor-pointer touch-manipulation ${
               gridMode === "dots"
                 ? "bg-blue-50 text-blue-600 ring-1 ring-blue-600/20 font-bold shadow-xs"
-                : "text-slate-500 hover:bg-slate-100"
+                : "text-slate-500 hover:bg-slate-100 active:bg-slate-200"
             }`}
             title="Dotted Canvas"
           >
             <svg
-              className="w-3.5 h-3.5 sm:w-4 sm:h-4"
+              className="w-4 h-4"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -450,26 +450,26 @@ export default function Toolbar({
           </button>
           <button
             onClick={() => onChangeGridMode("math")}
-            className={`p-1.5 sm:p-2 rounded-xl transition-all flex items-center justify-center cursor-pointer ${
+            className={`p-1.5 sm:p-2 min-w-[36px] min-h-[36px] sm:min-w-[40px] sm:min-h-[40px] rounded-xl transition-all flex items-center justify-center cursor-pointer touch-manipulation ${
               gridMode === "math"
                 ? "bg-blue-50 text-blue-600 ring-1 ring-blue-600/20 font-bold shadow-xs"
-                : "text-slate-500 hover:bg-slate-100"
+                : "text-slate-500 hover:bg-slate-100 active:bg-slate-200"
             }`}
             title="Math Grid (Graph Paper)"
           >
-            <Grid className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            <Grid className="w-4 h-4" />
           </button>
           <button
             onClick={() => onChangeGridMode("none")}
-            className={`p-1.5 sm:p-2 rounded-xl transition-all flex items-center justify-center cursor-pointer ${
+            className={`p-1.5 sm:p-2 min-w-[36px] min-h-[36px] sm:min-w-[40px] sm:min-h-[40px] rounded-xl transition-all flex items-center justify-center cursor-pointer touch-manipulation ${
               gridMode === "none"
                 ? "bg-blue-50 text-blue-600 ring-1 ring-blue-600/20 font-bold shadow-xs"
-                : "text-slate-500 hover:bg-slate-100"
+                : "text-slate-500 hover:bg-slate-100 active:bg-slate-200"
             }`}
             title="Plain White Background"
           >
             <svg
-              className="w-3.5 h-3.5 sm:w-4 sm:h-4"
+              className="w-4 h-4"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -483,59 +483,52 @@ export default function Toolbar({
         </div>
       )}
 
-      {/* Full Screen / Zen Mode Toggle */}
-      {onToggleZenMode && (
-        <div className="hidden md:flex bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-md p-1 sm:p-1.5 items-center shrink-0">
-          <button
-            onClick={onToggleZenMode}
-            className="p-1.5 sm:p-2 rounded-xl text-slate-500 hover:bg-slate-100 flex items-center justify-center transition-all cursor-pointer"
-            title={isZenMode ? "Exit Full Screen" : "Enter Full Screen (Zen Mode)"}
-          >
-            <Maximize2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-          </button>
-        </div>
-      )}
+      {/* Utilities Group (Zen, Timer, Shortcuts, Clear Canvas) */}
+      {(onToggleZenMode || onToggleTimer || onOpenShortcuts || onOpenClearModal) && (
+        <div className="hidden md:flex bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-md p-1 sm:p-1.5 items-center space-x-0.5 sm:space-x-1 shrink-0">
+          {onToggleZenMode && (
+            <button
+              onClick={onToggleZenMode}
+              className="p-1.5 sm:p-2 rounded-xl text-slate-500 hover:text-slate-900 hover:bg-slate-100 flex items-center justify-center transition-all cursor-pointer"
+              title={isZenMode ? "Exit Full Screen" : "Enter Full Screen (Zen Mode)"}
+            >
+              <Maximize2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            </button>
+          )}
 
-      {/* Sprint Timer Button */}
-      {onToggleTimer && (
-        <div className="hidden md:flex bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-md p-1 sm:p-1.5 items-center shrink-0">
-          <button
-            onClick={onToggleTimer}
-            className={`p-1.5 sm:p-2 rounded-xl flex items-center justify-center transition-all cursor-pointer ${
-              isTimerOpen
-                ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
-                : "text-slate-500 hover:text-indigo-600 hover:bg-slate-100"
-            }`}
-            title="Sprint Timer & Stopwatch"
-          >
-            <TimerIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-          </button>
-        </div>
-      )}
+          {onToggleTimer && (
+            <button
+              onClick={onToggleTimer}
+              className={`p-1.5 sm:p-2 rounded-xl flex items-center justify-center transition-all cursor-pointer ${
+                isTimerOpen
+                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
+                  : "text-slate-500 hover:text-indigo-600 hover:bg-slate-100"
+              }`}
+              title="Sprint Timer & Stopwatch"
+            >
+              <TimerIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            </button>
+          )}
 
-      {/* Keyboard Shortcuts Button */}
-      {onOpenShortcuts && (
-        <div className="hidden md:flex bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-md p-1 sm:p-1.5 items-center shrink-0">
-          <button
-            onClick={onOpenShortcuts}
-            className="p-1.5 sm:p-2 rounded-xl text-slate-500 hover:text-blue-600 hover:bg-slate-100 flex items-center justify-center transition-all cursor-pointer"
-            title="Keyboard Shortcuts (?)"
-          >
-            <Keyboard className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-          </button>
-        </div>
-      )}
+          {onOpenShortcuts && (
+            <button
+              onClick={onOpenShortcuts}
+              className="p-1.5 sm:p-2 rounded-xl text-slate-500 hover:text-blue-600 hover:bg-slate-100 flex items-center justify-center transition-all cursor-pointer"
+              title="Keyboard Shortcuts (?)"
+            >
+              <Keyboard className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            </button>
+          )}
 
-      {/* Clear Board Button */}
-      {onOpenClearModal && (
-        <div className="hidden md:flex bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-md p-1 sm:p-1.5 items-center shrink-0">
-          <button
-            onClick={onOpenClearModal}
-            className="p-1.5 sm:p-2 rounded-xl text-slate-500 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition-all cursor-pointer"
-            title="Clear Whiteboard Canvas"
-          >
-            <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-          </button>
+          {onOpenClearModal && (
+            <button
+              onClick={onOpenClearModal}
+              className="p-1.5 sm:p-2 rounded-xl text-slate-500 hover:text-rose-600 hover:bg-rose-50 flex items-center justify-center transition-all cursor-pointer"
+              title="Clear Whiteboard Canvas"
+            >
+              <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -573,7 +566,7 @@ export default function Toolbar({
         id="whiteboard-toolbar"
       >
         {/* Primary Segmented Toolbar */}
-        <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-xl p-1.5 flex flex-row md:flex-col items-center max-w-full overflow-x-auto scrollbar-none space-x-1 md:space-x-0 md:space-y-1">
+        <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-xl p-1.5 flex flex-row md:flex-col items-center max-w-full overflow-x-auto md:overflow-visible scrollbar-none space-x-1 md:space-x-0 md:space-y-1">
           {/* Toolbar Header (Desktop Only) */}
           <div className="hidden md:flex items-center justify-between px-1.5 pt-0.5 pb-1 border-b border-slate-100 mb-1 w-full">
             <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest pl-0.5">Tools</span>
@@ -630,7 +623,6 @@ export default function Toolbar({
                               ? "bg-blue-600 text-white shadow-md shadow-blue-600/15 scale-105"
                               : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                           }`}
-                          title={t.label}
                         >
                           {t.id === "shape"
                             ? SHAPES.find((s) => s.type === activeShape)?.icon || t.icon
@@ -654,13 +646,13 @@ export default function Toolbar({
           {/* Compact Primary Tools Renderer (Mobile Only) */}
           <div className="flex md:hidden items-center space-x-1 shrink-0">
             {[
-              { id: "select", icon: <MousePointer className="w-4.5 h-4.5" />, label: "Select" },
-              { id: "pan", icon: <Hand className="w-4.5 h-4.5" />, label: "Pan" },
-              { id: "eraser", icon: <Eraser className="w-4.5 h-4.5" />, label: "Eraser" },
-              { id: "pencil", icon: <Pen className="w-4.5 h-4.5" />, label: "Pencil" },
-              { id: "graph_menu", icon: GRAPH_TOOLS.find((g) => g.type === activeGraphMode)?.icon || <TrendingUp className="w-4.5 h-4.5" />, label: "Graphs" },
-              { id: "shape", icon: SHAPES.find((s) => s.type === activeShape)?.icon || <Square className="w-4.5 h-4.5" />, label: "Shapes" },
-              { id: "text", icon: <Type className="w-4.5 h-4.5" />, label: "Text" },
+              { id: "select", icon: <MousePointer className="w-5 h-5" />, label: "Select" },
+              { id: "pan", icon: <Hand className="w-5 h-5" />, label: "Pan" },
+              { id: "eraser", icon: <Eraser className="w-5 h-5" />, label: "Eraser" },
+              { id: "pencil", icon: <Pen className="w-5 h-5" />, label: "Pencil" },
+              { id: "graph_menu", icon: GRAPH_TOOLS.find((g) => g.type === activeGraphMode)?.icon || <TrendingUp className="w-5 h-5" />, label: "Graphs" },
+              { id: "shape", icon: SHAPES.find((s) => s.type === activeShape)?.icon || <Square className="w-5 h-5" />, label: "Shapes" },
+              { id: "text", icon: <Type className="w-5 h-5" />, label: "Text" },
             ].map((t) => {
               const isActive = t.id === "graph_menu" ? isGraphTool : activeTool === t.id;
               return (
@@ -679,10 +671,10 @@ export default function Toolbar({
                     }
                     setIsMobileMoreOpen(false);
                   }}
-                  className={`p-2.5 rounded-xl flex items-center justify-center transition-all cursor-pointer shrink-0 ${
+                  className={`min-w-[44px] min-h-[44px] p-2.5 rounded-xl flex items-center justify-center transition-all cursor-pointer shrink-0 touch-manipulation active:scale-95 ${
                     isActive
                       ? "bg-blue-600 text-white shadow-sm scale-105 font-bold"
-                      : "text-slate-600 hover:bg-slate-50"
+                      : "text-slate-600 hover:bg-slate-50 active:bg-slate-100"
                   }`}
                   title={t.label}
                 >
@@ -708,26 +700,26 @@ export default function Toolbar({
               const isSecondaryActive = secondaryTools.includes(activeTool) || isGraphTool;
               
               const getSecondaryActiveIcon = () => {
-                if (activeTool === "highlighter") return <Highlighter className="w-4.5 h-4.5" />;
-                if (activeTool === "laser") return <Flame className="w-4.5 h-4.5 text-rose-500" />;
-                if (activeTool === "sticky") return <StickyNote className="w-4.5 h-4.5" />;
-                if (activeTool === "math") return <Calculator className="w-4.5 h-4.5 text-indigo-500" />;
-                if (isGraphTool) return <TrendingUp className="w-4.5 h-4.5" />;
-                if (activeTool === "connector") return <CornerDownRight className="w-4.5 h-4.5" />;
-                if (activeTool === "audio") return <Mic className="w-4.5 h-4.5 text-amber-500" />;
-                if (activeTool === "stamp") return <Stamp className="w-4.5 h-4.5 text-emerald-500" />;
-                return <LayoutGrid className="w-4.5 h-4.5" />;
+                if (activeTool === "highlighter") return <Highlighter className="w-5 h-5" />;
+                if (activeTool === "laser") return <Flame className="w-5 h-5 text-rose-500" />;
+                if (activeTool === "sticky") return <StickyNote className="w-5 h-5" />;
+                if (activeTool === "math") return <Calculator className="w-5 h-5 text-indigo-500" />;
+                if (isGraphTool) return <TrendingUp className="w-5 h-5" />;
+                if (activeTool === "connector") return <CornerDownRight className="w-5 h-5" />;
+                if (activeTool === "audio") return <Mic className="w-5 h-5 text-amber-500" />;
+                if (activeTool === "stamp") return <Stamp className="w-5 h-5 text-emerald-500" />;
+                return <LayoutGrid className="w-5 h-5" />;
               };
 
               return (
                 <button
                   onClick={() => setIsMobileMoreOpen(!isMobileMoreOpen)}
-                  className={`p-2.5 rounded-xl flex items-center justify-center transition-all cursor-pointer shrink-0 border border-transparent ${
+                  className={`min-w-[44px] min-h-[44px] p-2.5 rounded-xl flex items-center justify-center transition-all cursor-pointer shrink-0 border border-transparent touch-manipulation active:scale-95 ${
                     isSecondaryActive
                       ? "bg-blue-600 text-white shadow-sm scale-105"
                       : isMobileMoreOpen
                         ? "bg-slate-100 text-slate-800 border-slate-200/60"
-                        : "text-slate-600 hover:bg-slate-50"
+                        : "text-slate-600 hover:bg-slate-50 active:bg-slate-100"
                   }`}
                   title="More Tools"
                 >
@@ -740,7 +732,7 @@ export default function Toolbar({
           {/* Mobile Collapse Button */}
           <button
             onClick={() => setIsCollapsed(true)}
-            className="md:hidden p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer shrink-0 ml-1 border-l border-slate-100 pl-2"
+            className="md:hidden min-w-[44px] min-h-[44px] p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 active:bg-slate-200 transition-colors cursor-pointer shrink-0 ml-1 border-l border-slate-100 pl-2 flex items-center justify-center touch-manipulation"
             title="Hide Toolbar"
           >
             <ChevronLeft className="w-4 h-4 rotate-180" />
@@ -749,7 +741,7 @@ export default function Toolbar({
 
         {/* Mobile "More Tools" Grid Popover */}
         {isMobileMoreOpen && (
-          <div className="md:hidden bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-2xl p-3 grid grid-cols-4 gap-2 absolute bottom-16 left-1/2 -translate-x-1/2 w-[94vw] max-w-[320px] animate-fade-in z-40">
+          <div className="md:hidden bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-2xl p-3 grid grid-cols-4 gap-2 absolute bottom-16 left-1/2 -translate-x-1/2 w-[94vw] max-w-[320px] animate-fade-in z-40 touch-manipulation">
             {[
               { id: "highlighter", icon: <Highlighter className="w-5 h-5 text-slate-600" />, label: "Highlight" },
               { id: "laser", icon: <Flame className="w-5 h-5 text-rose-500" />, label: "Laser" },
@@ -768,10 +760,10 @@ export default function Toolbar({
                     setShowSettingsPanel(true);
                     setIsMobileMoreOpen(false);
                   }}
-                  className={`p-2 rounded-xl flex flex-col items-center justify-center space-y-1 transition-all border cursor-pointer ${
+                  className={`min-h-[48px] p-2 rounded-xl flex flex-col items-center justify-center space-y-1 transition-all border cursor-pointer touch-manipulation active:scale-95 ${
                     isActive
                       ? "bg-blue-50 border-blue-200 text-blue-600 font-bold"
-                      : "bg-slate-50/50 border-transparent hover:bg-slate-100 text-slate-600"
+                      : "bg-slate-50/50 border-transparent hover:bg-slate-100 active:bg-slate-200 text-slate-600"
                   }`}
                 >
                   {t.icon}
