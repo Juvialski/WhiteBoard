@@ -5,8 +5,8 @@ interface WorkspaceTimerProps {
   isOpen: boolean;
   onClose: () => void;
   // Optional sync callbacks
-  onTimerSync?: (state: { isRunning: boolean; mode: 'timer' | 'stopwatch'; remainingSeconds: number; totalSeconds: number }) => void;
-  syncedState?: { isRunning: boolean; mode: 'timer' | 'stopwatch'; remainingSeconds: number; totalSeconds: number } | null;
+  onTimerSync?: (state: { isRunning: boolean; mode: 'timer' | 'stopwatch'; remainingSeconds: number; totalSeconds: number; startedAt?: number | null }) => void;
+  syncedState?: { isRunning: boolean; mode: 'timer' | 'stopwatch'; remainingSeconds: number; totalSeconds: number; startedAt?: number | null } | null;
 }
 
 export default function WorkspaceTimer({ isOpen, onClose, onTimerSync, syncedState }: WorkspaceTimerProps) {
@@ -15,8 +15,10 @@ export default function WorkspaceTimer({ isOpen, onClose, onTimerSync, syncedSta
   const [remainingSeconds, setRemainingSeconds] = useState<number>(300);
   const [stopwatchSeconds, setStopwatchSeconds] = useState<number>(0);
   const [isRunning, setIsRunning] = useState<boolean>(false);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [isMinimized, setIsMinimized] = useState<boolean>(false);
+  const [tick, setTick] = useState<number>(0);
 
   const audioCtxRef = useRef<AudioContext | null>(null);
 
@@ -25,6 +27,7 @@ export default function WorkspaceTimer({ isOpen, onClose, onTimerSync, syncedSta
     if (syncedState) {
       setIsRunning(syncedState.isRunning);
       setMode(syncedState.mode);
+      setStartedAt(syncedState.startedAt ?? null);
       if (syncedState.mode === 'timer') {
         setRemainingSeconds(syncedState.remainingSeconds);
         setTotalSeconds(syncedState.totalSeconds);
@@ -66,65 +69,94 @@ export default function WorkspaceTimer({ isOpen, onClose, onTimerSync, syncedSta
     }
   };
 
-  // Main tick timer loop
+  // Calculate current seconds dynamically for ultra-accurate rendering
+  const getCurrentDisplaySeconds = () => {
+    if (!isRunning || !startedAt) {
+      return mode === 'timer' ? remainingSeconds : stopwatchSeconds;
+    }
+    const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+    if (mode === 'timer') {
+      return Math.max(0, remainingSeconds - elapsed);
+    } else {
+      return stopwatchSeconds + elapsed;
+    }
+  };
+
+  // Main tick timer loop and completion notifier
   useEffect(() => {
     let interval: any = null;
     if (isRunning) {
       interval = setInterval(() => {
-        if (mode === 'timer') {
-          setRemainingSeconds((prev) => {
-            if (prev <= 1) {
-              setIsRunning(false);
-              playSoundAlert();
-              return 0;
-            }
-            if (prev % 5 === 0 && onTimerSync) {
+        setTick((t) => t + 1);
+
+        // Check if the countdown timer has completed
+        if (mode === 'timer' && startedAt) {
+          const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+          const currentLeft = Math.max(0, remainingSeconds - elapsed);
+          if (currentLeft <= 0) {
+            setIsRunning(false);
+            setStartedAt(null);
+            setRemainingSeconds(0);
+            playSoundAlert();
+            if (onTimerSync) {
               onTimerSync({
-                isRunning: true,
+                isRunning: false,
                 mode: 'timer',
-                remainingSeconds: prev - 1,
-                totalSeconds
+                remainingSeconds: 0,
+                totalSeconds,
+                startedAt: null
               });
             }
-            return prev - 1;
-          });
-        } else {
-          setStopwatchSeconds((prev) => {
-            if (prev % 5 === 0 && onTimerSync) {
-              onTimerSync({
-                isRunning: true,
-                mode: 'stopwatch',
-                remainingSeconds: prev + 1,
-                totalSeconds
-              });
-            }
-            return prev + 1;
-          });
+          }
         }
-      }, 1000);
+      }, 200); // Check 5 times a second for flawless precision
     }
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isRunning, mode, soundEnabled, onTimerSync, totalSeconds]);
+  }, [isRunning, startedAt, mode, remainingSeconds, totalSeconds, onTimerSync]);
 
   if (!isOpen) return null;
 
   const handleStartPause = () => {
-    const nextState = !isRunning;
-    setIsRunning(nextState);
+    const nextIsRunning = !isRunning;
+    const now = Date.now();
+    const nextStartedAt = nextIsRunning ? now : null;
+
+    setIsRunning(nextIsRunning);
+    setStartedAt(nextStartedAt);
+
+    let currentRemaining = remainingSeconds;
+    let currentStopwatch = stopwatchSeconds;
+
+    if (!nextIsRunning) {
+      // Freeze at precisely calculated current values
+      if (startedAt) {
+        const elapsed = Math.floor((now - startedAt) / 1000);
+        if (mode === 'timer') {
+          currentRemaining = Math.max(0, remainingSeconds - elapsed);
+        } else {
+          currentStopwatch = stopwatchSeconds + elapsed;
+        }
+      }
+      setRemainingSeconds(currentRemaining);
+      setStopwatchSeconds(currentStopwatch);
+    }
+
     if (onTimerSync) {
       onTimerSync({
-        isRunning: nextState,
+        isRunning: nextIsRunning,
         mode,
-        remainingSeconds: mode === 'timer' ? remainingSeconds : stopwatchSeconds,
-        totalSeconds
+        remainingSeconds: mode === 'timer' ? currentRemaining : currentStopwatch,
+        totalSeconds,
+        startedAt: nextStartedAt
       });
     }
   };
 
   const handleReset = () => {
     setIsRunning(false);
+    setStartedAt(null);
     if (mode === 'timer') {
       setRemainingSeconds(totalSeconds);
     } else {
@@ -135,46 +167,79 @@ export default function WorkspaceTimer({ isOpen, onClose, onTimerSync, syncedSta
         isRunning: false,
         mode,
         remainingSeconds: mode === 'timer' ? totalSeconds : 0,
-        totalSeconds
+        totalSeconds,
+        startedAt: null
       });
     }
   };
 
   const handlePreset = (seconds: number) => {
     setIsRunning(false);
+    setStartedAt(null);
     setTotalSeconds(seconds);
     setRemainingSeconds(seconds);
     setMode('timer');
+    if (onTimerSync) {
+      onTimerSync({
+        isRunning: false,
+        mode: 'timer',
+        remainingSeconds: seconds,
+        totalSeconds: seconds,
+        startedAt: null
+      });
+    }
   };
 
   const handleAddSeconds = (secs: number) => {
+    const now = Date.now();
+
     if (mode === 'timer') {
-      setRemainingSeconds((prev) => {
-        const next = Math.max(0, prev + secs);
-        setTotalSeconds((tPrev) => Math.max(next, tPrev + (secs > 0 ? secs : 0)));
-        if (onTimerSync) {
-          onTimerSync({
-            isRunning,
-            mode: 'timer',
-            remainingSeconds: next,
-            totalSeconds: Math.max(next, totalSeconds + (secs > 0 ? secs : 0))
-          });
-        }
-        return next;
-      });
+      let currentLeft = remainingSeconds;
+      if (isRunning && startedAt) {
+        const elapsed = Math.floor((now - startedAt) / 1000);
+        currentLeft = Math.max(0, remainingSeconds - elapsed);
+      }
+
+      const next = Math.max(0, currentLeft + secs);
+      const nextTotal = Math.max(next, totalSeconds + (secs > 0 ? secs : 0));
+
+      setRemainingSeconds(next);
+      setTotalSeconds(nextTotal);
+      if (isRunning) {
+        setStartedAt(now);
+      }
+
+      if (onTimerSync) {
+        onTimerSync({
+          isRunning,
+          mode: 'timer',
+          remainingSeconds: next,
+          totalSeconds: nextTotal,
+          startedAt: isRunning ? now : null
+        });
+      }
     } else {
-      setStopwatchSeconds((prev) => {
-        const next = Math.max(0, prev + secs);
-        if (onTimerSync) {
-          onTimerSync({
-            isRunning,
-            mode: 'stopwatch',
-            remainingSeconds: next,
-            totalSeconds
-          });
-        }
-        return next;
-      });
+      let currentStopwatch = stopwatchSeconds;
+      if (isRunning && startedAt) {
+        const elapsed = Math.floor((now - startedAt) / 1000);
+        currentStopwatch = stopwatchSeconds + elapsed;
+      }
+
+      const next = Math.max(0, currentStopwatch + secs);
+      setStopwatchSeconds(next);
+      if (isRunning) {
+        setStartedAt(now);
+      }
+
+      if (onTimerSync) {
+        onTimerSync({
+          isRunning,
+          mode: 'stopwatch',
+          remainingSeconds: next,
+          totalSeconds,
+          startedAt: isRunning ? now : null
+        });
+      }
     }
   };
 
@@ -184,16 +249,18 @@ export default function WorkspaceTimer({ isOpen, onClose, onTimerSync, syncedSta
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
+  const currentDisplaySeconds = getCurrentDisplaySeconds();
+
   // Progress ring math
-  const progress = mode === 'timer' && totalSeconds > 0 ? (remainingSeconds / totalSeconds) : 1;
+  const progress = mode === 'timer' && totalSeconds > 0 ? (currentDisplaySeconds / totalSeconds) : 1;
   const radius = 38;
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference - progress * circumference;
 
   // Ring status color
-  const ringColor = mode === 'timer' && remainingSeconds <= 10
+  const ringColor = mode === 'timer' && currentDisplaySeconds <= 10
     ? 'text-rose-500'
-    : mode === 'timer' && remainingSeconds <= 30
+    : mode === 'timer' && currentDisplaySeconds <= 30
     ? 'text-amber-500'
     : 'text-indigo-600';
 
@@ -242,6 +309,7 @@ export default function WorkspaceTimer({ isOpen, onClose, onTimerSync, syncedSta
                 onClick={() => {
                   setMode('timer');
                   setIsRunning(false);
+                  setStartedAt(null);
                 }}
                 className={`flex-1 py-1 rounded-lg transition-all cursor-pointer ${
                   mode === 'timer' ? 'bg-white text-indigo-600 shadow-xs' : 'text-slate-500 hover:text-slate-800'
@@ -253,6 +321,7 @@ export default function WorkspaceTimer({ isOpen, onClose, onTimerSync, syncedSta
                 onClick={() => {
                   setMode('stopwatch');
                   setIsRunning(false);
+                  setStartedAt(null);
                 }}
                 className={`flex-1 py-1 rounded-lg transition-all cursor-pointer ${
                   mode === 'stopwatch' ? 'bg-white text-indigo-600 shadow-xs' : 'text-slate-500 hover:text-slate-800'
@@ -301,7 +370,7 @@ export default function WorkspaceTimer({ isOpen, onClose, onTimerSync, syncedSta
                         setRemainingSeconds(next);
                         setTotalSeconds(next);
                         if (onTimerSync) {
-                          onTimerSync({ isRunning: false, mode: 'timer', remainingSeconds: next, totalSeconds: next });
+                          onTimerSync({ isRunning: false, mode: 'timer', remainingSeconds: next, totalSeconds: next, startedAt: null });
                         }
                       }}
                       className="w-8 text-center bg-transparent border-none focus:outline-none focus:bg-indigo-50/80 rounded font-mono font-black"
@@ -321,7 +390,7 @@ export default function WorkspaceTimer({ isOpen, onClose, onTimerSync, syncedSta
                         setRemainingSeconds(next);
                         setTotalSeconds(next);
                         if (onTimerSync) {
-                          onTimerSync({ isRunning: false, mode: 'timer', remainingSeconds: next, totalSeconds: next });
+                          onTimerSync({ isRunning: false, mode: 'timer', remainingSeconds: next, totalSeconds: next, startedAt: null });
                         }
                       }}
                       className="w-8 text-center bg-transparent border-none focus:outline-none focus:bg-indigo-50/80 rounded font-mono font-black"
@@ -330,7 +399,7 @@ export default function WorkspaceTimer({ isOpen, onClose, onTimerSync, syncedSta
                   </div>
                 ) : (
                   <span className="text-2xl font-black font-mono tracking-tight text-slate-900">
-                    {formatTime(mode === 'timer' ? remainingSeconds : stopwatchSeconds)}
+                    {formatTime(currentDisplaySeconds)}
                   </span>
                 )}
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">
@@ -376,7 +445,7 @@ export default function WorkspaceTimer({ isOpen, onClose, onTimerSync, syncedSta
             <div className="grid grid-cols-4 gap-1.5 w-full mt-3">
               <button
                 onClick={() => handleAddSeconds(-60)}
-                disabled={mode === 'timer' && remainingSeconds < 60}
+                disabled={mode === 'timer' && currentDisplaySeconds < 60}
                 className="py-1 bg-slate-50 hover:bg-slate-100 active:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center"
                 title="Subtract 1 Minute"
               >
@@ -384,7 +453,7 @@ export default function WorkspaceTimer({ isOpen, onClose, onTimerSync, syncedSta
               </button>
               <button
                 onClick={() => handleAddSeconds(-10)}
-                disabled={mode === 'timer' && remainingSeconds < 10}
+                disabled={mode === 'timer' && currentDisplaySeconds < 10}
                 className="py-1 bg-slate-50 hover:bg-slate-100 active:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center"
                 title="Subtract 10 Seconds"
               >
