@@ -4184,9 +4184,80 @@ export default function WhiteboardCanvas({
   };
 
   // Zoom handlers
-  const handleZoomIn = () => setZoom((prev) => Math.min(3, prev + 0.15));
-  const handleZoomOut = () => setZoom((prev) => Math.max(0.15, prev - 0.15));
-  const handleZoomReset = () => setZoom(1);
+  const handleZoomIn = () => {
+    const container = containerRef.current;
+    const currentZoom = zoomRef.current;
+    const nextZoom = Math.min(3, currentZoom + 0.15);
+    if (nextZoom === currentZoom) return;
+
+    if (container) {
+      const rect = container.getBoundingClientRect();
+      const centerX = rect.width / 2;
+      const centerY = rect.height / 2;
+      const currentPanX = panXRef.current;
+      const currentPanY = panYRef.current;
+
+      const canvasCenterX = (centerX - currentPanX) / currentZoom;
+      const canvasCenterY = (centerY - currentPanY) / currentZoom;
+
+      const newPanX = centerX - canvasCenterX * nextZoom;
+      const newPanY = centerY - canvasCenterY * nextZoom;
+
+      setPanX(newPanX);
+      setPanY(newPanY);
+    }
+    setZoom(nextZoom);
+  };
+
+  const handleZoomOut = () => {
+    const container = containerRef.current;
+    const currentZoom = zoomRef.current;
+    const nextZoom = Math.max(0.15, currentZoom - 0.15);
+    if (nextZoom === currentZoom) return;
+
+    if (container) {
+      const rect = container.getBoundingClientRect();
+      const centerX = rect.width / 2;
+      const centerY = rect.height / 2;
+      const currentPanX = panXRef.current;
+      const currentPanY = panYRef.current;
+
+      const canvasCenterX = (centerX - currentPanX) / currentZoom;
+      const canvasCenterY = (centerY - currentPanY) / currentZoom;
+
+      const newPanX = centerX - canvasCenterX * nextZoom;
+      const newPanY = centerY - canvasCenterY * nextZoom;
+
+      setPanX(newPanX);
+      setPanY(newPanY);
+    }
+    setZoom(nextZoom);
+  };
+
+  const handleZoomReset = () => {
+    const container = containerRef.current;
+    const currentZoom = zoomRef.current;
+    const nextZoom = 1;
+    if (nextZoom === currentZoom) return;
+
+    if (container) {
+      const rect = container.getBoundingClientRect();
+      const centerX = rect.width / 2;
+      const centerY = rect.height / 2;
+      const currentPanX = panXRef.current;
+      const currentPanY = panYRef.current;
+
+      const canvasCenterX = (centerX - currentPanX) / currentZoom;
+      const canvasCenterY = (centerY - currentPanY) / currentZoom;
+
+      const newPanX = centerX - canvasCenterX * nextZoom;
+      const newPanY = centerY - canvasCenterY * nextZoom;
+
+      setPanX(newPanX);
+      setPanY(newPanY);
+    }
+    setZoom(nextZoom);
+  };
 
   // Share Board link copying
   const copyBoardLink = () => {
