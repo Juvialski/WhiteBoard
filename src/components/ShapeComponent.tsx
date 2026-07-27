@@ -2432,6 +2432,76 @@ export default function ShapeComponent({
     }
   };
 
+  const getTextContainerStyle = () => {
+    switch (element.shapeType) {
+      case "triangle":
+        return {
+          paddingTop: "35%",
+          paddingBottom: "12%",
+          paddingLeft: "15%",
+          paddingRight: "15%",
+        };
+      case "diamond":
+        return {
+          paddingTop: "20%",
+          paddingBottom: "20%",
+          paddingLeft: "20%",
+          paddingRight: "20%",
+        };
+      case "star":
+        return {
+          paddingTop: "25%",
+          paddingBottom: "25%",
+          paddingLeft: "25%",
+          paddingRight: "25%",
+        };
+      case "pentagon":
+        return {
+          paddingTop: "25%",
+          paddingBottom: "12%",
+          paddingLeft: "15%",
+          paddingRight: "15%",
+        };
+      case "right-triangle":
+        return {
+          paddingTop: "35%",
+          paddingBottom: "10%",
+          paddingLeft: "25%",
+          paddingRight: "10%",
+        };
+      case "parallelogram":
+        return {
+          paddingTop: "12%",
+          paddingBottom: "12%",
+          paddingLeft: "20%",
+          paddingRight: "20%",
+        };
+      case "circle":
+        return {
+          paddingTop: "15%",
+          paddingBottom: "15%",
+          paddingLeft: "15%",
+          paddingRight: "15%",
+        };
+      case "hexagon":
+        return {
+          paddingTop: "12%",
+          paddingBottom: "12%",
+          paddingLeft: "15%",
+          paddingRight: "15%",
+        };
+      default:
+        // Use a tighter default padding (10px) than the old static 24px (p-6)
+        // so smaller rectangular/sticky notes can fit more text!
+        return {
+          paddingTop: "10px",
+          paddingBottom: "10px",
+          paddingLeft: "10px",
+          paddingRight: "10px",
+        };
+    }
+  };
+
   const isDarkFill = element.color === "#4b5563";
   const textColorClass = isDarkFill ? "text-white" : "text-slate-800";
 
@@ -2475,7 +2545,10 @@ export default function ShapeComponent({
         element.shapeType === "advanced-cartesian" ||
         element.shapeType === "numberline"
       ) && (
-        <div className="absolute inset-0 flex items-center justify-center p-6 overflow-hidden z-10">
+        <div 
+          className="absolute inset-0 flex items-center justify-center overflow-hidden z-10"
+          style={getTextContainerStyle()}
+        >
           {isEditing && !element.locked ? (
             <textarea
               ref={textareaRef}

@@ -104,11 +104,14 @@ export default function StampPickerModal({
     if (!ctx) return;
 
     const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
     ctx.strokeStyle = "#1e1b4b"; // Dark indigo signature ink
     ctx.lineWidth = 2.5;
     ctx.lineCap = "round";
+    ctx.lineJoin = "round";
     ctx.beginPath();
-    ctx.moveTo(e.clientX - rect.left, e.clientY - rect.top);
+    ctx.moveTo((e.clientX - rect.left) * scaleX, (e.clientY - rect.top) * scaleY);
     setIsDrawingSig(true);
   };
 
@@ -120,7 +123,44 @@ export default function StampPickerModal({
     if (!ctx) return;
 
     const rect = canvas.getBoundingClientRect();
-    ctx.lineTo(e.clientX - rect.left, e.clientY - rect.top);
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    ctx.lineTo((e.clientX - rect.left) * scaleX, (e.clientY - rect.top) * scaleY);
+    ctx.stroke();
+  };
+
+  const startDrawingSigTouch = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    if (e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    ctx.strokeStyle = "#1e1b4b";
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    ctx.moveTo((touch.clientX - rect.left) * scaleX, (touch.clientY - rect.top) * scaleY);
+    setIsDrawingSig(true);
+  };
+
+  const drawSigTouch = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    if (!isDrawingSig || e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    ctx.lineTo((touch.clientX - rect.left) * scaleX, (touch.clientY - rect.top) * scaleY);
     ctx.stroke();
   };
 
@@ -276,7 +316,7 @@ export default function StampPickerModal({
                   backgroundColor: selectedColor,
                   clipPath: previewClipPath ? previewClipPath : undefined,
                 }}
-                className={`${previewSizeClass} ${previewShapeClass} border-2 border-slate-300/40 shadow-md flex flex-col items-center justify-center p-3 animate-pulse-slow transition-all duration-300`}
+                className={`${previewSizeClass} ${previewShapeClass} border-2 border-slate-300/40 shadow-md flex flex-col items-center justify-center p-3 transition-colors duration-150`}
               >
                 <div className="flex flex-col sm:flex-row items-center space-x-0.5 sm:space-x-1.5 max-w-full font-black text-slate-900 uppercase tracking-wider truncate text-center">
                   <span className="text-xl leading-none mb-1 sm:mb-0">{customEmoji}</span>
@@ -451,6 +491,9 @@ export default function StampPickerModal({
                 onMouseMove={drawSig}
                 onMouseUp={stopDrawingSig}
                 onMouseLeave={stopDrawingSig}
+                onTouchStart={startDrawingSigTouch}
+                onTouchMove={drawSigTouch}
+                onTouchEnd={stopDrawingSig}
                 className="w-full h-36 bg-white rounded-xl cursor-crosshair touch-none"
               />
               <span className="absolute bottom-2 left-3 text-[10px] text-slate-400 font-mono select-none">

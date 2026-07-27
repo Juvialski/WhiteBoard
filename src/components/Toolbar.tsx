@@ -607,28 +607,27 @@ export default function Toolbar({
         {/* Primary Segmented Toolbar */}
         <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-xl p-1.5 flex flex-row md:flex-col items-center max-w-full overflow-x-auto md:overflow-visible scrollbar-none space-x-1 md:space-x-0 md:space-y-1">
           {/* Toolbar Header (Desktop Only) */}
-          <div className="hidden md:flex items-center justify-between px-1.5 pt-0.5 pb-1 border-b border-slate-100 mb-1 w-full">
-            <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest pl-0.5">Tools</span>
-            <div className="flex items-center space-x-0.5">
-              {hasSettings && (
-                <button
-                  onClick={() => setShowSettingsPanel(!showSettingsPanel)}
-                  className={`p-1 rounded-lg transition-all cursor-pointer ${
-                    showSettingsPanel ? "text-blue-600 hover:bg-blue-50" : "text-slate-400 hover:text-slate-700 hover:bg-slate-100"
-                  }`}
-                  title={showSettingsPanel ? "Hide Tool Settings" : "Show Tool Settings"}
-                >
-                  <Settings className="w-3.5 h-3.5" />
-                </button>
-              )}
+          <div className="hidden md:flex flex-col items-center space-y-1.5 pb-2 border-b border-slate-100 mb-1.5 w-full">
+            {hasSettings && (
               <button
-                onClick={() => setIsCollapsed(true)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
-                title="Hide Toolbar"
+                id="btn-toggle-settings"
+                onClick={() => setShowSettingsPanel(!showSettingsPanel)}
+                className={`p-2 rounded-xl transition-all cursor-pointer ${
+                  showSettingsPanel ? "text-blue-600 bg-blue-50" : "text-slate-400 hover:text-slate-700 hover:bg-slate-50"
+                }`}
+                title={showSettingsPanel ? "Hide Tool Settings" : "Show Tool Settings"}
               >
-                <ChevronLeft className="w-3.5 h-3.5" />
+                <Settings className="w-4 h-4" />
               </button>
-            </div>
+            )}
+            <button
+              id="btn-collapse-toolbar"
+              onClick={() => setIsCollapsed(true)}
+              className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
+              title="Hide Toolbar"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
           </div>
 
           {/* Grouped Tools Renderer (Desktop Only) */}
