@@ -1957,7 +1957,7 @@ export default function WhiteboardCanvas({
           const { id: _, ...data } = item.data;
           const cleanData = sanitizeForFirestore(data);
           if (isDraw) {
-            blobUpdates[blobId][id] = { ...cleanData, points: simplifyPoints(cleanData.points, 1.2) };
+            blobUpdates[blobId][id] = { ...cleanData, points: simplifyPoints(cleanData.points, 1.5) };
           } else {
             blobUpdates[blobId][id] = cleanData;
           }
@@ -2005,7 +2005,7 @@ export default function WhiteboardCanvas({
     if (isDrawing && elementData && elementData.type === 'drawing') {
       processedData = {
         ...processedData,
-        points: simplifyPoints(processedData.points, 1.2) // Downscale point coordinate resolution to optimize Firestore sizes
+        points: simplifyPoints(processedData.points, 1.5) // Downscale point coordinate resolution to optimize Firestore sizes
       };
     }
 
@@ -2052,9 +2052,10 @@ export default function WhiteboardCanvas({
       }));
     }
 
-    const isSolo = activeUsersCount <= 1;
-    const isWebSocketOpen = wsRef.current && wsRef.current.readyState === WebSocket.OPEN;
-    const useDebouncedQueue = isSolo || isWebSocketOpen;
+    // Crucial: ALWAYS use the debounced/batched queue to write elements to Firestore.
+    // This allows multiple simultaneous updates (e.g. from rapid drawing or multi-user edits)
+    // to be merged and batched, preventing Quota Limit Exceeded errors under heavy classroom use.
+    const useDebouncedQueue = true;
 
     if (useDebouncedQueue) {
       hasUnsavedChanges.current = true;
@@ -2274,11 +2275,10 @@ export default function WhiteboardCanvas({
 
   const updateCursorPosition = (clientX: number, clientY: number) => {
     const now = Date.now();
-    const isSolo = activeUsersCount <= 1;
 
-    // High performance WebSocket throttle: 50ms. If offline/solo fallback, use 30 seconds or 3 seconds.
+    // High performance WebSocket throttle: 50ms. If offline fallback, use 30 seconds to strictly prevent quota exhaustion.
     const isWsActive = wsRef.current && wsRef.current.readyState === WebSocket.OPEN;
-    const throttleLimit = isWsActive ? 50 : (isSolo ? 30000 : 3000);
+    const throttleLimit = isWsActive ? 50 : 30000;
     if (now - lastCursorUpdate.current < throttleLimit) return;
 
     if (!containerRef.current) return;
@@ -2289,15 +2289,6 @@ export default function WhiteboardCanvas({
     // Convert mouse position to whiteboard panned coordinates so cursors align globally
     const canvasX = (mouseX - panX) / zoom;
     const canvasY = (mouseY - panY) / zoom;
-
-    // If collaborating (without WS), only sync if moved at least 50 pixels to save quota
-    if (!isWsActive && !isSolo) {
-      const dist = Math.sqrt(
-        Math.pow(canvasX - lastSyncedCursorPos.current.x, 2) +
-        Math.pow(canvasY - lastSyncedCursorPos.current.y, 2)
-      );
-      if (dist < 50) return;
-    }
 
     lastCursorUpdate.current = now;
     lastSyncedCursorPos.current = { x: canvasX, y: canvasY };
@@ -2326,7 +2317,7 @@ export default function WhiteboardCanvas({
       lastFirestorePresenceWrite.current = now;
     }
 
-    // Fallback: Sync cursor to Firestore if WebSocket is offline
+    // Fallback: Sync cursor to Firestore if WebSocket is offline (maximum once every 30 seconds as presence)
     const cursorRef = doc(
       db,
       "whiteboards",
