@@ -191,10 +191,11 @@ export interface StampElement {
   y: number;
   width: number;
   height: number;
-  stampType: "checked" | "star" | "great_job" | "needs_revision" | "grade_a" | "approved" | "signature";
+  stampType: "checked" | "star" | "great_job" | "needs_revision" | "grade_a" | "approved" | "signature" | "custom";
   label?: string;
   signatureDataUrl?: string; // base64 if custom drawn signature
   color?: string;
+  stampShape?: "rounded-rect" | "circle" | "star" | "badge" | "diamond" | "banner";
   zIndex: number;
   updatedAt?: number;
   locked?: boolean;

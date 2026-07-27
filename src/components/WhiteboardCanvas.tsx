@@ -78,6 +78,8 @@ import {
   Timer as TimerIcon,
   Video,
   MoreHorizontal,
+  Image as ImageIcon,
+  FileCode,
 } from "lucide-react";
 import Markdown from "react-markdown";
 import WorkspaceTimer from "./WorkspaceTimer";
@@ -521,6 +523,7 @@ const ElementWrapper = React.memo(({
           onUpdate={onUpdate}
           onDelete={onDelete}
           currentUser={currentUser}
+          canWrite={canWrite}
         />
       </div>
     );
@@ -769,22 +772,17 @@ export default function WhiteboardCanvas({
           } else if (msg.type === "laser_point") {
             if (msg.userId === currentUser.id) return;
             const now = Date.now();
-            setRemoteLaserPoints((prev) => {
-              const existing = prev[msg.userId] || [];
-              const active = existing.filter((p) => now - p.timestamp < 1500);
-              return {
-                ...prev,
-                [msg.userId]: [
-                  ...active,
-                  {
-                    x: msg.x,
-                    y: msg.y,
-                    timestamp: msg.timestamp || now,
-                    color: msg.color || "#ef4444",
-                  },
-                ],
-              };
-            });
+            const existing = remoteLaserPointsRef.current[msg.userId] || [];
+            const active = existing.filter((p) => now - p.timestamp < 1500);
+            remoteLaserPointsRef.current[msg.userId] = [
+              ...active,
+              {
+                x: msg.x,
+                y: msg.y,
+                timestamp: msg.timestamp || now,
+                color: msg.color || "#ef4444",
+              },
+            ];
           } else if (msg.type === "timer_sync") {
             setSyncedTimerState(msg.state);
             if (msg.state && msg.state.isRunning) {
@@ -1033,8 +1031,11 @@ export default function WhiteboardCanvas({
   const [isTimerOpen, setIsTimerOpen] = useState(false);
   const [syncedTimerState, setSyncedTimerState] = useState<any>(null);
   const [isPresenterMode, setIsPresenterMode] = useState(false);
-  const [localLaserPoints, setLocalLaserPoints] = useState<LaserPoint[]>([]);
-  const [remoteLaserPoints, setRemoteLaserPoints] = useState<{ [userId: string]: LaserPoint[] }>({});
+  
+  // High performance: Laser Pointer trails stored in Refs and drawn directly to a separate transparent canvas
+  const localLaserPointsRef = useRef<LaserPoint[]>([]);
+  const remoteLaserPointsRef = useRef<{ [userId: string]: LaserPoint[] }>({});
+  const laserCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Kami Tools Modals & Navigation States
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState(false);
@@ -1090,28 +1091,127 @@ export default function WhiteboardCanvas({
     }
   };
 
+  // Decay and Draw laser trails on Canvas
+  const drawLaserTrails = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
+    ctx.clearRect(0, 0, width, height);
+    const now = Date.now();
+
+    // Collect all streams to draw
+    const streams: { color: string; points: LaserPoint[] }[] = [];
+    
+    // Filter out expired local points
+    localLaserPointsRef.current = localLaserPointsRef.current.filter(p => now - p.timestamp < 1500);
+    if (localLaserPointsRef.current.length > 0) {
+      streams.push({ color: activeColorRef.current || "#ef4444", points: localLaserPointsRef.current });
+    }
+
+    // Filter out expired remote points
+    const updatedRemote: typeof remoteLaserPointsRef.current = {};
+    Object.entries(remoteLaserPointsRef.current).forEach(([uid, pts]) => {
+      const active = pts.filter(p => now - p.timestamp < 1500);
+      if (active.length > 0) {
+        updatedRemote[uid] = active;
+        streams.push({ color: active[0]?.color || "#ef4444", points: active });
+      }
+    });
+    remoteLaserPointsRef.current = updatedRemote;
+
+    streams.forEach(stream => {
+      const pts = stream.points;
+      if (pts.length === 0) return;
+      const color = stream.color || "#ef4444";
+
+      // Draw fading line segments
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+
+      for (let i = 1; i < pts.length; i++) {
+        const prevPt = pts[i - 1];
+        const pt = pts[i];
+        
+        // Convert canvas coordinates to screen coordinates
+        const prevScreenX = prevPt.x * zoomRef.current + panXRef.current;
+        const prevScreenY = prevPt.y * zoomRef.current + panYRef.current;
+        const screenX = pt.x * zoomRef.current + panXRef.current;
+        const screenY = pt.y * zoomRef.current + panYRef.current;
+
+        const age = now - pt.timestamp;
+        const alpha = Math.max(0, 1 - age / 1500);
+        const strokeW = 3 + alpha * 5;
+
+        ctx.beginPath();
+        ctx.moveTo(prevScreenX, prevScreenY);
+        ctx.lineTo(screenX, screenY);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = strokeW;
+        ctx.globalAlpha = alpha;
+
+        // Apply a glowing effect
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 8;
+        ctx.stroke();
+      }
+
+      // Reset shadow for tip drawing
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 1.0;
+
+      // Draw Glowing Laser Pointer Tip Dot
+      const latestPt = pts[pts.length - 1];
+      const screenX = latestPt.x * zoomRef.current + panXRef.current;
+      const screenY = latestPt.y * zoomRef.current + panYRef.current;
+
+      // Pulsing outer glow radius
+      const pulse = 1 + 0.2 * Math.sin(now / 100);
+      const outerR = 12 * pulse;
+
+      // Outer halo
+      ctx.beginPath();
+      ctx.arc(screenX, screenY, outerR, 0, 2 * Math.PI);
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.25;
+      ctx.fill();
+
+      // Middle dot with shadow glow
+      ctx.beginPath();
+      ctx.arc(screenX, screenY, 6, 0, 2 * Math.PI);
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.9;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 10;
+      ctx.fill();
+
+      // Reset shadow
+      ctx.shadowBlur = 0;
+
+      // Inner white core
+      ctx.beginPath();
+      ctx.arc(screenX, screenY, 2.5, 0, 2 * Math.PI);
+      ctx.fillStyle = "#ffffff";
+      ctx.globalAlpha = 1.0;
+      ctx.fill();
+    });
+  };
+
   // Continuous animation loop to decay fading laser trail points smoothly
   useEffect(() => {
     let animId: number;
     const tick = () => {
-      const now = Date.now();
-      setLocalLaserPoints((prev) => {
-        if (prev.length === 0) return prev;
-        const active = prev.filter((p) => now - p.timestamp < 1500);
-        return active.length !== prev.length ? active : prev;
-      });
-      setRemoteLaserPoints((prev) => {
-        let changed = false;
-        const updated: typeof prev = {};
-        Object.entries(prev).forEach(([uid, pts]) => {
-          const active = pts.filter((p) => now - p.timestamp < 1500);
-          if (active.length > 0) {
-            updated[uid] = active;
+      const canvas = laserCanvasRef.current;
+      if (canvas) {
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          // Adjust canvas internal size to actual display size (supports high DPI)
+          const rect = canvas.getBoundingClientRect();
+          const dpr = window.devicePixelRatio || 1;
+          if (canvas.width !== rect.width * dpr || canvas.height !== rect.height * dpr) {
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            ctx.scale(dpr, dpr);
           }
-          if (active.length !== pts.length) changed = true;
-        });
-        return changed ? updated : prev;
-      });
+          drawLaserTrails(ctx, rect.width, rect.height);
+        }
+      }
       animId = requestAnimationFrame(tick);
     };
     animId = requestAnimationFrame(tick);
@@ -1271,6 +1371,202 @@ export default function WhiteboardCanvas({
       alert("Failed to export PDF: " + (err instanceof Error ? err.message : String(err)));
     } finally {
       setIsGeneratingPdf(false);
+    }
+  };
+
+  const handleExportImage = (format: 'png' | 'svg') => {
+    try {
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+
+      elements.forEach((el) => {
+        if ('x' in el && 'y' in el) {
+          const bounded = el as any;
+          const w = bounded.width || 140;
+          const h = bounded.height || 60;
+          minX = Math.min(minX, bounded.x);
+          minY = Math.min(minY, bounded.y);
+          maxX = Math.max(maxX, bounded.x + w);
+          maxY = Math.max(maxY, bounded.y + h);
+        } else if (el.type === 'drawing' && el.points) {
+          el.points.forEach((p) => {
+            minX = Math.min(minX, p.x);
+            minY = Math.min(minY, p.y);
+            maxX = Math.max(maxX, p.x);
+            maxY = Math.max(maxY, p.y);
+          });
+        }
+      });
+
+      // If board is empty, default bounding box
+      if (minX === Infinity || minY === Infinity) {
+        minX = 0;
+        minY = 0;
+        maxX = 800;
+        maxY = 600;
+      } else {
+        // Add padding
+        minX -= 50;
+        minY -= 50;
+        maxX += 50;
+        maxY += 50;
+      }
+
+      const exportWidth = maxX - minX;
+      const exportHeight = maxY - minY;
+
+      const escapeXml = (unsafe: string): string => {
+        return unsafe.replace(/[<>&'"]/g, (c) => {
+          switch (c) {
+            case '<': return '&lt;';
+            case '>': return '&gt;';
+            case '&': return '&amp;';
+            case '\'': return '&apos;';
+            case '"': return '&quot;';
+            default: return c;
+          }
+        });
+      };
+
+      let svgContent = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${minX} ${minY} ${exportWidth} ${exportHeight}" width="${exportWidth}" height="${exportHeight}" style="background-color: #f8fafc;">`;
+      
+      svgContent += `<style>
+        .svg-text { font-family: system-ui, -apple-system, sans-serif; font-weight: bold; }
+        .svg-title { font-family: system-ui, -apple-system, sans-serif; font-weight: 900; }
+      </style>`;
+
+      elements.forEach((el) => {
+        if (el.type === 'sticky') {
+          svgContent += `
+            <g id="el-${el.id}">
+              <rect x="${el.x}" y="${el.y}" width="${el.width}" height="${el.height}" rx="12" fill="${el.color || '#fef08a'}" stroke="#cbd5e1" stroke-width="1" />
+              <text x="${el.x + el.width/2}" y="${el.y + el.height/2}" dominant-baseline="middle" text-anchor="middle" fill="#1e293b" font-size="14" font-weight="600" class="svg-text">${escapeXml(el.text || '')}</text>
+            </g>
+          `;
+        } else if (el.type === 'shape') {
+          const rx = el.shapeType === 'circle' ? el.width / 2 : 8;
+          const ry = el.shapeType === 'circle' ? el.height / 2 : 8;
+          
+          if (el.shapeType === 'circle') {
+            svgContent += `
+              <g id="el-${el.id}">
+                <ellipse cx="${el.x + el.width/2}" cy="${el.y + el.height/2}" rx="${rx}" ry="${ry}" fill="${el.color || '#bfdbfe'}" stroke="${el.borderColor || '#3b82f6'}" stroke-width="2" />
+                <text x="${el.x + el.width/2}" y="${el.y + el.height/2}" dominant-baseline="middle" text-anchor="middle" fill="#1e293b" font-size="14" font-weight="600" class="svg-text">${escapeXml(el.text || '')}</text>
+              </g>
+            `;
+          } else {
+            svgContent += `
+              <g id="el-${el.id}">
+                <rect x="${el.x}" y="${el.y}" width="${el.width}" height="${el.height}" rx="${rx}" fill="${el.color || '#bfdbfe'}" stroke="${el.borderColor || '#3b82f6'}" stroke-width="2" />
+                <text x="${el.x + el.width/2}" y="${el.y + el.height/2}" dominant-baseline="middle" text-anchor="middle" fill="#1e293b" font-size="14" font-weight="600" class="svg-text">${escapeXml(el.text || '')}</text>
+              </g>
+            `;
+          }
+        } else if (el.type === 'text') {
+          svgContent += `
+            <g id="el-${el.id}">
+              <text x="${el.x}" y="${el.y + 20}" fill="${el.color || '#1e293b'}" font-size="${el.fontSize || 16}" font-weight="bold" class="svg-text">${escapeXml(el.text || '')}</text>
+            </g>
+          `;
+        } else if (el.type === 'drawing') {
+          if (el.points && el.points.length > 0) {
+            let pathD = `M ${el.points[0].x} ${el.points[0].y}`;
+            for (let i = 1; i < el.points.length; i++) {
+              pathD += ` L ${el.points[i].x} ${el.points[i].y}`;
+            }
+            svgContent += `
+              <g id="el-${el.id}">
+                <path d="${pathD}" fill="none" stroke="${el.color || '#1e293b'}" stroke-width="${el.width || 3}" stroke-linecap="round" stroke-linejoin="round" opacity="${el.isHighlighter ? 0.4 : 1}" />
+              </g>
+            `;
+          }
+        } else if (el.type === 'stamp') {
+          const bgColor = el.color || '#4f46e5';
+          svgContent += `
+            <g id="el-${el.id}">
+              <rect x="${el.x}" y="${el.y}" width="${el.width}" height="${el.height}" rx="16" fill="${bgColor}" stroke="#cbd5e1" stroke-width="1.5" />
+              <text x="${el.x + el.width/2}" y="${el.y + el.height/2}" dominant-baseline="middle" text-anchor="middle" fill="#ffffff" font-size="13" font-weight="900" class="svg-text">${escapeXml(el.label || 'STAMP')}</text>
+            </g>
+          `;
+        } else if (el.type === 'connector') {
+          const conn = el as ConnectorElement;
+          const fromEl = elements.find((e) => e.id === conn.fromId);
+          const toEl = conn.toId ? elements.find((e) => e.id === conn.toId) : null;
+          
+          if (fromEl) {
+            const start = getElementSocketCoords(fromEl, conn.fromSocket);
+            const end = toEl ? getElementSocketCoords(toEl, conn.toSocket || "top") : (conn.endPoint || start);
+
+            svgContent += `
+              <g id="el-${el.id}">
+                <line x1="${start.x}" y1="${start.y}" x2="${end.x}" y2="${end.y}" stroke="${conn.color || '#475569'}" stroke-width="${conn.strokeWidth || 2.5}" />
+                ${conn.label ? `
+                  <rect x="${(start.x + end.x)/2 - 40}" y="${(start.y + end.y)/2 - 10}" width="80" height="20" rx="4" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" />
+                  <text x="${(start.x + end.x)/2}" y="${(start.y + end.y)/2}" dominant-baseline="middle" text-anchor="middle" fill="#475569" font-size="10" font-weight="bold" class="svg-text">${escapeXml(conn.label)}</text>
+                ` : ''}
+              </g>
+            `;
+          }
+        } else if (el.type === 'math') {
+          svgContent += `
+            <g id="el-${el.id}">
+              <rect x="${el.x}" y="${el.y}" width="${el.width}" height="${el.height}" rx="8" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1" />
+              <text x="${el.x + el.width/2}" y="${el.y + el.height/2}" dominant-baseline="middle" text-anchor="middle" fill="${el.color || '#0f172a'}" font-size="${el.fontSize || 14}" class="svg-text">${escapeXml(el.text || '')}</text>
+            </g>
+          `;
+        }
+      });
+
+      svgContent += `</svg>`;
+
+      const svgBlob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(svgBlob);
+      const safeBoardName = (boardName || "whiteboard").replace(/[^a-z0-9]/gi, '_').toLowerCase();
+
+      if (format === 'svg') {
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${safeBoardName}_export.svg`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        showSyncToast("Vector SVG exported successfully!", "success");
+      } else {
+        const img = new window.Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = exportWidth;
+          canvas.height = exportHeight;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.fillStyle = '#f8fafc';
+            ctx.fillRect(0, 0, exportWidth, exportHeight);
+            ctx.drawImage(img, 0, 0);
+            
+            try {
+              const pngUrl = canvas.toDataURL('image/png');
+              const link = document.createElement('a');
+              link.href = pngUrl;
+              link.download = `${safeBoardName}_export.png`;
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+              showSyncToast("High-resolution PNG exported successfully!", "success");
+            } catch (e) {
+              console.error("Error generating canvas data URL for PNG", e);
+              showSyncToast("Could not export PNG. Please download as SVG instead.", "error");
+            }
+          }
+          URL.revokeObjectURL(url);
+        };
+        img.src = url;
+      }
+    } catch (err: any) {
+      console.error("Export error:", err);
+      showSyncToast("Failed to export image: " + err.message, "error");
     }
   };
 
@@ -1857,19 +2153,27 @@ export default function WhiteboardCanvas({
     showSyncToast("Voice comment attached!", "success");
   }, [pendingVoiceCoords, panX, panY, currentUser.name, elements.length, saveElementLocallyAndSync, pushToUndo, showSyncToast, setIsDragging]);
 
-  const handleSaveStamp = React.useCallback((stampType: any, label?: string, signatureUrl?: string) => {
+  const handleSaveStamp = React.useCallback((stampType: any, label?: string, signatureUrl?: string, color?: string, stampShape?: any) => {
     const coords = pendingStampCoords || { x: -panX + 200, y: -panY + 200 };
     const id = "stamp-" + Date.now() + Math.floor(Math.random() * 100);
+    
+    // For non-standard shapes, default to a balanced square size
+    const isSquareShape = stampShape && stampShape !== "rounded-rect";
+    const width = isSquareShape ? 100 : 140;
+    const height = isSquareShape ? 100 : 60;
+
     const newStamp: BoardElement = {
       id,
       type: "stamp",
-      x: coords.x - 70,
-      y: coords.y - 30,
-      width: 140,
-      height: 60,
+      x: coords.x - (width / 2),
+      y: coords.y - (height / 2),
+      width,
+      height,
       stampType,
       ...(label ? { label } : {}),
       ...(signatureUrl ? { signatureDataUrl: signatureUrl } : {}),
+      ...(color ? { color } : {}),
+      ...(stampShape ? { stampShape } : {}),
       zIndex: elements.length + 1,
       updatedAt: Date.now(),
     } as any;
@@ -2232,7 +2536,7 @@ export default function WhiteboardCanvas({
       const now = Date.now();
       const color = activeColor || "#ef4444";
       const newPt = { x: coords.x, y: coords.y, timestamp: now, color };
-      setLocalLaserPoints((prev) => [...prev.filter((p) => now - p.timestamp < 1500), newPt]);
+      localLaserPointsRef.current = [...localLaserPointsRef.current.filter((p) => now - p.timestamp < 1500), newPt];
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
         wsRef.current.send(
           JSON.stringify({
@@ -2453,7 +2757,7 @@ export default function WhiteboardCanvas({
       const now = Date.now();
       const color = activeColorRef.current || "#ef4444";
       const newPt = { x: coords.x, y: coords.y, timestamp: now, color };
-      setLocalLaserPoints((prev) => [...prev.filter((p) => now - p.timestamp < 1500), newPt]);
+      localLaserPointsRef.current = [...localLaserPointsRef.current.filter((p) => now - p.timestamp < 1500), newPt];
 
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && now - lastStreamBroadcast.current > 20) {
         lastStreamBroadcast.current = now;
@@ -4190,6 +4494,24 @@ export default function WhiteboardCanvas({
           )}
 
           <button
+            onClick={() => handleExportImage('png')}
+            className="hidden md:flex p-1.5 md:px-3 md:py-1 rounded-xl text-xs font-semibold bg-white hover:bg-slate-50 text-slate-700 border border-slate-200/80 shadow-xs items-center space-x-1.5 transition-all cursor-pointer shrink-0"
+            title="Export full board as PNG image"
+          >
+            <ImageIcon className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+            <span className="hidden lg:inline">Export PNG</span>
+          </button>
+
+          <button
+            onClick={() => handleExportImage('svg')}
+            className="hidden md:flex p-1.5 md:px-3 md:py-1 rounded-xl text-xs font-semibold bg-white hover:bg-slate-50 text-slate-700 border border-slate-200/80 shadow-xs items-center space-x-1.5 transition-all cursor-pointer shrink-0"
+            title="Export full board as vector SVG"
+          >
+            <FileCode className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+            <span className="hidden lg:inline">Export SVG</span>
+          </button>
+
+          <button
             onClick={copyBoardLink}
             className={`hidden md:flex p-1.5 md:px-3 md:py-1 rounded-xl text-xs font-medium items-center space-x-1.5 transition-all cursor-pointer shrink-0 ${
               copiedLink
@@ -4673,89 +4995,18 @@ export default function WhiteboardCanvas({
             />
           )}
 
+          {/* New High Performance Laser Pointer Canvas Layer */}
+          <canvas
+            ref={laserCanvasRef}
+            className="absolute inset-0 w-full h-full pointer-events-none z-25"
+          />
+
           {/* 2. Global Svg Vector Overlay (Connector Lines, Drawings, Sketches) */}
           <svg
             width="100%"
             height="100%"
             className="absolute inset-0 overflow-visible pointer-events-none z-20"
           >
-            {/* Fading Laser Pointer Trails Layer (Local & Remote) */}
-            {(() => {
-              const allLaserStreams: { color: string; points: LaserPoint[] }[] = [];
-              if (localLaserPoints.length > 0) {
-                allLaserStreams.push({ color: activeColor || "#ef4444", points: localLaserPoints });
-              }
-              Object.values(remoteLaserPoints).forEach((pts) => {
-                if (pts.length > 0) {
-                  allLaserStreams.push({ color: pts[0]?.color || "#ef4444", points: pts });
-                }
-              });
-
-              if (allLaserStreams.length === 0) return null;
-              const now = Date.now();
-
-              return (
-                <g className="pointer-events-none z-30">
-                  {allLaserStreams.map((stream, sIdx) => {
-                    if (stream.points.length === 0) return null;
-                    const pts = stream.points;
-                    const color = stream.color || "#ef4444";
-                    const latestPoint = pts[pts.length - 1];
-
-                    return (
-                      <g key={`laser-stream-${sIdx}`}>
-                        {/* Fading laser stroke segments */}
-                        {pts.slice(1).map((pt, idx) => {
-                          const prevPt = pts[idx];
-                          const age = now - pt.timestamp;
-                          const alpha = Math.max(0, 1 - age / 1500);
-                          const strokeW = 3 + alpha * 5;
-
-                          return (
-                            <line
-                              key={`laser-line-${idx}`}
-                              x1={prevPt.x}
-                              y1={prevPt.y}
-                              x2={pt.x}
-                              y2={pt.y}
-                              stroke={color}
-                              strokeWidth={strokeW}
-                              strokeLinecap="round"
-                              opacity={alpha}
-                              style={{
-                                filter: `drop-shadow(0 0 6px ${color})`,
-                              }}
-                            />
-                          );
-                        })}
-
-                        {/* Glowing Laser Pointer Tip Dot */}
-                        {latestPoint && (
-                          <g transform={`translate(${latestPoint.x}, ${latestPoint.y})`}>
-                            <circle
-                              r="12"
-                              fill={color}
-                              opacity="0.3"
-                              className="animate-ping"
-                            />
-                            <circle
-                              r="6"
-                              fill={color}
-                              opacity="0.9"
-                              style={{ filter: `drop-shadow(0 0 10px ${color})` }}
-                            />
-                            <circle
-                              r="2.5"
-                              fill="#ffffff"
-                            />
-                          </g>
-                        )}
-                      </g>
-                    );
-                  })}
-                </g>
-              );
-            })()}
             {/* Render saved drawings */}
             {elements
               .filter((el) => el.type === "drawing")
@@ -5410,6 +5661,7 @@ export default function WhiteboardCanvas({
         isOpen={isStampModalOpen}
         onClose={() => setIsStampModalOpen(false)}
         onSelectStamp={handleSaveStamp}
+        userApiKey={userApiKey}
       />
     </div>
   );

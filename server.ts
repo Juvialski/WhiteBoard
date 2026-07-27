@@ -282,6 +282,53 @@ Provide your classification and bounding box coordinates matching the drawing's 
   }
 });
 
+// API: Generate / suggest dynamic custom stamps using AI
+app.post("/api/ai/stamp", async (req, res) => {
+  const activeAi = getAiInstance(req);
+  if (!activeAi) {
+    return res.status(400).json({ error: "AI features are exclusive to users with their own API keys. Please enter your personal Google AI Studio API Key in the AI Assistant settings panel to enable these features." });
+  }
+
+  const { prompt } = req.body;
+  if (!prompt || !prompt.trim()) {
+    return res.status(400).json({ error: "Please provide a description/prompt for the stamp." });
+  }
+
+  try {
+    const systemInstruction = `You are a creative educational helper for a whiteboard workspace.
+The user wants to generate a custom stamp (like a teacher comment or feedback sticker).
+Analyze the description, and suggest:
+1. One perfect, fitting emoji (e.g. 🍎, 🚀, 💡, 🌟, 🦖, etc.).
+2. A short, catchy, encouraging text/nickname for the stamp (e.g. "Super Reader!", "Creative idea!", "Check math"). Max 20 characters.
+3. A beautiful, high-contrast, pleasant pastel hex color for the background (e.g. #fef08a, #bfdbfe, #bbf7d0, #fed7aa, #e9d5ff, #fbcfe8, #99f6e4, etc.).`;
+
+    const response = await activeAi.models.generateContent({
+      model: "gemini-3.6-flash",
+      contents: `Generate an aesthetic, fun custom stamp matching this concept: "${prompt}"`,
+      config: {
+        systemInstruction,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            emoji: { type: Type.STRING, description: "A single representative emoji" },
+            text: { type: Type.STRING, description: "Encouraging short text (maximum 2-3 words, max 20 chars)" },
+            color: { type: Type.STRING, description: "Aesthetic pastel hex background color code (e.g., '#bfdbfe')" }
+          },
+          required: ["emoji", "text", "color"]
+        }
+      }
+    });
+
+    const text = response.text || "{}";
+    const data = JSON.parse(text);
+    res.json(data);
+  } catch (err: any) {
+    console.error("AI Stamp Generator error:", err);
+    res.status(500).json({ error: err.message || "An error occurred while generating stamp with Gemini." });
+  }
+});
+
 // Vite middleware for development or Static assets for production
 const startServer = async () => {
   if (process.env.NODE_ENV !== "production") {

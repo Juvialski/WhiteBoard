@@ -10,6 +10,7 @@ interface StampComponentProps {
   onUpdate: (updates: Partial<StampElement>) => void;
   onDelete: () => void;
   currentUser?: UserProfile;
+  canWrite?: boolean;
 }
 
 export default function StampComponent({
@@ -19,7 +20,31 @@ export default function StampComponent({
   onSelect,
   onUpdate,
   onDelete,
+  canWrite = true,
 }: StampComponentProps) {
+  const shape = element.stampShape || "rounded-rect";
+  
+  let clipPath = "";
+  let shapeClass = "";
+
+  if (shape === "circle") {
+    shapeClass = "rounded-full overflow-hidden";
+  } else if (shape === "star") {
+    clipPath = "polygon(50% 0%, 63% 13%, 80% 6%, 82% 24%, 100% 25%, 94% 43%, 100% 60%, 82% 64%, 80% 82%, 63% 79%, 50% 100%, 37% 79%, 20% 82%, 18% 64%, 0% 60%, 6% 43%, 0% 25%, 18% 24%, 20% 6%, 37% 13%)";
+    shapeClass = "overflow-hidden";
+  } else if (shape === "badge") {
+    clipPath = "polygon(0% 0%, 100% 0%, 100% 75%, 50% 100%, 0% 75%)";
+    shapeClass = "overflow-hidden";
+  } else if (shape === "diamond") {
+    clipPath = "polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)";
+    shapeClass = "overflow-hidden";
+  } else if (shape === "banner") {
+    clipPath = "polygon(10% 0%, 90% 0%, 100% 50%, 90% 100%, 10% 100%, 0% 50%)";
+    shapeClass = "overflow-hidden";
+  } else {
+    shapeClass = "rounded-2xl overflow-hidden";
+  }
+
   const renderStampBadge = () => {
     switch (element.stampType) {
       case "checked":
@@ -80,9 +105,28 @@ export default function StampComponent({
           </div>
         );
       default:
+        const bgColor = element.color || '#4f46e5';
+        let textColor = 'text-white';
+        if (bgColor.startsWith('#')) {
+          const hex = bgColor.substring(1);
+          const r = parseInt(hex.substring(0, 2), 16);
+          const g = parseInt(hex.substring(2, 4), 16);
+          const b = parseInt(hex.substring(4, 6), 16);
+          if (!isNaN(r) && !isNaN(g) && !isNaN(b)) {
+            const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+            if (brightness > 160) {
+              textColor = 'text-slate-900';
+            }
+          }
+        }
         return (
-          <div className="bg-indigo-600 text-white w-full h-full rounded-2xl shadow-md font-bold text-xs flex items-center justify-center select-none truncate">
-            {element.label || "Stamp"}
+          <div 
+            style={{ backgroundColor: bgColor }}
+            className={`w-full h-full rounded-2xl shadow-md border-2 border-slate-300/40 flex flex-col items-center justify-center p-2 font-black text-sm uppercase tracking-wide select-none ${textColor}`}
+          >
+            <span className="truncate max-w-full text-center">
+              {element.label || "Stamp"}
+            </span>
           </div>
         );
     }
@@ -97,12 +141,28 @@ export default function StampComponent({
         height: element.height || 60,
         zIndex: element.zIndex || 10,
       }}
-      className={`absolute left-0 top-0 cursor-pointer select-none group touch-none ${
-        isSelected ? "ring-2 ring-indigo-500 ring-offset-2 rounded-2xl" : ""
-      }`}
+      className="absolute left-0 top-0 cursor-pointer select-none group touch-none"
     >
       <div className="relative w-full h-full">
-        {renderStampBadge()}
+        {/* High-contrast shape-matched outline when selected */}
+        {isSelected && (
+          <div 
+            style={{ 
+              clipPath: clipPath ? clipPath : undefined,
+              transform: "scale(1.05)",
+            }}
+            className={`absolute inset-0 bg-indigo-500/80 -z-10 ${shapeClass}`}
+          />
+        )}
+
+        <div
+          style={{
+            clipPath: clipPath ? clipPath : undefined,
+          }}
+          className={`w-full h-full ${shapeClass}`}
+        >
+          {renderStampBadge()}
+        </div>
 
         {isSelected && isInteractive && (
           <button
@@ -115,6 +175,22 @@ export default function StampComponent({
           >
             <Trash2 className="w-3 h-3" />
           </button>
+        )}
+
+        {/* Resize corner handle */}
+        {isSelected && canWrite && !element.locked && (
+          <div
+            className="absolute -bottom-2 -right-2 w-8 h-8 cursor-se-resize flex items-center justify-center pointer-events-auto z-40"
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              const canvasEvent = new CustomEvent('init-resize', {
+                detail: { elementId: element.id, originalEvent: { clientX: e.clientX, clientY: e.clientY } }
+              });
+              window.dispatchEvent(canvasEvent);
+            }}
+          >
+            <div className="w-2.5 h-2.5 rounded-full bg-indigo-600 border border-white shadow-sm" />
+          </div>
         )}
       </div>
     </div>

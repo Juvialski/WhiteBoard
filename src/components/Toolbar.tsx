@@ -332,6 +332,45 @@ export default function Toolbar({
     "advanced-cartesian",
   ].includes(activeTool) || (activeTool === "select" && hasColorableSelection);
 
+  const autoHideTimeoutRef = React.useRef<any>(null);
+
+  const resetAutoHideTimer = () => {
+    if (autoHideTimeoutRef.current) {
+      clearTimeout(autoHideTimeoutRef.current);
+    }
+    autoHideTimeoutRef.current = setTimeout(() => {
+      setShowSettingsPanel(false);
+    }, 5000); // 5 seconds of idle auto-hides panel
+  };
+
+  const cancelAutoHideTimer = () => {
+    if (autoHideTimeoutRef.current) {
+      clearTimeout(autoHideTimeoutRef.current);
+      autoHideTimeoutRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    if (hasSettings) {
+      setShowSettingsPanel(true);
+      resetAutoHideTimer();
+    } else {
+      setShowSettingsPanel(false);
+    }
+    return () => cancelAutoHideTimer();
+  }, [activeTool]);
+
+  useEffect(() => {
+    if (hasColorableSelection) {
+      setShowSettingsPanel(true);
+      resetAutoHideTimer();
+    }
+  }, [hasColorableSelection]);
+
+  useEffect(() => {
+    return () => cancelAutoHideTimer();
+  }, []);
+
   const getToolDisplayName = () => {
     if (activeTool === "select" && hasColorableSelection) return "Selection Theme";
     if (activeTool === "pencil") return "Pencil Settings";
@@ -777,6 +816,8 @@ export default function Toolbar({
         {/* UNIFIED PROPERTIES PANEL: Merges shape menu, graph selector, line width, and color palette */}
         {hasSettings && showSettingsPanel && (
           <div
+            onMouseEnter={cancelAutoHideTimer}
+            onMouseLeave={resetAutoHideTimer}
             className={`bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-xl p-3.5 flex flex-col space-y-3.5 absolute transition-all duration-200 z-40 w-[94vw] max-w-[280px] animate-fade-in ${
               isCollapsed
                 ? "bottom-16 left-1/2 -translate-x-1/2 md:bottom-auto md:left-20 md:top-10 md:translate-x-0"
@@ -934,7 +975,15 @@ export default function Toolbar({
                     return (
                       <button
                         key={color.hex}
-                        onClick={() => onChangeColor(color.hex)}
+                        onClick={() => {
+                          onChangeColor(color.hex);
+                          if (autoHideTimeoutRef.current) {
+                            clearTimeout(autoHideTimeoutRef.current);
+                          }
+                          autoHideTimeoutRef.current = setTimeout(() => {
+                            setShowSettingsPanel(false);
+                          }, 1500); // Hide settings panel 1.5 seconds after selection
+                        }}
                         className={`h-7 rounded-lg border relative transition-all cursor-pointer ${
                           isSelected
                             ? "ring-2 ring-blue-500 ring-offset-1 border-white scale-105"
