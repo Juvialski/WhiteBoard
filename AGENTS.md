@@ -1,6 +1,6 @@
 # Collaborative Whiteboard Workspace — Agent Developer Playbook
 
-This document outlines the architecture, data schemas, mathematical patterns, and real-time synchronization flows of the Collaborative Whiteboard. Any AI Developer operating in this repository must strictly adhere to these guidelines to ensure performance, type-safety, and elegant user experience.
+This document outlines the architecture, data schemas, mathematical patterns, AI integration, and real-time synchronization flows of the Collaborative Whiteboard. Any AI Developer operating in this repository must strictly adhere to these guidelines to ensure performance, type-safety, and an elegant user experience.
 
 ---
 
@@ -26,7 +26,8 @@ The application implements a hybrid real-time synchronization strategy to achiev
 - **Board Elements** (Sticky notes, shapes, text, drawing strokes, image/audio/stamp elements, math LaTeX blocks) are saved in Firestore under:
   `/whiteboards/{boardId}/elements/{elementId}`
 - **Snapshot Listener (`onSnapshot`)**: Updates the client state in real time when any structural elements are modified or deleted.
-- **Throttling Constraint**: Standard Firestore limits write throughput to 1 write/second per document. You **MUST NOT** perform unthrottled Firestore writes on drag, resize, or active drawing gestures. Perform updates locally first in React state, and only write the final state to Firestore when the gesture completes (`pointerUp`).
+- **Throttling & Quota Constraint (CRITICAL)**: Standard Firestore limits write throughput to 1 write/second per document, and the Firebase free tier limits total writes per day (Quota limit exceeded: resource-exhausted). You **MUST NOT** perform unthrottled Firestore writes on drag, resize, or active drawing gestures.
+- **Centralized Queue Manager**: NEVER use direct `setDoc`, `addDoc`, or `updateDoc` for individual board elements. You **MUST** use the central `saveElementLocallyAndSync(id, data)` function. This function debounces and batches updates locally and updates data in "blob/shard" documents to strictly prevent quota exhaustion.
 
 ### B. WebSocket Server (Transient State)
 - **WebSocket Gateway**: Runs on the same port (`3000`) upgraded via HTTP.
@@ -45,13 +46,13 @@ All elements rendered on the whiteboard canvas must implement one of the specifi
 | Element `type` | Unique Properties | Purpose & Visual Assets |
 | :--- | :--- | :--- |
 | **`sticky`** | `text`, `color` (hex/Tailwind), `textColor` | Standard rectangular sticky notes with centered text wrapping. |
-| **`shape`** | `shapeType` (rect, circle, diamond, triangle, cartesian, etc.), `text`, `color`, `borderColor` | Multi-form shape blocks, flowcharts, or Cartesian mathematical graphs. |
+| **`shape`** | `shapeType` (rect, circle, diamond, triangle, cartesian, numberline, etc.), `text`, `color`, `borderColor` | Multi-form shape blocks, flowcharts, or interactive Cartesian mathematical graphs. |
 | **`text`** | `text`, `color`, `fontSize`, `fontFamily`, `textAlign` | Standard rich text fields with custom alignments and font weight. |
 | **`math`** | `text` (LaTeX code), `fontSize`, `color` | Mathematical formulas and LaTeX equations rendered with KaTeX. |
 | **`drawing`** | `points` (`Point[]`), `color`, `width`, `isHighlighter` | Freehand drawing paths and highlighters with Bezier curves. |
 | **`image`** | `src` (Base64 JPEG), `reactions` | Pasteable images auto-compressed on upload to stay under 50MB. |
 | **`audio`** | `audioUrl` (Base64), `duration`, `authorName` | Audio-recorded voice comments attached to physical coordinates. |
-| **`stamp`** | `stampType` (checked, star, great_job, signature, etc.) | Interactive teacher stamp comments or drawing signatures. |
+| **`stamp`** | `stampType` (checked, star, great_job, signature, custom), `label`, `color` | Interactive teacher stamp comments, AI-generated motivational stamps, or drawing signatures. |
 | **`connector`** | `fromId`, `toId`, `fromSocket`, `toSocket`, `endPoint` | Connecting anchor lines linking shapes together dynamically. |
 
 ---
@@ -92,24 +93,23 @@ Connectors link two shapes using four anchor points (`top`, `right`, `bottom`, `
 
 ## 4. AI-Powered Integration Guides
 
-The board features two highly sophisticated Gemini API endpoints in `/server.ts` powered by `@google/genai` (using `gemini-3.6-flash`).
+The board features several highly sophisticated Gemini API endpoints in `/server.ts` powered by `@google/genai` (using `gemini-3.6-flash`).
+**ALL Gemini API calls MUST be made on the server side (`/server.ts`)**.
 
 ### A. The Visual Solver (`/api/ai/solve`)
 - **Input**: Current set of whiteboard elements, and the user's prompt (e.g., a math question or layout request).
 - **Processing**: Summarizes the elements into structural markdown text representation, passes it to Gemini along with layout guidelines for Singapore Math bar models.
-- **Output Schema**:
-  - `explanation` (Markdown formatted solution string)
-  - `suggestedTitle` (Short descriptive string)
-  - `elements` (Array of objects specifying `id`, `type`, `x`, `y`, `width`, `height`, `text`, `color`, `borderColor`, etc. to draw the models onto the canvas).
+- **Output Schema**: Returns an `explanation`, `suggestedTitle`, and an array of `elements` to draw on the canvas.
 
 ### B. Handwriting & Sketch Beautifier (`/api/ai/beautify`)
 - **Input**: Active mouse/pointer drawing points (`Point[]`).
 - **Processing**: Samples the stroke path and sends it to Gemini to detect shapes or hand-written letters.
-- **Output Schema**:
-  - `type` (Must be `'shape'`, `'text'`, or `'original'`)
-  - `shapeType` (If type is shape: 'rect', 'circle', 'triangle', 'diamond', etc.)
-  - `text` (If type is text: The transcribed letters or formulas, strictly preserving exact user-supplied casing/capitalization).
-  - `bounds` (Bounding box coordinates: `{ x, y, width, height }`).
+- **Output Schema**: Returns `type` ('shape', 'text', 'original'), `shapeType` (if applicable), `text` (if applicable, strictly preserving exact casing/capitalization), and `bounds`.
+
+### C. Stamp Generator (`/api/ai/stamp`)
+- **Input**: User prompt/description of the stamp (e.g., "Good Job").
+- **Processing**: Generates an emoji, a short text, and a pastel hex color for the custom stamp.
+- **Output Schema**: Returns `emoji`, `text`, and `color`.
 
 ---
 
@@ -118,11 +118,36 @@ The board features two highly sophisticated Gemini API endpoints in `/server.ts`
 1. **Reactive State Integrity**:
    - Never update React state directly in component render bodies to avoid infinite render loops.
    - Guard against snapshot re-renders: Use primitive dependency values or stabilized refs in `useEffect` setups.
-2. **HTML ID Standards**:
+2. **Quota Exhaustion Prevention**:
+   - NEVER use direct `setDoc`, `addDoc`, or `updateDoc` for individual board elements. ALWAYS use `saveElementLocallyAndSync` to queue updates.
+   - For drawing strokes, use `simplifyPoints(points, 1.5)` to reduce the point density before storing to Firestore, to conserve payload size and quota.
+3. **HTML ID Standards**:
    - Provide clean, semantic, unique `id` values for all actionable layout elements (e.g., `<button id="btn-zoom-in" ...>`) to assist automated E2E tests and debugging workflows.
-3. **Typography & Styling**:
+4. **Typography & Styling**:
    - Always use utility classes of Tailwind CSS directly.
    - Align nested container corner radiuses mathematically: `Inner Radius = Outer Radius - Padding`.
    - Ensure a minimum target touch footprint of `44px` on interactive control bars for tablet/mobile accessibility.
-4. **Prereq Validation**:
+5. **Prereq Validation**:
    - Before completing any workspace edits, run `lint_applet` followed by `compile_applet` to confirm zero compilation warnings or type conflicts.
+
+---
+
+## 6. System & Infrastructure Rules
+
+- **Server Environment**: Express server runs in `server.ts` binding to `0.0.0.0` and port `3000`.
+- **Gemini SDK**: Always use `@google/genai` (`GoogleGenAI` and `Type` imports) with model `gemini-3.6-flash`.
+- **Server-Side API Security**: Keep `GEMINI_API_KEY` strictly server-side (`process.env.GEMINI_API_KEY`). NEVER expose API keys to the browser or client-side code.
+- **Structured Outputs**: Use `responseMimeType: "application/json"` and `responseSchema` for deterministic JSON payloads matching `src/types.ts`.
+- **Payload Limits**: Ensure Express body parsers handle large base64 image/stroke payloads (e.g., `50mb` limit).
+- **Environment Variables**: Every new environment variable must be declared in `.env.example`.
+- **TypeScript Strictness**: Code must compile clean with `tsc --noEmit` (`npm run lint`).
+- **Testing Standard**: Vitest unit and integration tests (`npm test` / `vitest run`) must run cleanly using JSDOM and `@testing-library/react`.
+- **Build Pipeline**: Production build runs `vite build` targeting static output in `dist/`.
+
+---
+
+## 7. Agent Continuous Evolution (Self-Updating Rule)
+
+**CRITICAL MANDATE**: To ensure this playbook progressively evolves, acts as a living document, and acts as an indicator that the agent is actively learning, you (the AI Developer) MUST update this `AGENTS.md` file at the end of complex tasks.
+1. **Pattern Capture**: If you establish a new architectural pattern, discover a new error prevention technique, fix a recurring bug (like Firestore quota exhaustion), or modify `src/types.ts` schemas, you must append or inject those rules into the relevant sections above.
+2. **Evolution Log**: Record a brief, timestamped entry in the `AGENT_EVOLUTION_LOG.md` file when a major structural change, feature addition, or rule update is completed. This provides a verifiable trail of the agent's adaptations over time while keeping this primary playbook concise.
