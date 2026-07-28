@@ -8,6 +8,9 @@ import { UserProfile } from '../types';
 vi.mock('firebase/firestore', () => ({
   collection: vi.fn(),
   query: vi.fn(),
+  getDocs: vi.fn().mockResolvedValue({
+    forEach: () => {},
+  }),
   onSnapshot: vi.fn((q, callback) => {
     callback({
       forEach: () => {},

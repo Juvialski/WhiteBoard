@@ -44,6 +44,15 @@ import LiveCursors from "./LiveCursors";
 import Minimap from "./Minimap";
 import KeyboardShortcutsModal from "./KeyboardShortcutsModal";
 import ClearCanvasModal from "./ClearCanvasModal";
+import { ElementWrapper, DrawingItem, RemoteDrawingStreamsLayer } from "./canvas/ElementWrapper";
+import { WhiteboardHeader } from "./canvas/WhiteboardHeader";
+import { AiAssistantPanel } from "./canvas/AiAssistantPanel";
+import {
+  ReadOnlyAlertBanner,
+  SyncNotificationToast,
+  FollowIndicatorBanner,
+  RemoteSelectionsLayer,
+} from "./canvas/CanvasOverlays";
 import {
   ChevronLeft,
   Share2,
@@ -258,279 +267,6 @@ function simplifyPoints(points: Point[], tolerance: number = 1.0): Point[] {
   result.push(points[points.length - 1]);
   return result;
 }
-
-// Memoized individual drawing component for high performance during zoom/pan re-renders
-const DrawingItem = React.memo(({ 
-  el, 
-  isSelected, 
-  isInteractive, 
-  activeTool, 
-  handleSelectElement 
-}: { 
-  el: any, 
-  isSelected: boolean, 
-  isInteractive: boolean, 
-  activeTool: string, 
-  handleSelectElement: (id: string, e: React.MouseEvent) => void 
-}) => {
-  const pathData = React.useMemo(() => getSvgPathFromPoints(el.points), [el.points]);
-  
-  return (
-    <g
-      className={
-        isInteractive
-          ? "pointer-events-auto cursor-pointer"
-          : "pointer-events-none"
-      }
-      onPointerDown={(e) => handleSelectElement(el.id, e)}
-    >
-      {/* Invisible thicker hit area for easier clicking */}
-      <path
-        d={pathData}
-        fill="none"
-        stroke="transparent"
-        strokeWidth={(el.width || 2) + 16}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d={pathData}
-        fill="none"
-        stroke={el.color}
-        strokeWidth={el.width}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        className={
-          el.isHighlighter
-            ? "mix-blend-multiply"
-            : "drop-shadow-sm"
-        }
-        style={
-          isSelected
-            ? { filter: "drop-shadow(0 0 4px #3b82f6)" }
-            : {}
-        }
-      />
-    </g>
-  );
-});
-
-const RemoteStreamItem = React.memo(({ stream }: { stream: any }) => {
-  const pathData = React.useMemo(() => getSvgPathFromPoints(stream.points), [stream.points]);
-  return (
-    <path
-      d={pathData}
-      fill="none"
-      stroke={stream.color}
-      strokeWidth={stream.width}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={
-        stream.isHighlighter
-          ? "mix-blend-multiply"
-          : "drop-shadow-sm"
-      }
-    />
-  );
-});
-
-const RemoteDrawingStreamsLayer = React.memo(({ streamsRef, dirtyRef }: { streamsRef: any, dirtyRef: any }) => {
-  const [streams, setStreams] = useState<any>({});
-  
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (dirtyRef.current) {
-        setStreams({ ...streamsRef.current });
-        dirtyRef.current = false;
-      }
-    }, 1000 / 30);
-    return () => clearInterval(interval);
-  }, [streamsRef, dirtyRef]);
-
-  return (
-    <>
-      {Object.entries(streams).map(([userId, stream]: any) => {
-        if (!stream || stream.points.length === 0) return null;
-        return <RemoteStreamItem key={`stream-${userId}`} stream={stream} />;
-      })}
-    </>
-  );
-});
-
-const ElementWrapper = React.memo(({
-  el,
-  isSelected,
-  isInteractive,
-  currentUser,
-  zoom,
-  isDragging,
-  isResizing,
-  selectedIdsLength,
-  activeTool,
-  canWrite,
-  onSelectElement,
-  onUpdateElement,
-  onDeleteElement
-}: {
-  el: BoardElement;
-  isSelected: boolean;
-  isInteractive: boolean;
-  currentUser: UserProfile;
-  zoom: number;
-  isDragging: boolean;
-  isResizing: boolean;
-  selectedIdsLength: number;
-  activeTool: string;
-  canWrite: boolean;
-  onSelectElement: (id: string, e: React.MouseEvent) => void;
-  onUpdateElement: (id: string, updates: Partial<BoardElement>) => void;
-  onDeleteElement: (id: string) => void;
-}) => {
-  const onSelect = React.useCallback((e: React.MouseEvent) => {
-    onSelectElement(el.id, e);
-  }, [el.id, onSelectElement]);
-
-  const onUpdate = React.useCallback((updates: any) => {
-    onUpdateElement(el.id, updates);
-  }, [el.id, onUpdateElement]);
-
-  const onDelete = React.useCallback(() => {
-    onDeleteElement(el.id);
-  }, [el.id, onDeleteElement]);
-
-  const isDraggingOrResizing = isDragging || isResizing || selectedIdsLength > 1;
-
-  if (el.type === "sticky") {
-    return (
-      <div className={isInteractive ? "pointer-events-auto" : "pointer-events-none"}>
-        <StickyComponent
-          element={el}
-          isSelected={isSelected}
-          currentUser={currentUser}
-          zoom={zoom}
-          onSelect={onSelect}
-          onUpdate={onUpdate}
-          onDelete={onDelete}
-          isDraggingOrResizing={isDraggingOrResizing}
-          activeTool={activeTool}
-          canWrite={canWrite}
-        />
-      </div>
-    );
-  }
-
-  if (el.type === "shape") {
-    return (
-      <div className={isInteractive ? "pointer-events-auto" : "pointer-events-none"}>
-        <ShapeComponent
-          element={el}
-          isSelected={isSelected}
-          currentUser={currentUser}
-          zoom={zoom}
-          onSelect={onSelect}
-          onUpdate={onUpdate}
-          onDelete={onDelete}
-          isDraggingOrResizing={isDraggingOrResizing}
-          activeTool={activeTool}
-          canWrite={canWrite}
-        />
-      </div>
-    );
-  }
-
-  if (el.type === "text") {
-    return (
-      <div className={isInteractive ? "pointer-events-auto" : "pointer-events-none"}>
-        <TextComponent
-          element={el}
-          isSelected={isSelected}
-          currentUser={currentUser}
-          zoom={zoom}
-          onSelect={onSelect}
-          onUpdate={onUpdate}
-          onDelete={onDelete}
-          isDraggingOrResizing={isDraggingOrResizing}
-          activeTool={activeTool}
-          canWrite={canWrite}
-        />
-      </div>
-    );
-  }
-
-  if (el.type === "math") {
-    return (
-      <div className={isInteractive ? "pointer-events-auto" : "pointer-events-none"}>
-        <MathComponent
-          element={el}
-          isSelected={isSelected}
-          currentUser={currentUser}
-          zoom={zoom}
-          onSelect={onSelect}
-          onUpdate={onUpdate}
-          onDelete={onDelete}
-          isDraggingOrResizing={isDraggingOrResizing}
-          activeTool={activeTool}
-          canWrite={canWrite}
-        />
-      </div>
-    );
-  }
-
-  if (el.type === "image") {
-    const isPdfPage = el.id.startsWith("pdf-page-");
-    return (
-      <div className={isInteractive && !isPdfPage ? "pointer-events-auto" : "pointer-events-none"}>
-        <ImageComponent
-          element={el}
-          isSelected={isSelected}
-          currentUser={currentUser}
-          zoom={zoom}
-          onSelect={onSelect}
-          onUpdate={onUpdate}
-          onDelete={onDelete}
-          isDraggingOrResizing={isDraggingOrResizing}
-          activeTool={activeTool}
-          canWrite={canWrite}
-        />
-      </div>
-    );
-  }
-
-  if (el.type === "audio") {
-    return (
-      <div className={isInteractive ? "pointer-events-auto" : "pointer-events-none"}>
-        <AudioComponent
-          element={el as any}
-          isSelected={isSelected}
-          isInteractive={isInteractive}
-          onSelect={onSelect}
-          onUpdate={onUpdate}
-          onDelete={onDelete}
-          currentUser={currentUser}
-        />
-      </div>
-    );
-  }
-
-  if (el.type === "stamp") {
-    return (
-      <div className={isInteractive ? "pointer-events-auto" : "pointer-events-none"}>
-        <StampComponent
-          element={el as any}
-          isSelected={isSelected}
-          isInteractive={isInteractive}
-          onSelect={onSelect}
-          onUpdate={onUpdate}
-          onDelete={onDelete}
-          currentUser={currentUser}
-          canWrite={canWrite}
-        />
-      </div>
-    );
-  }
-
-  return null;
-});
 
 interface WhiteboardCanvasProps {
   boardId: string;
@@ -964,7 +700,7 @@ export default function WhiteboardCanvas({
         pendingAllWrites.current += allCount;
         pendingReads.current += readCount;
       }
-    }, 4000); // sync stats after 4 seconds of inactivity
+    }, 30000); // sync stats after 30 seconds of inactivity to optimize quota
   }, [boardId]);
 
   const incrementStats = React.useCallback((type: 'write' | 'read', count: number) => {
@@ -1606,13 +1342,15 @@ export default function WhiteboardCanvas({
 
     let unsubscribe = onSnapshot(q, (snapshot) => {
       let readCount = 0;
-      if (isInitialLoad) {
-        readCount = snapshot.size || 1;
-      } else {
-        readCount = snapshot.docChanges().filter(c => c.type !== 'removed').length;
-      }
-      if (readCount > 0) {
-        incrementStats('read', readCount);
+      if (!snapshot?.metadata?.hasPendingWrites) {
+        if (isInitialLoad) {
+          readCount = snapshot.size || 1;
+        } else {
+          readCount = snapshot.docChanges().filter(c => c.type !== 'removed').length;
+        }
+        if (readCount > 0) {
+          incrementStats('read', readCount);
+        }
       }
 
       if (!isInitialLoad && hasUnsavedChanges.current && activeUsersCountRef.current <= 1) {
@@ -1943,10 +1681,6 @@ export default function WhiteboardCanvas({
         const item = queue[id];
         if (!item) return;
         const isDraw = item.data?.type === 'drawing' || id.startsWith('draw-');
-        
-        // Clean up old individual docs to save reads over time!
-        const oldDocRef = doc(db, "whiteboards", boardId, "elements", id);
-        batch.delete(oldDocRef);
 
         const blobId = getBlobRefId(isDraw, id);
         if (!blobUpdates[blobId]) blobUpdates[blobId] = {};
@@ -4264,537 +3998,43 @@ export default function WhiteboardCanvas({
       id="whiteboard-workspace"
     >
       {/* Floating Island Header Controls */}
-      <div
-        className={`pointer-events-none absolute top-2 sm:top-3 left-2 sm:left-3 right-2 sm:right-3 flex items-center justify-between gap-1.5 z-30 transition-all duration-300 ${
-          isZenMode || isTopBarHidden ? "-translate-y-16 opacity-0" : "translate-y-0 opacity-100"
-        }`}
-      >
-        {/* Left Floating Island */}
-        <div className="pointer-events-auto bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/80 shadow-md hover:shadow-lg p-1 sm:p-1.5 flex items-center space-x-1 sm:space-x-1.5 shrink min-w-0 overflow-x-auto scrollbar-none touch-manipulation">
-          <button
-            onClick={onBackToDashboard}
-            className="p-1.5 sm:p-2 min-h-[36px] sm:min-h-[40px] hover:bg-slate-100/80 active:bg-slate-200 rounded-xl text-slate-600 hover:text-slate-900 transition-colors flex items-center space-x-1 font-bold text-xs cursor-pointer shrink-0 touch-manipulation"
-          >
-            <ChevronLeft className="w-4 h-4" />
-            <span className="hidden md:inline">All Boards</span>
-          </button>
-
-          <div className="h-4 w-[1px] bg-slate-200 shrink-0 hidden sm:block"></div>
-
-          <div className="flex items-center space-x-1 sm:space-x-2 shrink min-w-0">
-            <h2 className="text-xs sm:text-sm font-semibold leading-tight text-slate-900 flex items-center space-x-1">
-              <span className="truncate max-w-[90px] sm:max-w-[180px]" title={boardName}>{boardName}</span>
-              
-              <div className="hidden sm:flex items-center space-x-1">
-                {/* Unified Sync & WS Status Indicator */}
-                {syncStatus === "synced" && (
-                  <span 
-                    className={`border px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center space-x-1.5 transition-colors ${
-                      wsConnected 
-                        ? "bg-emerald-50 text-emerald-700 border-emerald-200/80" 
-                        : "bg-slate-50 text-slate-700 border-slate-200/80"
-                    }`}
-                    title={`Cloud: Synced | WebSockets: ${wsConnected ? `Connected (${wsLatency ?? 0}ms)` : "Disconnected"}`}
-                  >
-                    <span className={`w-1.5 h-1.5 rounded-full ${wsConnected ? "bg-emerald-500 animate-pulse" : "bg-slate-400"}`} />
-                    <span>{wsConnected ? "Live" : "Synced"}</span>
-                  </span>
-                )}
-                {syncStatus === "saving-cloud" && (
-                  <span className="bg-blue-50 text-blue-700 border border-blue-200/80 px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center space-x-1.5">
-                    <Loader2 className="w-2.5 h-2.5 animate-spin text-blue-500" />
-                    <span>Syncing...</span>
-                  </span>
-                )}
-                {syncStatus === "saved-local" && (
-                  <span className="bg-amber-50 text-amber-700 border border-amber-200/80 px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center space-x-1.5" title="Offline-ready local buffer active. Synced to cloud once you pause or others join.">
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-                    <span>Local Buffer</span>
-                  </span>
-                )}
-                {syncStatus === "offline" && (
-                  <button
-                    onClick={() => {
-                      showSyncToast("Attempting to force sync offline progress...", "info");
-                      flushPendingChanges();
-                    }}
-                    className="bg-rose-50 hover:bg-rose-100 active:bg-rose-200 text-rose-700 border border-rose-200/80 px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center space-x-1.5 cursor-pointer transition-colors touch-manipulation"
-                    title="No internet connection detected or Firestore offline. Click to manually force synchronize progress with Cloud."
-                  >
-                    <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
-                    <span>Offline (Sync)</span>
-                  </button>
-                )}
-              </div>
-
-              {/* Minimal compact indicator dot for mobile */}
-              <div className="flex sm:hidden items-center px-0.5">
-                <span 
-                  className={`w-2 h-2 rounded-full ${
-                    syncStatus === "synced" && wsConnected ? "bg-purple-500 animate-pulse" :
-                    syncStatus === "synced" ? "bg-emerald-500" :
-                    syncStatus === "saving-cloud" ? "bg-blue-500 animate-bounce" :
-                    syncStatus === "saved-local" ? "bg-amber-500 animate-pulse" : "bg-rose-500"
-                  }`}
-                  title={`Status: ${syncStatus} | WS: ${wsConnected ? "Connected" : "Disconnected"}`}
-                />
-              </div>
-            </h2>
-          </div>
-
-          <div className="h-4 w-[1px] bg-slate-200 shrink-0 hidden md:block"></div>
-
-          <button
-            onClick={handleUndo}
-            disabled={undoStack.length === 0}
-            className={`p-1.5 min-h-[36px] sm:min-h-[40px] md:px-2.5 md:py-1 rounded-xl flex items-center space-x-1 font-bold text-xs transition-all cursor-pointer shrink-0 touch-manipulation ${
-              undoStack.length > 0
-                ? "bg-slate-100 border border-slate-200/80 text-slate-700 hover:bg-slate-200 active:bg-slate-300 hover:text-slate-950 hover:scale-[1.02] active:scale-[0.98]"
-                : "text-slate-300 bg-slate-50 border border-slate-150 cursor-not-allowed"
-            }`}
-            title="Undo last action (Ctrl+Z)"
-          >
-            <Undo
-              className={`w-3.5 h-3.5 ${undoStack.length > 0 ? "text-slate-600" : "text-slate-300"}`}
-            />
-            <span className="hidden md:inline">Undo</span>
-            {undoStack.length > 0 && (
-              <span className="bg-blue-600 text-white text-[9px] px-1.5 py-0.5 rounded-full font-mono font-extrabold">
-                {undoStack.length}
-              </span>
-            )}
-          </button>
-
-          <button
-            onClick={handleRedo}
-            disabled={redoStack.length === 0}
-            className={`p-1.5 min-h-[36px] sm:min-h-[40px] md:px-2.5 md:py-1 rounded-xl flex items-center space-x-1 font-bold text-xs transition-all cursor-pointer shrink-0 touch-manipulation ${
-              redoStack.length > 0
-                ? "bg-slate-100 border border-slate-200/80 text-slate-700 hover:bg-slate-200 active:bg-slate-300 hover:text-slate-950 hover:scale-[1.02] active:scale-[0.98]"
-                : "text-slate-300 bg-slate-50 border border-slate-150 cursor-not-allowed"
-            }`}
-            title="Redo last action (Ctrl+Y)"
-          >
-            <Redo
-              className={`w-3.5 h-3.5 ${redoStack.length > 0 ? "text-slate-600" : "text-slate-300"}`}
-            />
-            <span className="hidden md:inline">Redo</span>
-            {redoStack.length > 0 && (
-              <span className="bg-blue-600 text-white text-[9px] px-1.5 py-0.5 rounded-full font-mono font-extrabold">
-                {redoStack.length}
-              </span>
-            )}
-          </button>
-        </div>
-
-        {/* Right Floating Island */}
-        <div className="pointer-events-auto bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/80 shadow-md hover:shadow-lg p-1 sm:p-1.5 flex items-center space-x-1 sm:space-x-1.5 shrink min-w-0 transition-all">
-          <div className="hidden sm:flex items-center space-x-1.5 bg-slate-100/90 p-1 md:px-2.5 md:py-1 rounded-full text-xs font-bold text-slate-600 border border-slate-200/80 shrink-0" title={`${currentUser.name} (You)`}>
-            <span
-              className="w-2.5 h-2.5 rounded-full shrink-0"
-              style={{ backgroundColor: currentUser.color }}
-            />
-            <span className="hidden md:inline truncate max-w-[80px]">{currentUser.name} (You)</span>
-          </div>
-
-          {/* Online Collaborators Avatars List with Follow Feature */}
-          <div className="hidden sm:flex items-center space-x-1 sm:space-x-1.5 shrink-0">
-            {Object.values(socketCollaboratorsRef.current).map((collab) => {
-              if (collab.id === currentUser.id) return null;
-              const isFollowed = followedUserId === collab.id;
-              return (
-                <button
-                  key={collab.id}
-                  onClick={() => setFollowedUserId(isFollowed ? null : collab.id)}
-                  className={`p-1 md:px-2.5 md:py-1 rounded-full flex items-center space-x-1.5 text-xs font-bold transition-all cursor-pointer border shrink-0 ${
-                    isFollowed
-                      ? "bg-blue-50 border-blue-500 text-blue-700 ring-2 ring-blue-500/30 scale-105"
-                      : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100 hover:scale-105"
-                  }`}
-                  title={isFollowed ? `Stop following ${collab.name}` : `Follow ${collab.name}'s live screen`}
-                >
-                  <span
-                    className="w-2.5 h-2.5 rounded-full shrink-0"
-                    style={{ backgroundColor: collab.color }}
-                  />
-                  <span className="hidden sm:inline truncate max-w-[80px]">{collab.name}</span>
-                  {collab.role === "teacher" && (
-                    <span className="text-[9px] bg-purple-100 text-purple-700 px-1 py-0.2 rounded font-extrabold uppercase">
-                      Teacher
-                    </span>
-                  )}
-                  {isFollowed ? (
-                    <span className="text-[9px] bg-blue-600 text-white px-1.5 py-0.2 rounded-full font-bold">
-                      Following
-                    </span>
-                  ) : (
-                    <span className="text-[9px] text-slate-400 font-medium">Follow</span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Presenter Mode Button ("Follow Me") */}
-          <button
-            onClick={() => {
-              const nextState = !isPresenterMode;
-              setIsPresenterMode(nextState);
-              if (nextState) {
-                if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                  wsRef.current.send(JSON.stringify({
-                    type: "request_follow",
-                    boardId,
-                    teacherId: currentUser.id,
-                    teacherName: currentUser.name,
-                  }));
-                }
-                showSyncToast("Started Presenter Mode! Team will follow your screen.", "success");
-              } else {
-                if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                  wsRef.current.send(JSON.stringify({
-                    type: "stop_follow",
-                    boardId,
-                    teacherId: currentUser.id,
-                  }));
-                }
-                showSyncToast("Exited Presenter Mode.", "info");
-              }
-            }}
-            className={`hidden md:flex p-1.5 md:px-2.5 md:py-1 rounded-xl font-bold text-xs items-center space-x-1 transition-all cursor-pointer border shrink-0 ${
-              isPresenterMode
-                ? "bg-purple-600 border-purple-700 text-white shadow-md shadow-purple-600/20 ring-2 ring-purple-400"
-                : "bg-purple-50 hover:bg-purple-100 border-purple-200 text-purple-700"
-            }`}
-            title={isPresenterMode ? "Stop Presenter Mode" : "Start Presenter Mode (Broadcast View)"}
-          >
-            <Video className="w-3.5 h-3.5 shrink-0" />
-            <span className="hidden lg:inline">{isPresenterMode ? "Presenting" : "Presenter Mode"}</span>
-          </button>
-
-          {/* Teacher control to allow/disallow student writing */}
-          {isTeacher ? (
-            <button
-              onClick={handleToggleStudentsCanWrite}
-              className={`hidden md:flex p-1.5 md:px-2.5 md:py-1 rounded-xl items-center space-x-1.5 font-bold text-xs transition-all cursor-pointer border shrink-0 ${
-                studentsCanWrite
-                  ? "bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100"
-                  : "bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100 animate-pulse"
-              }`}
-              title={
-                studentsCanWrite
-                  ? "Click to lock board for students (Read Only)"
-                  : "Click to unlock board for students (Collaborative)"
-              }
-            >
-              {studentsCanWrite ? (
-                <>
-                  <Unlock className="w-3.5 h-3.5 shrink-0" />
-                  <span className="hidden md:inline">Students Can Write</span>
-                </>
-              ) : (
-                <>
-                  <Lock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                  <span className="hidden md:inline">Students Locked</span>
-                </>
-              )}
-            </button>
-          ) : (
-            /* Student status indicator */
-            <div
-              className={`hidden md:flex p-1.5 md:px-2.5 md:py-1 rounded-xl items-center space-x-1.5 font-bold text-xs border shrink-0 ${
-                studentsCanWrite
-                  ? "bg-emerald-50 border-emerald-100 text-emerald-600"
-                  : "bg-amber-50 border-amber-200 text-amber-700"
-              }`}
-              title={studentsCanWrite ? "Collaborative Mode" : "View Only Mode"}
-            >
-              {studentsCanWrite ? (
-                <>
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 relative flex h-2 w-2 shrink-0">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                  </span>
-                  <span className="hidden md:inline">Collaborative Mode</span>
-                </>
-              ) : (
-                <>
-                  <Lock className="w-3.5 h-3.5 text-amber-500 animate-bounce shrink-0" />
-                  <span className="hidden md:inline">View Only Mode</span>
-                </>
-              )}
-            </div>
-          )}
-
-          <button
-            onClick={() => setIsAiPanelOpen(!isAiPanelOpen)}
-            className={`hidden md:flex p-1.5 md:px-3 md:py-1 rounded-xl text-xs font-semibold items-center space-x-1.5 transition-all cursor-pointer shrink-0 ${
-              isAiPanelOpen
-                ? "bg-purple-600 hover:bg-purple-700 text-white shadow-md border-purple-600 scale-102"
-                : "bg-white hover:bg-slate-50 text-slate-700 border border-slate-200/80 shadow-xs"
-            }`}
-            title="AI Assistant"
-          >
-            <Sparkles
-              className={`w-3.5 h-3.5 shrink-0 ${isAiPanelOpen ? "text-white animate-pulse" : "text-purple-600"}`}
-            />
-            <span className="hidden lg:inline">AI Assistant</span>
-          </button>
-
-          {isPdfBoard && (
-            <button
-              onClick={handleDownloadPdfWithDrawings}
-              disabled={isGeneratingPdf}
-              className="hidden md:flex p-1.5 md:px-3 md:py-1 rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs items-center space-x-1.5 transition-all cursor-pointer disabled:opacity-50 shrink-0"
-              title="Download PDF"
-            >
-              {isGeneratingPdf ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-                  <span className="hidden lg:inline">Exporting...</span>
-                </>
-              ) : (
-                <>
-                  <Download className="w-3.5 h-3.5 shrink-0" />
-                  <span className="hidden lg:inline">Download PDF</span>
-                </>
-              )}
-            </button>
-          )}
-
-          <button
-            onClick={() => handleExportImage('png')}
-            className="hidden md:flex p-1.5 md:px-3 md:py-1 rounded-xl text-xs font-semibold bg-white hover:bg-slate-50 text-slate-700 border border-slate-200/80 shadow-xs items-center space-x-1.5 transition-all cursor-pointer shrink-0"
-            title="Export full board as PNG image"
-          >
-            <ImageIcon className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-            <span className="hidden lg:inline">Export PNG</span>
-          </button>
-
-          <button
-            onClick={() => handleExportImage('svg')}
-            className="hidden md:flex p-1.5 md:px-3 md:py-1 rounded-xl text-xs font-semibold bg-white hover:bg-slate-50 text-slate-700 border border-slate-200/80 shadow-xs items-center space-x-1.5 transition-all cursor-pointer shrink-0"
-            title="Export full board as vector SVG"
-          >
-            <FileCode className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-            <span className="hidden lg:inline">Export SVG</span>
-          </button>
-
-          <button
-            onClick={copyBoardLink}
-            className={`hidden md:flex p-1.5 md:px-3 md:py-1 rounded-xl text-xs font-medium items-center space-x-1.5 transition-all cursor-pointer shrink-0 ${
-              copiedLink
-                ? "bg-green-500 text-white shadow-xs"
-                : "bg-blue-600 hover:bg-blue-700 text-white shadow-xs"
-            }`}
-            title="Share Canvas"
-          >
-            {copiedLink ? (
-              <>
-                <Check className="w-3.5 h-3.5 shrink-0" />
-                <span className="hidden lg:inline">Link Copied</span>
-              </>
-            ) : (
-              <>
-                <Share2 className="w-3.5 h-3.5 shrink-0" />
-                <span className="hidden lg:inline">Share Canvas</span>
-              </>
-            )}
-          </button>
-
-          {/* Subtle Button to Hide Header */}
-          <button
-            onClick={() => setIsTopBarHidden(true)}
-            className="hidden md:flex p-1.5 hover:bg-slate-100/80 rounded-xl text-slate-400 hover:text-slate-700 transition-colors cursor-pointer shrink-0"
-            title="Hide Header Controls"
-          >
-            <EyeOff className="w-4 h-4" />
-          </button>
-
-          {/* Mobile Actions Dropdown Menu Button (Mobile Only) */}
-          <div className="relative md:hidden flex items-center">
-            <button
-              onClick={() => setIsHeaderMenuOpen(!isHeaderMenuOpen)}
-              className={`min-w-[36px] min-h-[36px] sm:min-w-[40px] sm:min-h-[40px] p-1.5 rounded-xl border transition-all cursor-pointer flex items-center justify-center touch-manipulation active:scale-95 ${
-                isHeaderMenuOpen
-                  ? "bg-slate-100 border-slate-300 text-slate-800"
-                  : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 active:bg-slate-200"
-              }`}
-              title="More Options"
-            >
-              <MoreHorizontal className="w-4 h-4" />
-            </button>
-
-            {isHeaderMenuOpen && (
-              <div className="absolute right-0 top-10 bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200 shadow-2xl p-2.5 flex flex-col space-y-1.5 z-45 min-w-[210px] text-slate-800 animate-fade-in">
-                {/* Presenter Mode */}
-                <button
-                  onClick={() => {
-                    const nextState = !isPresenterMode;
-                    setIsPresenterMode(nextState);
-                    if (nextState) {
-                      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                        wsRef.current.send(JSON.stringify({
-                          type: "request_follow",
-                          boardId,
-                          teacherId: currentUser.id,
-                          teacherName: currentUser.name,
-                        }));
-                      }
-                      showSyncToast("Started Presenter Mode! Team will follow your screen.", "success");
-                    } else {
-                      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                        wsRef.current.send(JSON.stringify({
-                          type: "stop_follow",
-                          boardId,
-                          teacherId: currentUser.id,
-                        }));
-                      }
-                      showSyncToast("Exited Presenter Mode.", "info");
-                    }
-                    setIsHeaderMenuOpen(false);
-                  }}
-                  className={`w-full px-3 py-2 rounded-xl font-semibold text-xs flex items-center space-x-2 transition-all cursor-pointer border ${
-                    isPresenterMode
-                      ? "bg-purple-600 border-purple-700 text-white shadow-md shadow-purple-600/20"
-                      : "bg-purple-50 hover:bg-purple-100 border-purple-200 text-purple-700"
-                  }`}
-                >
-                  <Video className="w-4 h-4 shrink-0" />
-                  <span>{isPresenterMode ? "Presenting..." : "Presenter Mode"}</span>
-                </button>
-
-                {/* Teacher lock/unlock or student status */}
-                {isTeacher ? (
-                  <button
-                    onClick={() => {
-                      handleToggleStudentsCanWrite();
-                      setIsHeaderMenuOpen(false);
-                    }}
-                    className={`w-full px-3 py-2 rounded-xl flex items-center space-x-2 font-semibold text-xs transition-all cursor-pointer border ${
-                      studentsCanWrite
-                        ? "bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100"
-                        : "bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100"
-                    }`}
-                  >
-                    {studentsCanWrite ? (
-                      <>
-                        <Unlock className="w-4 h-4 shrink-0" />
-                        <span>Students Can Write</span>
-                      </>
-                    ) : (
-                      <>
-                        <Lock className="w-4 h-4 text-amber-600 shrink-0" />
-                        <span>Students Locked</span>
-                      </>
-                    )}
-                  </button>
-                ) : (
-                  <div
-                    className={`w-full px-3 py-2 rounded-xl flex items-center space-x-2 font-semibold text-xs border ${
-                      studentsCanWrite
-                        ? "bg-emerald-50 border-emerald-100 text-emerald-600"
-                        : "bg-amber-50 border-amber-200 text-amber-700"
-                    }`}
-                  >
-                    {studentsCanWrite ? (
-                      <>
-                        <span className="w-2 h-2 rounded-full bg-emerald-500 relative flex h-2 w-2 shrink-0">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                        </span>
-                        <span>Collaborative Mode</span>
-                      </>
-                    ) : (
-                      <>
-                        <Lock className="w-4 h-4 text-amber-500 shrink-0" />
-                        <span>View Only Mode</span>
-                      </>
-                    )}
-                  </div>
-                )}
-
-                {/* AI Assistant */}
-                <button
-                  onClick={() => {
-                    setIsAiPanelOpen(!isAiPanelOpen);
-                    setIsHeaderMenuOpen(false);
-                  }}
-                  className={`w-full px-3 py-2 rounded-xl text-xs font-semibold flex items-center space-x-2 transition-all cursor-pointer border ${
-                    isAiPanelOpen
-                      ? "bg-purple-600 border-purple-700 text-white shadow-md"
-                      : "bg-white hover:bg-slate-50 text-slate-700 border-slate-200"
-                  }`}
-                >
-                  <Sparkles className={`w-4 h-4 shrink-0 ${isAiPanelOpen ? "text-white animate-pulse" : "text-purple-600"}`} />
-                  <span>AI Assistant</span>
-                </button>
-
-                {/* Download PDF */}
-                {isPdfBoard && (
-                  <button
-                    onClick={() => {
-                      handleDownloadPdfWithDrawings();
-                      setIsHeaderMenuOpen(false);
-                    }}
-                    disabled={isGeneratingPdf}
-                    className="w-full px-3 py-2 rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs flex items-center space-x-2 transition-all cursor-pointer disabled:opacity-50 border border-emerald-700"
-                  >
-                    {isGeneratingPdf ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                        <span>Exporting...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Download className="w-4 h-4 shrink-0" />
-                        <span>Download PDF</span>
-                      </>
-                    )}
-                  </button>
-                )}
-
-                {/* Share Canvas */}
-                <button
-                  onClick={() => {
-                    copyBoardLink();
-                    setIsHeaderMenuOpen(false);
-                  }}
-                  className={`w-full px-3 py-2 rounded-xl text-xs font-semibold flex items-center space-x-2 transition-all cursor-pointer border ${
-                    copiedLink
-                      ? "bg-green-500 border-green-600 text-white"
-                      : "bg-blue-600 border-blue-700 text-white"
-                  }`}
-                >
-                  {copiedLink ? (
-                    <>
-                      <Check className="w-4 h-4 shrink-0" />
-                      <span>Link Copied</span>
-                    </>
-                  ) : (
-                    <>
-                      <Share2 className="w-4 h-4 shrink-0" />
-                      <span>Share Canvas</span>
-                    </>
-                  )}
-                </button>
-
-                {/* Hide Header */}
-                <button
-                  onClick={() => {
-                    setIsTopBarHidden(true);
-                    setIsHeaderMenuOpen(false);
-                  }}
-                  className="w-full px-3 py-2 rounded-xl text-xs font-semibold flex items-center space-x-2 transition-all hover:bg-slate-50 text-slate-600 border border-transparent cursor-pointer"
-                >
-                  <EyeOff className="w-4 h-4 shrink-0 text-slate-400" />
-                  <span>Hide Header</span>
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
+      <WhiteboardHeader
+        isZenMode={isZenMode}
+        isTopBarHidden={isTopBarHidden}
+        setIsTopBarHidden={setIsTopBarHidden}
+        onBackToDashboard={onBackToDashboard}
+        boardName={boardName}
+        boardId={boardId}
+        syncStatus={syncStatus}
+        wsConnected={wsConnected}
+        wsLatency={wsLatency}
+        flushPendingChanges={flushPendingChanges}
+        showSyncToast={showSyncToast}
+        undoStack={undoStack}
+        redoStack={redoStack}
+        handleUndo={handleUndo}
+        handleRedo={handleRedo}
+        currentUser={currentUser}
+        socketCollaboratorsRef={socketCollaboratorsRef}
+        followedUserId={followedUserId}
+        setFollowedUserId={setFollowedUserId}
+        isPresenterMode={isPresenterMode}
+        setIsPresenterMode={setIsPresenterMode}
+        wsRef={wsRef}
+        isTeacher={isTeacher}
+        studentsCanWrite={studentsCanWrite}
+        handleToggleStudentsCanWrite={handleToggleStudentsCanWrite}
+        isAiPanelOpen={isAiPanelOpen}
+        setIsAiPanelOpen={setIsAiPanelOpen}
+        isPdfBoard={isPdfBoard}
+        handleDownloadPdfWithDrawings={handleDownloadPdfWithDrawings}
+        isGeneratingPdf={isGeneratingPdf}
+        handleExportImage={handleExportImage}
+        copyBoardLink={copyBoardLink}
+        copiedLink={copiedLink}
+        isHeaderMenuOpen={isHeaderMenuOpen}
+        setIsHeaderMenuOpen={setIsHeaderMenuOpen}
+      />
 
       {/* Subtle Floating Toggle Button to Show Header when Hidden */}
       {isTopBarHidden && !isZenMode && (
@@ -5011,45 +4251,11 @@ export default function WhiteboardCanvas({
           )}
 
           {/* Render remote collaborator selection borders */}
-          {elements.map((el) => {
-            if (el.type === "drawing" || el.type === "connector") return null;
-            
-            const focusedBy = Object.entries(remoteSelections).find(
-              ([uId, sel]) => sel.selectedIds && sel.selectedIds.includes(el.id)
-            );
-            
-            if (!focusedBy) return null;
-            
-            const [focusedUserId, focusInfo] = focusedBy;
-            if (focusedUserId === currentUser.id) return null;
-
-            const bounded = el as any;
-
-            return (
-              <div
-                key={`remote-focus-${el.id}`}
-                className="absolute pointer-events-none border transition-all duration-150 z-30"
-                style={{
-                  left: (bounded.x || 0) - 2,
-                  top: (bounded.y || 0) - 2,
-                  width: (bounded.width || 100) + 4,
-                  height: (bounded.height || 80) + 4,
-                  borderColor: focusInfo.color,
-                  borderStyle: "dashed",
-                  borderWidth: "2px",
-                  borderRadius: "8px",
-                  boxShadow: `0 0 0 1px ${focusInfo.color}33`,
-                }}
-              >
-                <div
-                  className="absolute left-[-2px] top-[-18px] text-[9px] font-mono font-bold px-1.5 py-0.5 rounded text-white whitespace-nowrap shadow-xs pointer-events-none"
-                  style={{ backgroundColor: focusInfo.color }}
-                >
-                  {focusInfo.userName}
-                </div>
-              </div>
-            );
-          })}
+          <RemoteSelectionsLayer
+            elements={elements}
+            remoteSelections={remoteSelections}
+            currentUser={currentUser}
+          />
 
           {/* Drag Selection Box Overlay */}
           {dragSelectStart && dragSelectEnd && (
@@ -5254,414 +4460,41 @@ export default function WhiteboardCanvas({
 
 
       {/* Read-Only Mode Floating Notice Banner */}
-      {showReadOnlyAlert && (
-        <div className="fixed top-18 left-1/2 -translate-x-1/2 bg-amber-500 text-white font-bold text-xs px-5 py-3 rounded-full shadow-2xl z-50 flex items-center space-x-2 border border-amber-400 animate-bounce">
-          <Lock className="w-3.5 h-3.5 text-white" />
-          <span>
-            View-Only Mode: The teacher has locked writing access on this board.
-          </span>
-        </div>
-      )}
+      <ReadOnlyAlertBanner show={showReadOnlyAlert} />
 
       {/* Offline Sync Floating Toast Notice */}
-      {syncNotification.visible && (
-        <div className={`fixed bottom-6 right-6 px-4 py-3 rounded-xl shadow-2xl z-50 flex items-center space-x-2.5 border transition-all duration-300 ${
-          syncNotification.type === 'success' ? 'bg-emerald-600 text-white border-emerald-500' :
-          syncNotification.type === 'error' ? 'bg-rose-600 text-white border-rose-500' :
-          syncNotification.type === 'warning' ? 'bg-amber-500 text-white border-amber-400' :
-          'bg-blue-600 text-white border-blue-500'
-        }`}>
-          {syncNotification.type === 'success' && <Check className="w-4 h-4 text-white shrink-0" />}
-          {syncNotification.type === 'error' && <WifiOff className="w-4 h-4 text-white shrink-0" />}
-          {syncNotification.type === 'warning' && <WifiOff className="w-4 h-4 text-white shrink-0" />}
-          {syncNotification.type === 'info' && <Wifi className="w-4 h-4 text-white shrink-0 animate-pulse" />}
-          <span className="text-xs font-semibold tracking-wide">
-            {syncNotification.message}
-          </span>
-          <button 
-            onClick={() => setSyncNotification(prev => ({ ...prev, visible: false }))}
-            className="text-white hover:text-white/80 p-0.5 rounded-full hover:bg-white/10 transition-colors cursor-pointer"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
-
-      {/* Clear Board Confirmation Modal */}
-      {showClearConfirm && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 animate-fade-in p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-100 p-6 flex flex-col space-y-4 animate-scale-up text-slate-800">
-            <div className="flex items-center space-x-3 text-rose-600">
-              <div className="w-10 h-10 rounded-full bg-rose-50 flex items-center justify-center">
-                <Trash2 className="w-5 h-5" />
-              </div>
-              <h3 className="text-base font-bold">Clear Entire Whiteboard?</h3>
-            </div>
-
-            <p className="text-xs text-slate-500 leading-relaxed">
-              Are you sure you want to delete all elements, shapes, drawings,
-              and connection lines on this board? This action is permanent,
-              synchronizes for all users in real time, and cannot be undone.
-            </p>
-
-            <div className="flex items-center justify-end space-x-2.5 pt-2 border-t border-slate-100">
-              <button
-                onClick={() => setShowClearConfirm(false)}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={async () => {
-                  setShowClearConfirm(false);
-                  await handleClearBoard();
-                }}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white transition-colors cursor-pointer shadow-sm shadow-rose-600/10"
-              >
-                Clear Workspace
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <SyncNotificationToast
+        notification={syncNotification}
+        onDismiss={() => setSyncNotification((prev) => ({ ...prev, visible: false }))}
+      />
 
       {/* AI Classroom Assistant Sliding/Floating Side Panel */}
-      {isAiPanelOpen && (
-        <div
-          className="absolute right-2 left-2 sm:left-auto sm:right-4 top-16 bottom-20 sm:bottom-24 w-[calc(100vw-16px)] sm:w-[420px] bg-white rounded-2xl border border-slate-200 shadow-2xl z-40 flex flex-col overflow-hidden text-slate-800"
-          id="ai-assistant-panel"
-        >
-          {/* Header */}
-          <div className="p-4 border-b border-slate-100 bg-purple-50/50 flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <div className="p-1.5 bg-purple-600 text-white rounded-lg">
-                <Brain className="w-4 h-4" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-slate-900">
-                  AI Tutor & Problem Solver
-                </h3>
-                <p className="text-[10px] text-purple-600 font-semibold uppercase tracking-wider">
-                  Gemini classroom assistant
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={() => setIsAiPanelOpen(false)}
-              className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
-          {/* Panel Content (Scrollable) */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-5">
-            {/* Custom API Key Section */}
-            <div className="space-y-2.5 bg-gradient-to-r from-purple-50/70 to-indigo-50/70 p-3.5 rounded-xl border border-purple-100/65 shadow-sm">
-              <div className="flex items-center justify-between">
-                <h4 className="text-[10px] font-bold text-purple-700 uppercase tracking-wider flex items-center space-x-1.5">
-                  <Key className="w-3.5 h-3.5 text-purple-600" />
-                  <span>Personal API limits</span>
-                </h4>
-                <span
-                  className={`text-[9px] px-1.5 py-0.5 font-bold rounded-md ${
-                    userApiKey
-                      ? "bg-emerald-100 text-emerald-800"
-                      : "bg-amber-100 text-amber-800 border border-amber-200"
-                  }`}
-                >
-                  {userApiKey ? "AI Features Active" : "AI Features Locked"}
-                </span>
-              </div>
-
-              <p className="text-[10px] text-slate-500 leading-normal">
-                AI Classroom Assistant features are exclusive to users with
-                their own Google API key. Enter your personal, 100% free{" "}
-                <strong>Google AI Studio Key</strong> below. This key is saved
-                strictly inside your local browser storage.
-              </p>
-
-              {/* Secure explanation and quick-link */}
-              <div className="bg-white/80 border border-purple-100/50 rounded-lg p-2.5 space-y-2">
-                <div className="text-[9px] text-slate-400 flex items-start space-x-1.5 leading-normal">
-                  <span className="shrink-0 text-[10px] leading-none">🔒</span>
-                  <span>
-                    Note: Because API keys are secure developer credentials,
-                    they cannot be programmatically read from your Google
-                    account session.
-                  </span>
-                </div>
-                <div className="flex justify-start">
-                  <a
-                    href="https://aistudio.google.com/app/apikey"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center space-x-1 bg-purple-600 hover:bg-purple-700 active:bg-purple-800 text-white font-bold py-1 px-2.5 rounded-md text-[9px] shadow-sm transition-all cursor-pointer"
-                  >
-                    <span>Get Free API Key from Google AI Studio</span>
-                    <svg
-                      className="w-2.5 h-2.5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2.5}
-                        d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
-                      />
-                    </svg>
-                  </a>
-                </div>
-              </div>
-
-              <div className="relative mt-1 flex items-center">
-                <input
-                  type={showApiKey ? "text" : "password"}
-                  placeholder="AI_Studio_API_Key..."
-                  value={userApiKey}
-                  onChange={(e) => {
-                    const val = e.target.value.trim();
-                    setUserApiKey(val);
-                    if (val) {
-                      const encrypted = secureEncrypt(val, currentUser?.id);
-                      localStorage.setItem("user_gemini_api_key", encrypted);
-                    } else {
-                      localStorage.removeItem("user_gemini_api_key");
-                    }
-                  }}
-                  className="w-full bg-white border border-slate-200 rounded-lg py-1.5 px-2.5 pr-20 text-[11px] font-mono focus:outline-none focus:ring-2 focus:ring-purple-600/20 focus:border-purple-600 transition-colors placeholder:text-slate-400 text-slate-700"
-                />
-                <div className="absolute right-2 flex items-center space-x-1.5">
-                  <button
-                    onClick={() => setShowApiKey(!showApiKey)}
-                    type="button"
-                    className="text-slate-400 hover:text-slate-600 cursor-pointer p-0.5"
-                    title={showApiKey ? "Hide Key" : "Show Key"}
-                  >
-                    {showApiKey ? (
-                      <EyeOff className="w-3.5 h-3.5" />
-                    ) : (
-                      <Eye className="w-3.5 h-3.5" />
-                    )}
-                  </button>
-                  {userApiKey && (
-                    <button
-                      onClick={() => {
-                        setUserApiKey("");
-                        localStorage.removeItem("user_gemini_api_key");
-                      }}
-                      className="text-rose-500 hover:text-rose-700 text-[10px] font-bold cursor-pointer p-0.5"
-                    >
-                      Clear
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Handwriting Options */}
-            <div className="space-y-2.5">
-              <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                Handwriting Assist
-              </h4>
-
-              {/* Toggle autocorrect */}
-              <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-100 rounded-xl">
-                <div className="flex items-start space-x-2.5">
-                  <PenTool className="w-4 h-4 text-purple-600 mt-0.5 animate-pulse" />
-                  <div>
-                    <div className="text-xs font-bold text-slate-800">
-                      Auto-Correct Drawings
-                    </div>
-                    <div className="text-[10px] text-slate-500">
-                      Automatically replace messy pencil drawings with crisp
-                      geometric shapes or clean typed text.
-                    </div>
-                  </div>
-                </div>
-                <button
-                  onClick={() =>
-                    setAutoCorrectHandwriting(!autoCorrectHandwriting)
-                  }
-                  className={`w-9 h-5 rounded-full p-0.5 transition-colors cursor-pointer ${
-                    autoCorrectHandwriting ? "bg-purple-600" : "bg-slate-300"
-                  }`}
-                >
-                  <div
-                    className={`bg-white w-4 h-4 rounded-full shadow-sm transform duration-200 ${
-                      autoCorrectHandwriting ? "translate-x-4" : "translate-x-0"
-                    }`}
-                  />
-                </button>
-              </div>
-
-              {/* Manual Beautify Selection */}
-              <button
-                onClick={handleBeautifySelection}
-                disabled={isAiLoading}
-                className="w-full flex items-center justify-center space-x-2 bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-700 font-semibold py-2 rounded-xl text-xs transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Wand2 className="w-3.5 h-3.5" />
-                <span>Beautify Selected Handwriting</span>
-              </button>
-            </div>
-
-            {/* Solver Options */}
-            <div className="space-y-3 pt-3 border-t border-slate-100">
-              <div className="flex items-center justify-between">
-                <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                  Visual Math Solver
-                </h4>
-                {selectedIds.length > 0 ? (
-                  <span className="px-2 py-0.5 bg-green-50 text-green-700 text-[10px] font-bold rounded-full border border-green-200 flex items-center space-x-1 animate-pulse">
-                    <span>●</span>
-                    <span>{selectedIds.length} items selected</span>
-                  </span>
-                ) : (
-                  <span className="px-2 py-0.5 bg-amber-50 text-amber-700 text-[10px] font-bold rounded-full border border-amber-200">
-                    Selection required
-                  </span>
-                )}
-              </div>
-
-              <div className="text-xs text-slate-600 leading-normal">
-                To keep solving safe and precise, the solver only processes
-                specific elements you select.
-              </div>
-
-              {selectedIds.length === 0 ? (
-                <div className="p-3 bg-amber-50/75 border border-amber-200/50 rounded-xl space-y-1.5">
-                  <div className="text-xs font-bold text-amber-950 flex items-center space-x-1.5">
-                    <span>💡 How to Solve:</span>
-                  </div>
-                  <p className="text-[10.5px] text-amber-800 leading-relaxed">
-                    Use the <strong>Select tool (pointer icon)</strong> to click
-                    or drag a selection box around your handwritten formulas,
-                    math notes, or drawings, then click below to activate the
-                    solver.
-                  </p>
-                </div>
-              ) : (
-                <div className="p-3 bg-indigo-50/50 border border-indigo-100 rounded-xl space-y-1.5">
-                  <div className="text-xs font-bold text-indigo-950">
-                    🎯 Selected Elements Ready
-                  </div>
-                  <p className="text-[10.5px] text-indigo-800 leading-relaxed">
-                    The solver will analyze the {selectedIds.length} selected
-                    element(s) to solve the math and generate editable diagrams
-                    in your view.
-                  </p>
-                </div>
-              )}
-
-              <div>
-                <label className="block text-[10px] font-bold text-slate-400 mb-1.5 uppercase">
-                  Specify Custom Problem (Optional)
-                </label>
-                <textarea
-                  rows={3}
-                  placeholder="Tom has 12 apples, and Sarah has twice as many. Show the bar model and find total apples."
-                  value={aiProblemInput}
-                  onChange={(e) => setAiProblemInput(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs focus:outline-none focus:ring-2 focus:ring-purple-600/20 focus:border-purple-600 transition-colors resize-none placeholder:text-slate-400 text-slate-800 font-medium"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => handleSolveProblem()}
-                  disabled={isAiLoading || selectedIds.length === 0}
-                  className="flex items-center justify-center space-x-1.5 bg-purple-600 hover:bg-purple-700 text-white font-bold py-2.5 rounded-xl text-xs transition-colors cursor-pointer shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  {isAiLoading ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Brain className="w-3.5 h-3.5" />
-                  )}
-                  <span>Solve Selected</span>
-                </button>
-
-                <button
-                  onClick={() =>
-                    handleSolveProblem(
-                      "Solve and draw a Singapore Math bar model illustration",
-                    )
-                  }
-                  disabled={isAiLoading || selectedIds.length === 0}
-                  className="flex items-center justify-center space-x-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 rounded-xl text-xs transition-colors cursor-pointer shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  {isAiLoading ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Plus className="w-3.5 h-3.5" />
-                  )}
-                  <span>Singapore Model</span>
-                </button>
-              </div>
-            </div>
-
-            {/* AI Solver output response detail */}
-            {(aiResponseText || isAiLoading) && (
-              <div className="space-y-2 pt-3 border-t border-slate-100 flex flex-col min-h-[160px]">
-                <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center space-x-1">
-                  <span>Solution Output</span>
-                  {isAiLoading && (
-                    <Loader2 className="w-3 h-3 animate-spin text-purple-600" />
-                  )}
-                </h4>
-
-                {isAiLoading ? (
-                  <div className="flex-1 flex flex-col items-center justify-center py-8 text-center space-y-2 bg-slate-50 border border-dashed border-slate-200 rounded-xl">
-                    <Loader2 className="w-8 h-8 animate-spin text-purple-600" />
-                    <p className="text-xs font-bold text-slate-700">
-                      Tutor thinking...
-                    </p>
-                    <p className="text-[10px] text-slate-500 max-w-xs px-4">
-                      Analyzing whiteboard elements and generating visual
-                      Singapore Math diagrams.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="flex-1 p-3.5 bg-purple-50/50 border border-purple-100 rounded-xl overflow-y-auto max-h-[250px] text-xs leading-relaxed text-slate-700">
-                    {aiResponseTitle && (
-                      <div className="font-bold text-purple-900 mb-2 border-b border-purple-100/50 pb-1 flex items-center space-x-1">
-                        <Sparkles className="w-3.5 h-3.5 text-purple-600" />
-                        <span>{aiResponseTitle}</span>
-                      </div>
-                    )}
-                    <div className="markdown-body">
-                      <Markdown>{aiResponseText}</Markdown>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      <AiAssistantPanel
+        isOpen={isAiPanelOpen}
+        onClose={() => setIsAiPanelOpen(false)}
+        userApiKey={userApiKey}
+        setUserApiKey={setUserApiKey}
+        showApiKey={showApiKey}
+        setShowApiKey={setShowApiKey}
+        autoCorrectHandwriting={autoCorrectHandwriting}
+        setAutoCorrectHandwriting={setAutoCorrectHandwriting}
+        handleBeautifySelection={handleBeautifySelection}
+        isAiLoading={isAiLoading}
+        selectedIds={selectedIds}
+        aiProblemInput={aiProblemInput}
+        setAiProblemInput={setAiProblemInput}
+        handleSolveProblem={handleSolveProblem}
+        aiResponseText={aiResponseText}
+        aiResponseTitle={aiResponseTitle}
+        currentUser={currentUser}
+      />
 
       {/* Floating Follow Indicator Banner */}
-      {followedUserId && (
-        <div className="fixed top-18 left-1/2 -translate-x-1/2 z-40 bg-slate-900/90 backdrop-blur-md text-white font-bold text-xs px-4 py-2.5 rounded-2xl shadow-xl border border-slate-700/80 flex items-center space-x-3 animate-fade-in">
-          <div className="flex items-center space-x-2">
-            <span className="relative flex h-2.5 w-2.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-500"></span>
-            </span>
-            <span>
-              Following <strong className="text-blue-400 font-extrabold">{socketCollaboratorsRef.current[followedUserId]?.name || "Collaborator"}</strong>'s view
-            </span>
-          </div>
-          <button
-            onClick={() => setFollowedUserId(null)}
-            className="px-2.5 py-1 bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold rounded-lg transition-colors cursor-pointer"
-          >
-            Stop Following (Esc)
-          </button>
-        </div>
-      )}
+      <FollowIndicatorBanner
+        followedUserId={followedUserId}
+        collaborators={socketCollaboratorsRef.current}
+        onStopFollow={() => setFollowedUserId(null)}
+      />
 
       {/* Minimap Navigation Control */}
       {!isZenMode && (

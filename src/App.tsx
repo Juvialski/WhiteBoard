@@ -136,10 +136,10 @@ export default function App() {
     // Initial checkin
     updatePresence(true);
 
-    // Heartbeat every 15 seconds
+    // Heartbeat every 45 seconds (quota optimized)
     const interval = setInterval(() => {
       updatePresence(true);
-    }, 15000);
+    }, 45000);
 
     // Tab visibility handler
     const handleVisibilityChange = () => {

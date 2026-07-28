@@ -656,6 +656,7 @@ export default function Toolbar({
                               setShowSettingsPanel(true);
                             }
                           }}
+                          title={`${t.label} (${t.shortcut})`}
                           className={`p-2.5 sm:p-3 rounded-xl flex items-center justify-center transition-all cursor-pointer ${
                             showActive
                               ? "bg-blue-600 text-white shadow-md shadow-blue-600/15 scale-105"

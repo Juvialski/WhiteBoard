@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { collection, query, onSnapshot, addDoc, deleteDoc, doc, writeBatch, setDoc } from 'firebase/firestore';
+import { collection, query, getDocs, onSnapshot, addDoc, deleteDoc, doc, writeBatch, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Whiteboard, UserProfile } from '../types';
 import { Plus, Trash2, ArrowRight, User, BookOpen, GraduationCap, Users, Sparkles, Copy, Check, FileUp, Loader2, ChevronDown, ChevronUp, Calendar, BarChart2, List, RefreshCw } from 'lucide-react';
@@ -190,17 +190,15 @@ export default function Dashboard({
 
       let currentX = 0;
       let currentY = 0;
-      const batch = writeBatch(db);
       const gap = 40;
+      const pdfBlobMap: Record<string, any> = {};
       
       for (let i = 0; i < pdfUploadState.images.length; i++) {
         if (!pdfUploadState.selectedPages[i]) continue;
         const img = pdfUploadState.images[i];
         const elementId = `pdf-page-${i}-${Date.now()}`;
-        const elRef = doc(db, 'whiteboards', docRef.id, 'elements', elementId);
         
-        batch.set(elRef, {
-          id: elementId,
+        pdfBlobMap[elementId] = {
           type: "image",
           x: currentX,
           y: currentY,
@@ -210,7 +208,7 @@ export default function Dashboard({
           zIndex: -1, // background
           locked: true,
           updatedAt: Date.now()
-        });
+        };
         
         if (pdfUploadState.layout === 'vertical') {
           currentY += img.height + gap;
@@ -219,7 +217,7 @@ export default function Dashboard({
         }
       }
       
-      await batch.commit();
+      await setDoc(doc(db, 'whiteboards', docRef.id, 'elements', 'elements_blob'), { data: pdfBlobMap });
 
       const finalName = userName.trim() || (role === 'teacher' ? 'Teacher' : 'Student-' + Math.floor(Math.random() * 1000));
       localStorage.setItem('lucid_spark_user_name', finalName);
@@ -278,10 +276,11 @@ export default function Dashboard({
     }
   }, []);
 
-  // Fetch and listen to whiteboards in real-time
-  useEffect(() => {
-    const q = query(collection(db, 'whiteboards'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+  // Fetch whiteboards with getDocs (quota-optimized to prevent multi-user read cascades)
+  const fetchBoards = React.useCallback(async () => {
+    try {
+      const q = query(collection(db, 'whiteboards'));
+      const snapshot = await getDocs(q);
       const loadedBoards: Whiteboard[] = [];
       snapshot.forEach((docSnap) => {
         const data = docSnap.data();
@@ -301,12 +300,23 @@ export default function Dashboard({
       // Sort by newest
       loadedBoards.sort((a, b) => b.createdAt - a.createdAt);
       setBoards(loadedBoards);
-    }, (err) => {
-      console.error("Error subscribing to whiteboards:", err);
-    });
+    } catch (err) {
+      console.error("Error fetching whiteboards:", err);
+    }
+  }, []);
 
-    return () => unsubscribe();
-  }, [refreshTrigger]);
+  useEffect(() => {
+    fetchBoards();
+
+    // Periodic poll every 45s when window is active
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        fetchBoards();
+      }
+    }, 45000);
+
+    return () => clearInterval(interval);
+  }, [fetchBoards, refreshTrigger]);
 
   const handleCreateBoard = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -331,6 +341,7 @@ export default function Dashboard({
       setNewBoardName('');
       setNewBoardDesc('');
       setAssignedStudent('');
+      await fetchBoards();
     } catch (err) {
       console.error('Error creating whiteboard:', err);
     }
@@ -346,6 +357,7 @@ export default function Dashboard({
     try {
       await deleteDoc(doc(db, 'whiteboards', boardToDelete));
       setBoardToDelete(null);
+      await fetchBoards();
     } catch (err) {
       console.error('Error deleting board:', err);
       alert('Failed to delete board.');

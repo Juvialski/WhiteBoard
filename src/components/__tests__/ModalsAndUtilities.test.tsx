@@ -15,7 +15,7 @@ describe('Modals & Workspace Utilities Test Suite', () => {
       render(<WorkspaceTimer isOpen={true} onClose={vi.fn()} />);
 
       expect(screen.getByText('Sprint Timer')).toBeTruthy();
-      expect(screen.getByText('05:00')).toBeTruthy();
+      expect(screen.getByDisplayValue('05')).toBeTruthy();
 
       const startBtn = screen.getByText('Start');
       fireEvent.click(startBtn);
@@ -38,7 +38,8 @@ describe('Modals & Workspace Utilities Test Suite', () => {
       const resetBtn = screen.getByTitle('Reset Timer');
       fireEvent.click(resetBtn);
 
-      expect(screen.getByText('05:00')).toBeTruthy();
+      expect(screen.getByDisplayValue('05')).toBeTruthy();
+      expect(screen.getByDisplayValue('00')).toBeTruthy();
     });
   });
 
@@ -84,7 +85,7 @@ describe('Modals & Workspace Utilities Test Suite', () => {
       const approvedStampBtn = screen.getByText('Approved');
       fireEvent.click(approvedStampBtn);
 
-      expect(onSelectStamp).toHaveBeenCalledWith('approved', 'Approved');
+      expect(onSelectStamp).toHaveBeenCalledWith('approved', 'Approved', undefined, expect.any(String));
     });
 
     it('switches to signature tab', () => {
