@@ -7,9 +7,10 @@ interface WorkspaceTimerProps {
   // Optional sync callbacks
   onTimerSync?: (state: { isRunning: boolean; mode: 'timer' | 'stopwatch'; remainingSeconds: number; totalSeconds: number; startedAt?: number | null }) => void;
   syncedState?: { isRunning: boolean; mode: 'timer' | 'stopwatch'; remainingSeconds: number; totalSeconds: number; startedAt?: number | null } | null;
+  isReadOnly?: boolean;
 }
 
-export default function WorkspaceTimer({ isOpen, onClose, onTimerSync, syncedState }: WorkspaceTimerProps) {
+export default function WorkspaceTimer({ isOpen, onClose, onTimerSync, syncedState, isReadOnly = false }: WorkspaceTimerProps) {
   const [mode, setMode] = useState<'timer' | 'stopwatch'>('timer');
   const [totalSeconds, setTotalSeconds] = useState<number>(300); // 5 mins default
   const [remainingSeconds, setRemainingSeconds] = useState<number>(300);
@@ -274,6 +275,11 @@ export default function WorkspaceTimer({ isOpen, onClose, onTimerSync, syncedSta
             <span className="text-xs font-bold tracking-wide uppercase text-slate-200">
               Sprint Timer
             </span>
+            {isReadOnly && (
+              <span className="text-[9px] bg-indigo-950/90 text-indigo-300 px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wider border border-indigo-700/50">
+                Teacher Managed
+              </span>
+            )}
           </div>
 
           <div className="flex items-center space-x-1">
@@ -291,45 +297,53 @@ export default function WorkspaceTimer({ isOpen, onClose, onTimerSync, syncedSta
             >
               {isMinimized ? <Plus className="w-3.5 h-3.5" /> : <Minus className="w-3.5 h-3.5" />}
             </button>
-            <button
-              onClick={onClose}
-              className="p-1 hover:bg-rose-900/50 hover:text-rose-300 rounded-lg text-slate-400 transition-colors cursor-pointer"
-              title="Close Timer"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
+            {!isReadOnly && (
+              <button
+                onClick={onClose}
+                className="p-1 hover:bg-rose-900/50 hover:text-rose-300 rounded-lg text-slate-400 transition-colors cursor-pointer"
+                title="Close Timer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
         </div>
 
         {!isMinimized && (
           <div className="p-4 flex flex-col items-center">
             {/* Mode Selector Tabs */}
-            <div className="flex items-center bg-slate-100 p-1 rounded-xl w-full mb-3 text-xs font-bold">
-              <button
-                onClick={() => {
-                  setMode('timer');
-                  setIsRunning(false);
-                  setStartedAt(null);
-                }}
-                className={`flex-1 py-1 rounded-lg transition-all cursor-pointer ${
-                  mode === 'timer' ? 'bg-white text-indigo-600 shadow-xs' : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                Timer
-              </button>
-              <button
-                onClick={() => {
-                  setMode('stopwatch');
-                  setIsRunning(false);
-                  setStartedAt(null);
-                }}
-                className={`flex-1 py-1 rounded-lg transition-all cursor-pointer ${
-                  mode === 'stopwatch' ? 'bg-white text-indigo-600 shadow-xs' : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                Stopwatch
-              </button>
-            </div>
+            {!isReadOnly ? (
+              <div className="flex items-center bg-slate-100 p-1 rounded-xl w-full mb-3 text-xs font-bold">
+                <button
+                  onClick={() => {
+                    setMode('timer');
+                    setIsRunning(false);
+                    setStartedAt(null);
+                  }}
+                  className={`flex-1 py-1 rounded-lg transition-all cursor-pointer ${
+                    mode === 'timer' ? 'bg-white text-indigo-600 shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Timer
+                </button>
+                <button
+                  onClick={() => {
+                    setMode('stopwatch');
+                    setIsRunning(false);
+                    setStartedAt(null);
+                  }}
+                  className={`flex-1 py-1 rounded-lg transition-all cursor-pointer ${
+                    mode === 'stopwatch' ? 'bg-white text-indigo-600 shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Stopwatch
+                </button>
+              </div>
+            ) : (
+              <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">
+                {mode === 'timer' ? 'Countdown Timer' : 'Stopwatch'}
+              </div>
+            )}
 
             {/* Circular Progress Display */}
             <div className="relative w-28 h-28 flex items-center justify-center my-1">
@@ -355,7 +369,7 @@ export default function WorkspaceTimer({ isOpen, onClose, onTimerSync, syncedSta
                 />
               </svg>
               <div className="absolute flex flex-col items-center justify-center">
-                {mode === 'timer' && !isRunning ? (
+                {mode === 'timer' && !isRunning && !isReadOnly ? (
                   <div className="flex items-center space-x-0.5 text-2xl font-black font-mono tracking-tight text-slate-900 bg-slate-50/70 rounded-lg px-1.5 py-0.5 border border-slate-200/50">
                     <input
                       type="text"
@@ -403,100 +417,115 @@ export default function WorkspaceTimer({ isOpen, onClose, onTimerSync, syncedSta
                   </span>
                 )}
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">
-                  {mode === 'timer' ? (isRunning ? 'Remaining' : 'Edit Time') : 'Elapsed'}
+                  {mode === 'timer' ? (isRunning ? 'Remaining' : isReadOnly ? 'Time Limit' : 'Edit Time') : 'Elapsed'}
                 </span>
               </div>
             </div>
 
-            {/* Control Buttons */}
-            <div className="flex items-center space-x-2 mt-3 w-full">
-              <button
-                onClick={handleStartPause}
-                className={`flex-1 py-2 rounded-xl text-xs font-extrabold flex items-center justify-center space-x-1.5 shadow-sm transition-all cursor-pointer ${
-                  isRunning
-                    ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/20'
-                    : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-600/20'
-                }`}
-              >
-                {isRunning ? (
-                  <>
-                    <Pause className="w-3.5 h-3.5 fill-current" />
-                    <span>Pause</span>
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-3.5 h-3.5 fill-current" />
-                    <span>Start</span>
-                  </>
-                )}
-              </button>
-
-              <button
-                onClick={handleReset}
-                className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-colors cursor-pointer flex items-center justify-center space-x-1"
-                title="Reset Timer"
-              >
-                <RotateCcw className="w-4 h-4" />
-                <span className="text-xs font-bold">Reset</span>
-              </button>
-            </div>
-
-            {/* Quick Adjustments Subtraction & Addition Bar */}
-            <div className="grid grid-cols-4 gap-1.5 w-full mt-3">
-              <button
-                onClick={() => handleAddSeconds(-60)}
-                disabled={mode === 'timer' && currentDisplaySeconds < 60}
-                className="py-1 bg-slate-50 hover:bg-slate-100 active:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center"
-                title="Subtract 1 Minute"
-              >
-                -1m
-              </button>
-              <button
-                onClick={() => handleAddSeconds(-10)}
-                disabled={mode === 'timer' && currentDisplaySeconds < 10}
-                className="py-1 bg-slate-50 hover:bg-slate-100 active:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center"
-                title="Subtract 10 Seconds"
-              >
-                -10s
-              </button>
-              <button
-                onClick={() => handleAddSeconds(10)}
-                className="py-1 bg-slate-50 hover:bg-slate-100 active:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center"
-                title="Add 10 Seconds"
-              >
-                +10s
-              </button>
-              <button
-                onClick={() => handleAddSeconds(60)}
-                className="py-1 bg-slate-50 hover:bg-slate-100 active:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center"
-                title="Add 1 Minute"
-              >
-                +1m
-              </button>
-            </div>
-
-            {/* Presets (Timer Mode only) */}
-            {mode === 'timer' && (
-              <div className="grid grid-cols-4 gap-1.5 w-full mt-3 pt-3 border-t border-slate-100">
-                {[
-                  { label: '1m', secs: 60 },
-                  { label: '3m', secs: 180 },
-                  { label: '5m', secs: 300 },
-                  { label: '10m', secs: 600 },
-                ].map((p) => (
+            {/* Read-Only Status or Interactive Control Buttons */}
+            {isReadOnly ? (
+              <div className="mt-3 w-full bg-slate-50 border border-slate-200/80 rounded-2xl p-2.5 text-center flex flex-col items-center space-y-1">
+                <span className="text-xs font-bold text-indigo-700 flex items-center space-x-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-indigo-500 animate-pulse" />
+                  <span>Controlled by Teacher</span>
+                </span>
+                <span className="text-[10px] text-slate-500 font-medium">
+                  {isRunning ? 'Timer is active' : 'Timer is currently paused'}
+                </span>
+              </div>
+            ) : (
+              <>
+                {/* Control Buttons */}
+                <div className="flex items-center space-x-2 mt-3 w-full">
                   <button
-                    key={p.label}
-                    onClick={() => handlePreset(p.secs)}
-                    className={`py-1 rounded-lg text-xs font-extrabold border transition-all cursor-pointer ${
-                      totalSeconds === p.secs
-                        ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
-                        : 'bg-slate-50 border-slate-200/80 text-slate-600 hover:bg-slate-100'
+                    onClick={handleStartPause}
+                    className={`flex-1 py-2 rounded-xl text-xs font-extrabold flex items-center justify-center space-x-1.5 shadow-sm transition-all cursor-pointer ${
+                      isRunning
+                        ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/20'
+                        : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-600/20'
                     }`}
                   >
-                    {p.label}
+                    {isRunning ? (
+                      <>
+                        <Pause className="w-3.5 h-3.5 fill-current" />
+                        <span>Pause</span>
+                      </>
+                    ) : (
+                      <>
+                        <Play className="w-3.5 h-3.5 fill-current" />
+                        <span>Start</span>
+                      </>
+                    )}
                   </button>
-                ))}
-              </div>
+
+                  <button
+                    onClick={handleReset}
+                    className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-colors cursor-pointer flex items-center justify-center space-x-1"
+                    title="Reset Timer"
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                    <span className="text-xs font-bold">Reset</span>
+                  </button>
+                </div>
+
+                {/* Quick Adjustments Subtraction & Addition Bar */}
+                <div className="grid grid-cols-4 gap-1.5 w-full mt-3">
+                  <button
+                    onClick={() => handleAddSeconds(-60)}
+                    disabled={mode === 'timer' && currentDisplaySeconds < 60}
+                    className="py-1 bg-slate-50 hover:bg-slate-100 active:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center"
+                    title="Subtract 1 Minute"
+                  >
+                    -1m
+                  </button>
+                  <button
+                    onClick={() => handleAddSeconds(-10)}
+                    disabled={mode === 'timer' && currentDisplaySeconds < 10}
+                    className="py-1 bg-slate-50 hover:bg-slate-100 active:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center"
+                    title="Subtract 10 Seconds"
+                  >
+                    -10s
+                  </button>
+                  <button
+                    onClick={() => handleAddSeconds(10)}
+                    className="py-1 bg-slate-50 hover:bg-slate-100 active:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center"
+                    title="Add 10 Seconds"
+                  >
+                    +10s
+                  </button>
+                  <button
+                    onClick={() => handleAddSeconds(60)}
+                    className="py-1 bg-slate-50 hover:bg-slate-100 active:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center"
+                    title="Add 1 Minute"
+                  >
+                    +1m
+                  </button>
+                </div>
+
+                {/* Presets (Timer Mode only) */}
+                {mode === 'timer' && (
+                  <div className="grid grid-cols-4 gap-1.5 w-full mt-3 pt-3 border-t border-slate-100">
+                    {[
+                      { label: '1m', secs: 60 },
+                      { label: '3m', secs: 180 },
+                      { label: '5m', secs: 300 },
+                      { label: '10m', secs: 600 },
+                    ].map((p) => (
+                      <button
+                        key={p.label}
+                        onClick={() => handlePreset(p.secs)}
+                        className={`py-1 rounded-lg text-xs font-extrabold border transition-all cursor-pointer ${
+                          totalSeconds === p.secs
+                            ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                            : 'bg-slate-50 border-slate-200/80 text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}

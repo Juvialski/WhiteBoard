@@ -531,7 +531,9 @@ export default function WhiteboardCanvas({
             ];
           } else if (msg.type === "timer_sync") {
             setSyncedTimerState(msg.state);
-            if (msg.state && msg.state.isRunning) {
+            if (msg.isOpen !== undefined) {
+              setIsTimerOpen(msg.isOpen);
+            } else if (msg.state && (msg.state.isRunning || msg.state.isOpen)) {
               setIsTimerOpen(true);
             }
           } else if (msg.type === "pong") {
@@ -840,6 +842,7 @@ export default function WhiteboardCanvas({
           type: "timer_sync",
           boardId,
           state: timerState,
+          isOpen: isTimerOpen,
         })
       );
     }
@@ -1565,6 +1568,7 @@ export default function WhiteboardCanvas({
 
     const handleNativeWheel = (e: WheelEvent) => {
       e.preventDefault();
+      if (!canWriteRef.current) return;
       
       const rect = container.getBoundingClientRect();
       const mouseX = e.clientX - rect.left;
@@ -1649,6 +1653,10 @@ export default function WhiteboardCanvas({
     };
 
     const handleNativeTouchStart = (e: TouchEvent) => {
+      if (!canWriteRef.current) {
+        if (e.cancelable) e.preventDefault();
+        return;
+      }
       if (e.touches.length === 2) {
         // Pinch-to-zoom multi-touch trigger
         const t1 = e.touches[0];
@@ -1673,6 +1681,10 @@ export default function WhiteboardCanvas({
     };
 
     const handleNativeTouchMove = (e: TouchEvent) => {
+      if (!canWriteRef.current) {
+        if (e.cancelable) e.preventDefault();
+        return;
+      }
       // 1. Two-finger pinch-to-zoom
       if (e.touches.length === 2 && touchStartData.dist > 0) {
         e.preventDefault();
@@ -2141,6 +2153,7 @@ export default function WhiteboardCanvas({
   // Listen for custom Resize events from child elements
   useEffect(() => {
     const handleResizeStart = (e: Event) => {
+      if (!canWriteRef.current) return;
       const customEvent = e as CustomEvent;
       const { elementId, originalEvent } = customEvent.detail;
       const targetElement = elements.find((el) => el.id === elementId);
@@ -2309,12 +2322,7 @@ export default function WhiteboardCanvas({
       setFollowedUserId(null);
     }
 
-    if (
-      !canWrite &&
-      activeTool !== "select" &&
-      activeTool !== "pan" &&
-      !e.shiftKey
-    ) {
+    if (!canWrite) {
       triggerReadOnlyAlert();
       return;
     }
@@ -3473,6 +3481,10 @@ export default function WhiteboardCanvas({
 
   // Click handler to select an element
   const handleSelectElement = React.useCallback((id: string, e: React.MouseEvent) => {
+    if (!canWrite) {
+      triggerReadOnlyAlert();
+      return;
+    }
     // Eraser tool clicks delete elements immediately
     if (activeTool === "eraser") {
       e.stopPropagation();
@@ -4205,7 +4217,24 @@ export default function WhiteboardCanvas({
             isTopBarHidden={isTopBarHidden}
             onOpenShortcuts={() => setIsShortcutsOpen(true)}
             onOpenClearModal={() => setIsClearModalOpen(true)}
-            onToggleTimer={() => setIsTimerOpen(!isTimerOpen)}
+            onToggleTimer={() => {
+              if (!canWrite) {
+                triggerReadOnlyAlert();
+                return;
+              }
+              const nextOpen = !isTimerOpen;
+              setIsTimerOpen(nextOpen);
+              if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                wsRef.current.send(
+                  JSON.stringify({
+                    type: "timer_sync",
+                    boardId,
+                    state: syncedTimerState,
+                    isOpen: nextOpen,
+                  })
+                );
+              }
+            }}
             isTimerOpen={isTimerOpen}
           />
         );
@@ -4268,7 +4297,7 @@ export default function WhiteboardCanvas({
               
               const isSelected = selectedIds.includes(el.id);
               const isInteractive =
-                activeTool === "select" || activeTool === "eraser";
+                (activeTool === "select" || activeTool === "eraser") && canWrite;
 
               return (
                 <ElementWrapper
@@ -4292,7 +4321,7 @@ export default function WhiteboardCanvas({
           </div>
 
           {/* 1.5. Connection Sockets Handles Overlay (shown when Connector Tool is active) */}
-          {activeTool === "connector" && (
+          {activeTool === "connector" && canWrite && (
             <div className="absolute inset-0 pointer-events-none z-30">
               {elements
                 .filter(el => el.type !== "drawing" && el.type !== "connector")
@@ -4380,7 +4409,7 @@ export default function WhiteboardCanvas({
               .map((el: any) => {
                 const isSelected = selectedIds.includes(el.id);
                 const isInteractive =
-                  activeTool === "select" || activeTool === "eraser";
+                  (activeTool === "select" || activeTool === "eraser") && canWrite;
                 return (
                   <DrawingItem
                     key={el.id}
@@ -4473,7 +4502,7 @@ export default function WhiteboardCanvas({
                 return (
                   <g key={conn.id} className="pointer-events-none">
                     {/* Invisible thicker selection target path */}
-                    {activeTool === "select" && (
+                    {activeTool === "select" && canWrite && (
                       <path
                         d={pathD}
                         stroke="transparent"
@@ -4620,9 +4649,23 @@ export default function WhiteboardCanvas({
       {/* Floating Workspace Sprint Timer & Stopwatch Widget */}
       <WorkspaceTimer
         isOpen={isTimerOpen}
-        onClose={() => setIsTimerOpen(false)}
+        onClose={() => {
+          if (!canWrite) return;
+          setIsTimerOpen(false);
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(
+              JSON.stringify({
+                type: "timer_sync",
+                boardId,
+                state: syncedTimerState,
+                isOpen: false,
+              })
+            );
+          }
+        }}
         onTimerSync={handleTimerSync}
         syncedState={syncedTimerState}
+        isReadOnly={!canWrite}
       />
 
       {/* Helper Modals */}

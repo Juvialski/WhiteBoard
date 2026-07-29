@@ -608,18 +608,6 @@ export default function Toolbar({
         <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-xl p-1.5 flex flex-row md:flex-col items-center max-w-full overflow-x-auto md:overflow-visible scrollbar-none space-x-1 md:space-x-0 md:space-y-1">
           {/* Toolbar Header (Desktop Only) */}
           <div className="hidden md:flex flex-col items-center space-y-1.5 pb-2 border-b border-slate-100 mb-1.5 w-full">
-            {hasSettings && (
-              <button
-                id="btn-toggle-settings"
-                onClick={() => setShowSettingsPanel(!showSettingsPanel)}
-                className={`p-2 rounded-xl transition-all cursor-pointer ${
-                  showSettingsPanel ? "text-blue-600 bg-blue-50" : "text-slate-400 hover:text-slate-700 hover:bg-slate-50"
-                }`}
-                title={showSettingsPanel ? "Hide Tool Settings" : "Show Tool Settings"}
-              >
-                <Settings className="w-4 h-4" />
-              </button>
-            )}
             <button
               id="btn-collapse-toolbar"
               onClick={() => setIsCollapsed(true)}

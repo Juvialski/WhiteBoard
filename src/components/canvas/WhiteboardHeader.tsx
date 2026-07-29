@@ -177,7 +177,7 @@ export const WhiteboardHeader: React.FC<WhiteboardHeaderProps> = ({
         <button
           onClick={handleUndo}
           disabled={undoStack.length === 0}
-          className={`p-1.5 min-h-[36px] sm:min-h-[40px] md:px-2.5 md:py-1 rounded-xl flex items-center space-x-1 font-bold text-xs transition-all cursor-pointer shrink-0 touch-manipulation ${
+          className={`px-2 py-1 h-8 md:px-2.5 rounded-xl flex items-center space-x-1 font-bold text-xs transition-all cursor-pointer shrink-0 touch-manipulation ${
             undoStack.length > 0
               ? "bg-slate-100 border border-slate-200/80 text-slate-700 hover:bg-slate-200 active:bg-slate-300 hover:text-slate-950 hover:scale-[1.02] active:scale-[0.98]"
               : "text-slate-300 bg-slate-50 border border-slate-150 cursor-not-allowed"
@@ -198,7 +198,7 @@ export const WhiteboardHeader: React.FC<WhiteboardHeaderProps> = ({
         <button
           onClick={handleRedo}
           disabled={redoStack.length === 0}
-          className={`p-1.5 min-h-[36px] sm:min-h-[40px] md:px-2.5 md:py-1 rounded-xl flex items-center space-x-1 font-bold text-xs transition-all cursor-pointer shrink-0 touch-manipulation ${
+          className={`px-2 py-1 h-8 md:px-2.5 rounded-xl flex items-center space-x-1 font-bold text-xs transition-all cursor-pointer shrink-0 touch-manipulation ${
             redoStack.length > 0
               ? "bg-slate-100 border border-slate-200/80 text-slate-700 hover:bg-slate-200 active:bg-slate-300 hover:text-slate-950 hover:scale-[1.02] active:scale-[0.98]"
               : "text-slate-300 bg-slate-50 border border-slate-150 cursor-not-allowed"
