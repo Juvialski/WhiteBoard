@@ -324,7 +324,12 @@ export default function WhiteboardCanvas({
     try {
       const cached = localStorage.getItem(`whiteboard_elements_${boardId}`);
       if (cached) {
-        return JSON.parse(cached);
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed)) {
+          return parsed.filter(
+            (el): el is BoardElement => el !== null && el !== undefined && typeof el === "object" && typeof el.id === "string" && typeof el.type === "string"
+          );
+        }
       }
     } catch (e) {
       console.error("Error loading cached elements:", e);
@@ -373,10 +378,15 @@ export default function WhiteboardCanvas({
       try {
         const cachedDrawings = await idbGet<DrawingElement[]>(`drawings_${boardId}`);
         if (cachedDrawings && cachedDrawings.length > 0) {
-          setElements((prev) => {
-            const nonDrawings = prev.filter(el => el.type !== "drawing");
-            return [...nonDrawings, ...cachedDrawings];
-          });
+          const sanitizedDrawings = cachedDrawings.filter(
+            (el): el is DrawingElement => el !== null && el !== undefined && typeof el === "object" && typeof el.id === "string" && el.type === "drawing"
+          );
+          if (sanitizedDrawings.length > 0) {
+            setElements((prev) => {
+              const nonDrawings = prev.filter(el => el && typeof el.id === "string" && el.type !== "drawing");
+              return [...nonDrawings, ...sanitizedDrawings];
+            });
+          }
         }
       } catch (err) {
         console.error("IndexedDB cache loading error:", err);
@@ -634,6 +644,7 @@ export default function WhiteboardCanvas({
   const hasUnsavedChanges = useRef<boolean>(false);
   const pendingSyncElements = useRef<Record<string, { data: any; action: 'set' | 'delete' }>>({});
   const debounceTimer = useRef<any>(null);
+  const isMigratingRef = useRef<boolean>(false);
 
   const [syncNotification, setSyncNotification] = useState<{
     message: string;
@@ -781,19 +792,19 @@ export default function WhiteboardCanvas({
   const [activePdfPageIndex, setActivePdfPageIndex] = useState(0);
 
   const pdfPages = React.useMemo(() => {
-    return elements.filter((el) => el.type === "image" && el.id.startsWith("pdf-page-")) as ImageElement[];
+    return elements.filter((el) => el.type === "image" && typeof el.id === "string" && el.id.startsWith("pdf-page-")) as ImageElement[];
   }, [elements]);
 
   const sortedElements = React.useMemo(() => {
     return [...elements].sort((a, b) => {
-      const aIsPdf = a.id.startsWith("pdf-page-");
-      const bIsPdf = b.id.startsWith("pdf-page-");
+      const aIsPdf = typeof a?.id === "string" && a.id.startsWith("pdf-page-");
+      const bIsPdf = typeof b?.id === "string" && b.id.startsWith("pdf-page-");
 
       if (aIsPdf && !bIsPdf) return -1;
       if (!aIsPdf && bIsPdf) return 1;
 
-      const zA = typeof a.zIndex === "number" ? a.zIndex : (aIsPdf ? -1 : 10);
-      const zB = typeof b.zIndex === "number" ? b.zIndex : (bIsPdf ? -1 : 10);
+      const zA = typeof a?.zIndex === "number" ? a.zIndex : (aIsPdf ? -1 : 10);
+      const zB = typeof b?.zIndex === "number" ? b.zIndex : (bIsPdf ? -1 : 10);
 
       return zA - zB;
     });
@@ -1018,9 +1029,30 @@ export default function WhiteboardCanvas({
     canWriteRef.current = canWrite;
   }, [canWrite]);
 
+  const isTeacherRef = useRef(isTeacher);
+  useEffect(() => {
+    isTeacherRef.current = isTeacher;
+  }, [isTeacher]);
+
+  // Anti-spam rate limiting for element creation & paste actions
+  const creationTimestampsRef = useRef<number[]>([]);
+
+  const checkCreationRateLimit = React.useCallback((maxActions = 6, windowMs = 3000): boolean => {
+    if (isTeacherRef.current) return true; // Teachers are exempt from anti-spam rate limits
+    const now = Date.now();
+    const recent = creationTimestampsRef.current.filter(t => now - t < windowMs);
+    if (recent.length >= maxActions) {
+      showSyncToast("Slow down! Please wait a moment before creating more items.", "warning", 3000);
+      return false;
+    }
+    recent.push(now);
+    creationTimestampsRef.current = recent;
+    return true;
+  }, [showSyncToast]);
+
   useEffect(() => {
     if (isPdfBoard && elements.length > 0 && !hasCentered && containerRef.current) {
-      const pdfPages = elements.filter((el) => el.id.startsWith("pdf-page-"));
+      const pdfPages = elements.filter((el) => typeof el?.id === "string" && el.id.startsWith("pdf-page-"));
       if (pdfPages.length > 0) {
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
         pdfPages.forEach((el) => {
@@ -1366,15 +1398,22 @@ export default function WhiteboardCanvas({
       snapshot.forEach((docSnap) => {
         const id = docSnap.id;
         const docData = docSnap.data();
+        if (!docData) return;
 
         if (id.startsWith("elements_blob") || id.startsWith("drawings_blob")) {
           if (docData && docData.data) {
             Object.keys(docData.data).forEach(elId => {
-              // Priority to blob data
-              loadedMap.set(elId, { id: elId, ...docData.data[elId] } as BoardElement);
+              const rawEl = docData.data[elId];
+              if (rawEl && typeof rawEl === "object") {
+                loadedMap.set(elId, { id: elId, ...rawEl } as BoardElement);
+              }
             });
           } else if (id.startsWith("drawings_blob") && docData && Array.isArray(docData.drawings)) {
-            docData.drawings.forEach((d: any) => loadedMap.set(d.id, d));
+            docData.drawings.forEach((d: any) => {
+              if (d && typeof d === "object" && typeof d.id === "string") {
+                loadedMap.set(d.id, d);
+              }
+            });
           }
         } else {
           // If it's a stray document, we only add it if it's NOT already in a blob
@@ -1385,10 +1424,11 @@ export default function WhiteboardCanvas({
             } else {
               console.warn("Skipping invalid stray ID:", id);
             }
-            const blobId = getBlobRefId(docData.type === "drawing", id);
+            const isDrawing = docData.type === "drawing";
+            const blobId = getBlobRefId(isDrawing, id);
             if (!shardUpdates[blobId]) shardUpdates[blobId] = {};
-            if (docData.type === "drawing") {
-              shardUpdates[blobId][id] = { ...docData, points: simplifyPoints(docData.points, 1.2) };
+            if (isDrawing) {
+              shardUpdates[blobId][id] = { ...docData, points: Array.isArray(docData.points) ? simplifyPoints(docData.points, 1.2) : [] };
             } else {
               shardUpdates[blobId][id] = docData;
             }
@@ -1404,7 +1444,9 @@ export default function WhiteboardCanvas({
         }
       });
 
-      const loaded = Array.from(loadedMap.values());
+      const loaded = Array.from(loadedMap.values()).filter(
+        (el): el is BoardElement => el !== null && el !== undefined && typeof el === "object" && typeof el.id === "string" && typeof el.type === "string"
+      );
       setElements(loaded);
 
       try {
@@ -1416,24 +1458,12 @@ export default function WhiteboardCanvas({
       }
 
       // Background migration for old stray documents
-      if (hasStrays && straysToDelete.length > 0) {
+      if (hasStrays && straysToDelete.length > 0 && !isMigratingRef.current) {
+        isMigratingRef.current = true;
         (async () => {
           console.log(`Migrating ${straysToDelete.length} stray documents...`);
           try {
-                          // Update shards
-             for (const blobId of Object.keys(shardUpdates)) {
-               if (Object.keys(shardUpdates[blobId]).length > 0) {
-                 try {
-                   await setDoc(doc(db, "whiteboards", boardId, "elements", blobId), { data: shardUpdates[blobId] }, { merge: true });
-                 } catch (err) {
-                   console.error("Migration setDoc failed for blob", blobId, err);
-                   showSyncToast("Migration setDoc failed: " + err.message, "error", 10000);
-                   throw err;
-                 }
-               }
-             }
-             
-             // Delete strays in batches of 400
+             // Delete strays FIRST in batches of 400 so subsequent snapshots don't see them
              for (let i = 0; i < straysToDelete.length; i += 400) {
                 const chunk = straysToDelete.slice(i, i + 400);
                 const deleteBatch = writeBatch(db);
@@ -1444,13 +1474,27 @@ export default function WhiteboardCanvas({
                   await deleteBatch.commit();
                 } catch (err) {
                    console.error("Migration deleteBatch failed for chunk", i, err);
-                   showSyncToast("Migration deleteBatch failed: " + err.message, "error", 10000);
                    throw err;
                 }
              }
+
+             // Update shards
+             for (const blobId of Object.keys(shardUpdates)) {
+               if (Object.keys(shardUpdates[blobId]).length > 0) {
+                 try {
+                   await setDoc(doc(db, "whiteboards", boardId, "elements", blobId), { data: shardUpdates[blobId] }, { merge: true });
+                 } catch (err) {
+                   console.error("Migration setDoc failed for blob", blobId, err);
+                   throw err;
+                 }
+               }
+             }
+             
              console.log("Migration successful!");
-          } catch (err) {
+          } catch (err: any) {
              console.error("Migration failed:", err); showSyncToast("Migration failed: " + err.message, "error", 10000);
+          } finally {
+             isMigratingRef.current = false;
           }
         })();
       }
@@ -1868,6 +1912,7 @@ export default function WhiteboardCanvas({
   }, [pdfPages, saveElementLocallyAndSync, showSyncToast]);
 
   const handleSaveVoiceNote = React.useCallback((audioDataUrl: string, durationSec: number) => {
+    if (!checkCreationRateLimit(4, 3000)) return;
     const coords = pendingVoiceCoords || { x: -panX + 200, y: -panY + 200 };
     const id = "audio-" + Date.now() + Math.floor(Math.random() * 100);
     const newAudio: BoardElement = {
@@ -1888,9 +1933,10 @@ export default function WhiteboardCanvas({
     setSelectedId(id);
     setIsDragging(false);
     showSyncToast("Voice comment attached!", "success");
-  }, [pendingVoiceCoords, panX, panY, currentUser.name, elements.length, saveElementLocallyAndSync, pushToUndo, showSyncToast, setIsDragging]);
+  }, [pendingVoiceCoords, panX, panY, currentUser.name, elements.length, saveElementLocallyAndSync, pushToUndo, showSyncToast, setIsDragging, checkCreationRateLimit]);
 
   const handleSaveStamp = React.useCallback((stampType: any, label?: string, signatureUrl?: string, color?: string, stampShape?: any) => {
+    if (!checkCreationRateLimit(6, 3000)) return;
     const coords = pendingStampCoords || { x: -panX + 200, y: -panY + 200 };
     const id = "stamp-" + Date.now() + Math.floor(Math.random() * 100);
     
@@ -1921,7 +1967,7 @@ export default function WhiteboardCanvas({
     setSelectedId(id);
     setIsDragging(false);
     showSyncToast("Stamp placed!", "success");
-  }, [pendingStampCoords, panX, panY, elements.length, saveElementLocallyAndSync, pushToUndo, showSyncToast, setIsDragging]);
+  }, [pendingStampCoords, panX, panY, elements.length, saveElementLocallyAndSync, pushToUndo, showSyncToast, setIsDragging, checkCreationRateLimit]);
 
 
   // Synchronize unsaved changes on tab close or navigation away, and handle instant online/offline syncing
@@ -2160,9 +2206,20 @@ export default function WhiteboardCanvas({
           return;
         }
 
+        if (!checkCreationRateLimit(3, 3000)) {
+          e.preventDefault();
+          return;
+        }
+
         e.preventDefault(); // stop default browser paste behavior
 
-        for (const file of imageFiles) {
+        let filesToPaste = imageFiles;
+        if (!isTeacherRef.current && filesToPaste.length > 5) {
+          filesToPaste = filesToPaste.slice(0, 5);
+          showSyncToast("Pasted 5 images max at once.", "warning", 3000);
+        }
+
+        for (const file of filesToPaste) {
           const result = await compressImage(file);
           if (!result) continue;
 
@@ -2305,6 +2362,7 @@ export default function WhiteboardCanvas({
 
     // 4. Click to spawn Stickies, Shapes, and Text instantly
     if (activeTool === "sticky") {
+      if (!checkCreationRateLimit(6, 3000)) return;
       const id = "sticky-" + Date.now() + Math.floor(Math.random() * 100);
       const newSticky: StickyElement = {
         id,
@@ -2330,6 +2388,7 @@ export default function WhiteboardCanvas({
       activeTool === "numberline" ||
       activeTool === "advanced-cartesian"
     ) {
+      if (!checkCreationRateLimit(6, 3000)) return;
       const id = "shape-" + Date.now() + Math.floor(Math.random() * 100);
 
       let width = 300;
@@ -2373,6 +2432,7 @@ export default function WhiteboardCanvas({
     }
 
     if (activeTool === "shape") {
+      if (!checkCreationRateLimit(6, 3000)) return;
       const id = "shape-" + Date.now() + Math.floor(Math.random() * 100);
 
       const width = 150;
@@ -2400,6 +2460,7 @@ export default function WhiteboardCanvas({
     }
 
     if (activeTool === "text") {
+      if (!checkCreationRateLimit(6, 3000)) return;
       const id = "text-" + Date.now() + Math.floor(Math.random() * 100);
       const newText: TextElement = {
         id,
@@ -2439,6 +2500,7 @@ export default function WhiteboardCanvas({
     }
 
     if (activeTool === "math") {
+      if (!checkCreationRateLimit(6, 3000)) return;
       const id = "math-" + Date.now() + Math.floor(Math.random() * 100);
       const newMathBox: MathElement = {
         id,
@@ -2921,6 +2983,28 @@ export default function WhiteboardCanvas({
       const points = drawingPointsRef.current;
 
       if (points.length >= 1) {
+        // Calculate total path distance to filter out accidental microscopic clicks/jitter
+        let totalLength = 0;
+        for (let i = 1; i < points.length; i++) {
+          const dx = points[i].x - points[i - 1].x;
+          const dy = points[i].y - points[i - 1].y;
+          totalLength += Math.sqrt(dx * dx + dy * dy);
+        }
+
+        // Discard unintentional micro scribbles (< 2px path length)
+        if (points.length > 1 && totalLength < 2) {
+          drawingPointsRef.current = [];
+          if (localDrawingPathRef.current) localDrawingPathRef.current.setAttribute("d", "");
+          return;
+        }
+
+        // Anti-spam stroke rate limit for students (max 12 strokes in 3 seconds)
+        if (!isTeacherRef.current && !checkCreationRateLimit(12, 3000)) {
+          drawingPointsRef.current = [];
+          if (localDrawingPathRef.current) localDrawingPathRef.current.setAttribute("d", "");
+          return;
+        }
+
         // For a single point, duplicate it with a tiny offset so it renders as a beautiful round dot on canvas
         const finalPoints = points.length === 1
           ? [points[0], { x: points[0].x + 0.1, y: points[0].y + 0.1 }]
@@ -3152,6 +3236,13 @@ export default function WhiteboardCanvas({
   // Paste elements from clipboard with a slight offset
   const handlePaste = async () => {
     if (!canWrite || clipboardElements.length === 0) return;
+    if (!checkCreationRateLimit(4, 2000)) return;
+
+    let itemsToPaste = clipboardElements;
+    if (!isTeacherRef.current && itemsToPaste.length > 10) {
+      itemsToPaste = itemsToPaste.slice(0, 10);
+      showSyncToast("Pasting capped at 10 items max per batch to prevent lag.", "warning", 4000);
+    }
     
     const offset = 40;
     const maxZ = elements.length > 0 ? Math.max(...elements.map(e => e.zIndex || 0)) : 0;
@@ -3164,8 +3255,8 @@ export default function WhiteboardCanvas({
       const currentList = [...elementsRef.current];
       const updatedList = [...currentList];
 
-      for (let i = 0; i < clipboardElements.length; i++) {
-        const el = clipboardElements[i];
+      for (let i = 0; i < itemsToPaste.length; i++) {
+        const el = itemsToPaste[i];
         const newId = `copy-${Math.random().toString(36).substring(2, 11)}`;
         
         const newEl = JSON.parse(JSON.stringify(el)) as BoardElement;
@@ -3216,8 +3307,8 @@ export default function WhiteboardCanvas({
       const batch = writeBatch(db);
       const blobUpdates: Record<string, any> = {};
 
-      for (let i = 0; i < clipboardElements.length; i++) {
-        const el = clipboardElements[i];
+      for (let i = 0; i < itemsToPaste.length; i++) {
+        const el = itemsToPaste[i];
         const newId = `copy-${Math.random().toString(36).substring(2, 11)}`;
         
         const newEl = JSON.parse(JSON.stringify(el)) as BoardElement;
@@ -3264,7 +3355,7 @@ export default function WhiteboardCanvas({
         setSelectedIds(newPasteIds);
         setSelectedId(null);
         setClipboardElements(pastedElements);
-        incrementStats('write', clipboardElements.length);
+        incrementStats('write', itemsToPaste.length);
       } catch (err) {
         console.error("Error pasting elements:", err);
         setSyncStatus('offline');
@@ -3495,8 +3586,8 @@ export default function WhiteboardCanvas({
 
   // Clear all items on the board
   const handleClearBoard = async () => {
-    const elementsToKeep = elements.filter(el => el.id.startsWith("pdf-page-"));
-    const elementsToDelete = elements.filter(el => !el.id.startsWith("pdf-page-"));
+    const elementsToKeep = elements.filter(el => typeof el?.id === "string" && el.id.startsWith("pdf-page-"));
+    const elementsToDelete = elements.filter(el => typeof el?.id === "string" && !el.id.startsWith("pdf-page-"));
 
     // Immediate state and local storage clean
     setElements(elementsToKeep);
@@ -3857,9 +3948,10 @@ export default function WhiteboardCanvas({
         const createdIds: string[] = [];
         await Promise.all(
           data.elements.map(async (el: any) => {
-            const id = el.id.startsWith("ai-")
-              ? el.id
-              : `ai-${el.id}-${Date.now()}`;
+            const elId = el?.id || Math.floor(Math.random() * 1000000).toString();
+            const id = typeof elId === "string" && elId.startsWith("ai-")
+              ? elId
+              : `ai-${elId}-${Date.now()}`;
             const posX = Math.round((el.x || 0) + shiftX);
             const posY = Math.round((el.y || 0) + shiftY);
 

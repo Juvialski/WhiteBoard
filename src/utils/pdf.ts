@@ -90,7 +90,7 @@ export async function exportPdfWithDrawings(
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   
-  const pdfPages = elements.filter(el => el.id.startsWith("pdf-page-"));
+  const pdfPages = elements.filter(el => typeof el?.id === "string" && el.id.startsWith("pdf-page-"));
   if (pdfPages.length === 0) {
     throw new Error("No PDF pages found on this board.");
   }
@@ -142,7 +142,7 @@ export async function exportPdfWithDrawings(
 
     // Sort drawings and shapes by zIndex
     const sortedElements = [...elements]
-      .filter(el => !el.id.startsWith("pdf-page-"))
+      .filter(el => typeof el?.id === "string" && !el.id.startsWith("pdf-page-"))
       .sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
 
     sortedElements.forEach((el) => {

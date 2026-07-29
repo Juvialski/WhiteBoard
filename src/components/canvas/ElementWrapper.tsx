@@ -227,7 +227,7 @@ export const ElementWrapper = React.memo(({
   }
 
   if (el.type === "image") {
-    const isPdfPage = el.id.startsWith("pdf-page-");
+    const isPdfPage = typeof el?.id === "string" && el.id.startsWith("pdf-page-");
     return (
       <div className={isInteractive && !isPdfPage ? "pointer-events-auto" : "pointer-events-none"}>
         <ImageComponent
