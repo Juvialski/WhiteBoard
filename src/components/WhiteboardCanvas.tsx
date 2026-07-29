@@ -682,7 +682,13 @@ export default function WhiteboardCanvas({
       const allCount = pendingAllWrites.current;
       const readCount = pendingReads.current;
 
-      if (teacherCount <= 0 && allCount <= 0 && readCount <= 0) return;
+      // Crucial: Only perform Firestore update if actual user writes occurred to prevent self-perpetuating read-write loops!
+      if (teacherCount <= 0 && allCount <= 0) {
+        pendingReads.current = 0; // reset read counter
+        return;
+      }
+
+      if (document.visibilityState !== 'visible') return;
 
       pendingTeacherWrites.current = 0;
       pendingAllWrites.current = 0;
@@ -711,7 +717,7 @@ export default function WhiteboardCanvas({
         pendingAllWrites.current += allCount;
         pendingReads.current += readCount;
       }
-    }, 30000); // sync stats after 30 seconds of inactivity to optimize quota
+    }, 60000); // sync stats after 60 seconds of inactivity to optimize quota
   }, [boardId]);
 
   const incrementStats = React.useCallback((type: 'write' | 'read', count: number) => {
@@ -721,10 +727,11 @@ export default function WhiteboardCanvas({
       if (isTeacher) {
         pendingTeacherWrites.current += count;
       }
+      triggerStatsSync();
     } else {
       pendingReads.current += count;
+      // Do not trigger Firestore write on pure background reads
     }
-    triggerStatsSync();
   }, [currentUser.role, triggerStatsSync]);
 
   useEffect(() => {
@@ -1511,6 +1518,10 @@ export default function WhiteboardCanvas({
   // Monitor active cursors to determine Solo User Mode (Solo) vs Collaborative Mode (Multiplayer)
   useEffect(() => {
     let isMounted = true;
+    
+    // When WebSockets are active, WebSocket real-time presence handles collaborator tracking with 0 Firestore reads
+    if (wsConnected) return;
+
     const fetchCursors = async () => {
       try {
         const cursorsRef = collection(db, "whiteboards", boardId, "cursors");
@@ -1533,13 +1544,13 @@ export default function WhiteboardCanvas({
     };
 
     fetchCursors();
-    const interval = setInterval(fetchCursors, 30000); // Check every 30 seconds instead of real-time reads
+    const interval = setInterval(fetchCursors, 60000); // Check every 60 seconds when WS offline
     
     return () => {
       isMounted = false;
       clearInterval(interval);
     };
-  }, [boardId, currentUser.id]);
+  }, [boardId, currentUser.id, wsConnected]);
 
   // Combine both sources of truth (WebSockets + Firestore) to determine Solo vs Collaborating
   useEffect(() => {
@@ -2089,12 +2100,7 @@ export default function WhiteboardCanvas({
         zoom,
         lastActive: now
       }));
-      
-      // Still write a lightweight presence heartbeat to Firestore every 30 seconds to keep activeUsersCount correct for all peers!
-      if (now - lastFirestorePresenceWrite.current < 30000) {
-        return;
-      }
-      lastFirestorePresenceWrite.current = now;
+      return; // Fully bypass Firestore cursor writes when WebSocket is active!
     }
 
     // Fallback: Sync cursor to Firestore if WebSocket is offline (maximum once every 30 seconds as presence)

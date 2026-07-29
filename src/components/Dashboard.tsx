@@ -308,12 +308,12 @@ export default function Dashboard({
   useEffect(() => {
     fetchBoards();
 
-    // Periodic poll every 45s when window is active
+    // Periodic poll every 2 minutes (120s) when window is active to save reads
     const interval = setInterval(() => {
       if (document.visibilityState === 'visible') {
         fetchBoards();
       }
-    }, 45000);
+    }, 120000);
 
     return () => clearInterval(interval);
   }, [fetchBoards, refreshTrigger]);

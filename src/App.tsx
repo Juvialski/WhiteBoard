@@ -136,10 +136,12 @@ export default function App() {
     // Initial checkin
     updatePresence(true);
 
-    // Heartbeat every 45 seconds (quota optimized)
+    // Heartbeat every 2 minutes (120s) ONLY when tab is visible to prevent idle sandbox writes
     const interval = setInterval(() => {
-      updatePresence(true);
-    }, 45000);
+      if (document.visibilityState === 'visible') {
+        updatePresence(true);
+      }
+    }, 120000);
 
     // Tab visibility handler
     const handleVisibilityChange = () => {

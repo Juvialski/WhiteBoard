@@ -75,12 +75,17 @@ export default function LiveCursors({
   useEffect(() => {
     let interval: any;
     if (socketCollaboratorsRef) {
+      let prevSig = '';
       interval = setInterval(() => {
         const raw = socketCollaboratorsRef.current || {};
         const list = Object.values(raw).filter(
           (c) => c && c.id !== currentUser.id
         );
-        setCollaborators(list);
+        const sig = list.map(c => `${c.id}:${Math.round(c.x)},${Math.round(c.y)}`).join('|');
+        if (sig !== prevSig) {
+          prevSig = sig;
+          setCollaborators(list);
+        }
       }, 1000 / 30);
       return () => clearInterval(interval);
     }
