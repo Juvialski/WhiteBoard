@@ -2071,6 +2071,14 @@ export default function WhiteboardCanvas({
     setSelectedIds([]);
   }, [activeTool]);
 
+  // Auto-switch away from laser or creation tools if write permission is revoked
+  useEffect(() => {
+    if (!canWrite && activeTool !== "select" && activeTool !== "pan") {
+      setActiveTool("select");
+      localLaserPointsRef.current = [];
+    }
+  }, [canWrite, activeTool]);
+
   // Sync cursor movements to Firestore (throttled)
   const lastCursorUpdate = useRef<number>(0);
   const lastFirestorePresenceWrite = useRef<number>(0);
@@ -2556,6 +2564,7 @@ export default function WhiteboardCanvas({
 
     // Laser pointer movement tracking
     if (activeToolRef.current === "laser") {
+      if (!canWriteRef.current) return;
       const coords = screenToCanvasCoords(e.clientX, e.clientY);
       const now = Date.now();
       const color = activeColorRef.current || "#ef4444";
