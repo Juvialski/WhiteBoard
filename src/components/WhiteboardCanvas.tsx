@@ -647,6 +647,7 @@ export default function WhiteboardCanvas({
   const pendingSyncElements = useRef<Record<string, { data: any; action: 'set' | 'delete' }>>({});
   const debounceTimer = useRef<any>(null);
   const isMigratingRef = useRef<boolean>(false);
+  const attemptedMigrationRef = useRef<Set<string>>(new Set());
 
   const [syncNotification, setSyncNotification] = useState<{
     message: string;
@@ -661,85 +662,6 @@ export default function WhiteboardCanvas({
     syncNotificationTimeoutRef.current = setTimeout(() => {
       setSyncNotification(prev => ({ ...prev, visible: false }));
     }, duration);
-  }, []);
-
-  // Daily firebase writes and reads tracking state
-  const pendingTeacherWrites = useRef<number>(0);
-  const pendingAllWrites = useRef<number>(0);
-  const pendingReads = useRef<number>(0);
-  const statsSyncTimer = useRef<any>(null);
-
-  const getTodayDateString = () => {
-    const d = new Date();
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  };
-
-  const triggerStatsSync = React.useCallback(() => {
-    if (statsSyncTimer.current) clearTimeout(statsSyncTimer.current);
-    statsSyncTimer.current = setTimeout(async () => {
-      const teacherCount = pendingTeacherWrites.current;
-      const allCount = pendingAllWrites.current;
-      const readCount = pendingReads.current;
-
-      // Crucial: Only perform Firestore update if actual user writes occurred to prevent self-perpetuating read-write loops!
-      if (teacherCount <= 0 && allCount <= 0) {
-        pendingReads.current = 0; // reset read counter
-        return;
-      }
-
-      if (document.visibilityState !== 'visible') return;
-
-      pendingTeacherWrites.current = 0;
-      pendingAllWrites.current = 0;
-      pendingReads.current = 0;
-
-      try {
-        const todayStr = getTodayDateString();
-        const boardRef = doc(db, "whiteboards", boardId);
-        
-        const updateData: any = {};
-        if (teacherCount > 0) {
-          updateData[`teacherDailyWrites.${todayStr}`] = increment(teacherCount);
-        }
-        if (allCount > 0) {
-          updateData[`dailyWrites.${todayStr}`] = increment(allCount);
-        }
-        if (readCount > 0) {
-          updateData[`dailyReads.${todayStr}`] = increment(readCount);
-        }
-
-        await updateDoc(boardRef, updateData);
-      } catch (err) {
-        console.error("Error syncing daily stats:", err);
-        // Restore failed values
-        pendingTeacherWrites.current += teacherCount;
-        pendingAllWrites.current += allCount;
-        pendingReads.current += readCount;
-      }
-    }, 60000); // sync stats after 60 seconds of inactivity to optimize quota
-  }, [boardId]);
-
-  const incrementStats = React.useCallback((type: 'write' | 'read', count: number) => {
-    const isTeacher = currentUser.role === "teacher";
-    if (type === 'write') {
-      pendingAllWrites.current += count;
-      if (isTeacher) {
-        pendingTeacherWrites.current += count;
-      }
-      triggerStatsSync();
-    } else {
-      pendingReads.current += count;
-      // Do not trigger Firestore write on pure background reads
-    }
-  }, [currentUser.role, triggerStatsSync]);
-
-  useEffect(() => {
-    return () => {
-      if (statsSyncTimer.current) clearTimeout(statsSyncTimer.current);
-    };
   }, []);
 
   // Undo History state
@@ -1383,18 +1305,6 @@ export default function WhiteboardCanvas({
     let isInitialLoad = true;
 
     let unsubscribe = onSnapshot(q, (snapshot) => {
-      let readCount = 0;
-      if (!snapshot?.metadata?.hasPendingWrites) {
-        if (isInitialLoad) {
-          readCount = snapshot.size || 1;
-        } else {
-          readCount = snapshot.docChanges().filter(c => c.type !== 'removed').length;
-        }
-        if (readCount > 0) {
-          incrementStats('read', readCount);
-        }
-      }
-
       if (!isInitialLoad && hasUnsavedChanges.current && activeUsersCountRef.current <= 1) {
         return;
       }
@@ -1467,9 +1377,10 @@ export default function WhiteboardCanvas({
         console.error("Local storage error:", e);
       }
 
-      // Background migration for old stray documents
-      if (hasStrays && straysToDelete.length > 0 && !isMigratingRef.current) {
+      // Background migration for old stray documents (runs at most once per board session)
+      if (hasStrays && straysToDelete.length > 0 && !isMigratingRef.current && !attemptedMigrationRef.current.has(boardId)) {
         isMigratingRef.current = true;
+        attemptedMigrationRef.current.add(boardId);
         (async () => {
           console.log(`Migrating ${straysToDelete.length} stray documents...`);
           try {
@@ -1773,7 +1684,6 @@ export default function WhiteboardCanvas({
       await batch.commit();
       hasUnsavedChanges.current = false;
       setSyncStatus('synced');
-      incrementStats('write', keys.length);
     } catch (err) {
       console.error("Flush pending changes to cloud failed:", err);
       // Restore failed items back to the queue safely
@@ -1786,7 +1696,7 @@ export default function WhiteboardCanvas({
       setSyncStatus('offline');
       showSyncToast("Sync failed: " + err.message, "error", 10000);
     }
-  }, [boardId, incrementStats, showSyncToast]);
+  }, [boardId, showSyncToast]);
 
   // Centralized write-minimizer dispatcher handling local-first updates + debounced/immediate syncing
   const saveElementLocallyAndSync = React.useCallback(async (
@@ -1897,7 +1807,6 @@ export default function WhiteboardCanvas({
         }
         
         setSyncStatus('synced');
-        incrementStats('write', 1);
       } catch (err) {
         console.error("Error saving element:", err);
         setSyncStatus('offline');
@@ -2030,31 +1939,11 @@ export default function WhiteboardCanvas({
     };
   }, [flushPendingChanges, showSyncToast]);
 
-  // Fetch board metadata in real time with auto-initialization for stats map fields
-  useEffect(() => {
-    // Count 1 read for the initial load of the board metadata
-    incrementStats('read', 1);
-  }, [boardId, incrementStats]);
-
   useEffect(() => {
     const boardRef = doc(db, "whiteboards", boardId);
-    const unsubscribe = onSnapshot(boardRef, async (snapshot) => {
+    const unsubscribe = onSnapshot(boardRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.data();
-        
-        // Auto-initialize stats maps on older boards if they are missing
-        if (!data.dailyWrites || !data.dailyReads || !data.teacherDailyWrites) {
-          try {
-            await updateDoc(boardRef, {
-              dailyWrites: data.dailyWrites || {},
-              dailyReads: data.dailyReads || {},
-              teacherDailyWrites: data.teacherDailyWrites || {}
-            });
-          } catch (e) {
-            console.error("Failed to initialize missing stats maps on board:", e);
-          }
-        }
-
         setBoardData({
           id: snapshot.id,
           ...data,
@@ -3378,7 +3267,6 @@ export default function WhiteboardCanvas({
         setSelectedIds(newPasteIds);
         setSelectedId(null);
         setClipboardElements(pastedElements);
-        incrementStats('write', itemsToPaste.length);
       } catch (err) {
         console.error("Error pasting elements:", err);
         setSyncStatus('offline');
@@ -3658,7 +3546,6 @@ export default function WhiteboardCanvas({
 
         await batch.commit();
         setSyncStatus('synced');
-        incrementStats('write', elementsToDelete.length);
       } catch (err) {
         console.error("Error clearing whiteboard:", err);
         setSyncStatus('offline');
@@ -3677,7 +3564,6 @@ export default function WhiteboardCanvas({
         },
         { merge: true },
       );
-      incrementStats('write', 1);
     } catch (err) {
       console.error("Error toggling student writing permissions:", err);
     }

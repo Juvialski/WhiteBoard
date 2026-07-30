@@ -1157,7 +1157,7 @@ export default function Dashboard({
                 </div>
               </div>
 
-              {/* Firestore Quotas & Resource Usage Stats */}
+              {/* Direct Firestore Database Metrics & Optimization Overview */}
               <div className="bg-white border border-slate-200 rounded-3xl p-6 space-y-6 shadow-xs">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                   <div className="flex items-center gap-2.5">
@@ -1167,147 +1167,137 @@ export default function Dashboard({
                       </svg>
                     </div>
                     <div>
-                      <h3 className="text-sm font-bold text-slate-900">Firestore Free-Tier Quota & Live Consumption</h3>
-                      <p className="text-[10px] text-slate-500 mt-0.5">Real-time resource tracking and capacity remaining.</p>
+                      <h3 className="text-sm font-bold text-slate-900">Firestore Direct Database Architecture & Infrastructure Metrics</h3>
+                      <p className="text-[10px] text-slate-500 mt-0.5">Real-time room inventory directly connected to your Firebase Firestore project.</p>
                     </div>
                   </div>
-                  <span className="text-[10px] bg-slate-100 border border-slate-200 text-slate-600 px-3 py-1 rounded-full font-bold uppercase tracking-wider">
-                    Date: {todayStr}
-                  </span>
+                  <a
+                    href="https://console.firebase.google.com/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 text-[10px] bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition-colors shadow-xs"
+                  >
+                    <span>Firebase Billing Console</span>
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                    </svg>
+                  </a>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {/* Writes consumption card */}
-                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4 shadow-2xs">
-                    <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2">
-                      <div className="space-y-1">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Daily Writes Quota</span>
-                        <h4 className="text-2xl font-black text-slate-800">
-                          {totalWritesToday.toLocaleString()} <span className="text-xs font-semibold text-slate-500">/ 20,000 writes</span>
-                        </h4>
-                      </div>
-                      <div className="bg-blue-50 text-blue-700 font-bold text-[10px] uppercase px-3 py-1.5 rounded-xl border border-blue-100 self-start">
-                        {Math.max(0, 20000 - totalWritesToday).toLocaleString()} Left to consume
-                      </div>
-                    </div>
-
-                    {/* Progress bar */}
-                    <div className="space-y-1.5">
-                      <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
-                        <div 
-                          className="bg-blue-600 h-2 rounded-full transition-all duration-500"
-                          style={{ width: `${Math.min(100, (totalWritesToday / 20000) * 100)}%` }}
-                        />
-                      </div>
-                      <div className="flex justify-between text-[10px] font-semibold text-slate-500">
-                        <span>{((totalWritesToday / 20000) * 100).toFixed(2)}% consumed</span>
-                        <span>Limit: 20,000/day</span>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4 border-t border-slate-200 pt-3 text-xs">
-                      <div>
-                        <span className="text-slate-400 font-medium">Teacher Writes:</span>
-                        <strong className="text-slate-700 block mt-0.5 font-bold">{totalTeacherWritesToday.toLocaleString()} writes</strong>
-                      </div>
-                      <div>
-                        <span className="text-slate-400 font-medium">Student Writes:</span>
-                        <strong className="text-slate-700 block mt-0.5 font-bold">{Math.max(0, totalWritesToday - totalTeacherWritesToday).toLocaleString()} writes</strong>
-                      </div>
-                    </div>
+                {/* Explanation Card on Quota & Metrics Accuracy */}
+                <div className="bg-amber-50/70 border border-amber-200/80 rounded-2xl p-4 flex gap-3 text-xs text-amber-900 leading-relaxed">
+                  <div className="p-1.5 bg-amber-100 rounded-lg text-amber-700 shrink-0 h-fit">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
                   </div>
-
-                  {/* Reads consumption card */}
-                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4 shadow-2xs">
-                    <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2">
-                      <div className="space-y-1">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Daily Reads Quota</span>
-                        <h4 className="text-2xl font-black text-slate-800">
-                          {totalReadsToday.toLocaleString()} <span className="text-xs font-semibold text-slate-500">/ 50,000 reads</span>
-                        </h4>
-                      </div>
-                      <div className="bg-indigo-50 text-indigo-700 font-bold text-[10px] uppercase px-3 py-1.5 rounded-xl border border-indigo-100 self-start">
-                        {Math.max(0, 50000 - totalReadsToday).toLocaleString()} Left to consume
-                      </div>
-                    </div>
-
-                    {/* Progress bar */}
-                    <div className="space-y-1.5">
-                      <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
-                        <div 
-                          className="bg-indigo-600 h-2 rounded-full transition-all duration-500"
-                          style={{ width: `${Math.min(100, (totalReadsToday / 50000) * 100)}%` }}
-                        />
-                      </div>
-                      <div className="flex justify-between text-[10px] font-semibold text-slate-500">
-                        <span>{((totalReadsToday / 50000) * 100).toFixed(2)}% consumed</span>
-                        <span>Limit: 50,000/day</span>
-                      </div>
-                    </div>
-
-                    <div className="text-[10px] text-slate-500 pt-2 leading-relaxed">
-                      <span>Incurred primarily during real-time document loading and active collaborator heartbeats/presence updates.</span>
-                    </div>
+                  <div className="space-y-1">
+                    <span className="font-bold text-amber-950 block">Important Note on Daily Read & Write Billing Units</span>
+                    <p className="text-amber-800">
+                      Client-side synthetic read/write trackers were misleading because updating client counters incurred extra database writes. 
+                      Official daily usage is tracked strictly by Google Cloud at the infrastructure layer. Click "Firebase Billing Console" above for 100% accurate live quota usage.
+                    </p>
                   </div>
                 </div>
 
-                {/* Board-by-board stats list */}
+                {/* Database Optimization Highlights Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Storage Architecture</span>
+                      <span className="text-[10px] bg-blue-100 text-blue-700 font-bold px-2 py-0.5 rounded-full">100:1 Sharded Blobs</span>
+                    </div>
+                    <p className="text-xs text-slate-700 font-semibold">Batched Element & Drawing Storage</p>
+                    <p className="text-[11px] text-slate-500 leading-normal">
+                      Drawings and elements are consolidated into <code className="bg-slate-200/70 px-1 py-0.5 rounded text-[10px]">elements_blob</code> documents. A 1,000-point stroke issues only 1 batched write instead of 1,000 document writes.
+                    </p>
+                  </div>
+
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Transient Sync</span>
+                      <span className="text-[10px] bg-emerald-100 text-emerald-700 font-bold px-2 py-0.5 rounded-full">WebSockets</span>
+                    </div>
+                    <p className="text-xs text-slate-700 font-semibold">Zero-Database Live Cursors</p>
+                    <p className="text-[11px] text-slate-500 leading-normal">
+                      High-frequency cursor movements and active pen streams bypass Firestore completely and stream over WebSockets on port 3000, incurring 0 database write charges.
+                    </p>
+                  </div>
+
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Presence Heartbeats</span>
+                      <span className="text-[10px] bg-indigo-100 text-indigo-700 font-bold px-2 py-0.5 rounded-full">Throttled (120s)</span>
+                    </div>
+                    <p className="text-xs text-slate-700 font-semibold">Idle Write Protection</p>
+                    <p className="text-[11px] text-slate-500 leading-normal">
+                      User presence in <code className="bg-slate-200/70 px-1 py-0.5 rounded text-[10px]">/presence</code> is updated at most once every 2 minutes or when tab visibility changes, protecting the 20,000 write free tier limit.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Direct Room Inventory Table */}
                 <div className="bg-slate-50 rounded-2xl border border-slate-200 p-5 space-y-4">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <div>
-                      <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Today's Usage Breakdown by Board</h4>
-                      <p className="text-[10px] text-slate-500 mt-0.5">Real-time resource logs calculated for all collaborative rooms.</p>
+                      <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Direct Firestore Room Inventory</h4>
+                      <p className="text-[10px] text-slate-500 mt-0.5">Live records queried directly from the <code className="bg-slate-200/80 px-1 py-0.5 rounded font-mono">/whiteboards</code> collection.</p>
                     </div>
-                    <span className="text-[10px] bg-white border border-slate-200 text-slate-500 px-2.5 py-1 rounded-md font-semibold self-start sm:self-auto">
-                      Rooms active today: {boards.filter(b => (b.dailyReads?.[todayStr] || 0) > 0 || (b.dailyWrites?.[todayStr] || 0) > 0).length}
+                    <span className="text-[10px] bg-white border border-slate-200 text-slate-600 px-2.5 py-1 rounded-md font-semibold self-start sm:self-auto">
+                      Total Active Rooms: {boards.length}
                     </span>
                   </div>
-                  <div className="max-h-80 overflow-y-auto border border-slate-200/85 rounded-xl overflow-hidden bg-white shadow-xs">
+
+                  <div className="max-h-80 overflow-y-auto border border-slate-200 rounded-xl overflow-hidden bg-white shadow-xs">
                     <table className="w-full text-left text-xs border-collapse">
                       <thead>
                         <tr className="bg-slate-50/75 backdrop-blur-xs border-b border-slate-200 text-slate-500 font-bold text-[10px] uppercase tracking-wider sticky top-0 z-10">
                           <th className="p-3 pl-4">Board Name</th>
                           <th className="p-3">Created By</th>
-                          <th className="p-3 text-center">Reads Today</th>
-                          <th className="p-3 text-center">Writes Today</th>
-                          <th className="p-3 text-center">Teacher Writes</th>
+                          <th className="p-3">Assigned Student</th>
+                          <th className="p-3">Creation Date</th>
+                          <th className="p-3 text-right pr-4">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {boards.length === 0 ? (
                           <tr>
                             <td colSpan={5} className="p-6 text-center text-slate-400 italic">
-                              No boards deployed yet.
+                              No boards found in Firestore.
                             </td>
                           </tr>
                         ) : (
-                          boards.map((b) => {
-                            const boardWrites = b.dailyWrites?.[todayStr] || 0;
-                            const boardReads = b.dailyReads?.[todayStr] || 0;
-                            const boardTeacherWrites = b.teacherDailyWrites?.[todayStr] || 0;
-
-                            return (
-                              <tr key={b.id} className="hover:bg-slate-50/50 transition-colors">
-                                <td className="p-3 pl-4 font-bold text-slate-800 max-w-[280px] truncate">{b.name}</td>
-                                <td className="p-3 text-slate-500 font-medium">{b.createdBy}</td>
-                                <td className="p-3 text-center">
-                                  <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold font-mono bg-indigo-50 text-indigo-700 border border-indigo-100">
-                                    {boardReads.toLocaleString()}
-                                  </span>
-                                </td>
-                                <td className="p-3 text-center">
-                                  <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold font-mono bg-blue-50 text-blue-700 border border-blue-100">
-                                    {boardWrites.toLocaleString()}
-                                  </span>
-                                </td>
-                                <td className="p-3 text-center">
-                                  <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold font-mono bg-slate-100 text-slate-600 border border-slate-250">
-                                    {boardTeacherWrites.toLocaleString()}
-                                  </span>
-                                </td>
-                              </tr>
-                            );
-                          })
+                          boards.map((b) => (
+                            <tr key={b.id} className="hover:bg-slate-50/50 transition-colors">
+                              <td className="p-3 pl-4 font-bold text-slate-800 max-w-[240px] truncate">{b.name}</td>
+                              <td className="p-3 text-slate-500 font-medium">{b.createdBy}</td>
+                              <td className="p-3">
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
+                                  {b.studentName || 'All Students'}
+                                </span>
+                              </td>
+                              <td className="p-3 text-slate-400 text-[11px] font-mono">
+                                {new Date(b.createdAt).toLocaleDateString()}
+                              </td>
+                              <td className="p-3 text-right pr-4 space-x-2">
+                                <button
+                                  onClick={() => {
+                                    setIsAdminPanelOpen(false);
+                                    handleJoinBoard(b);
+                                  }}
+                                  className="text-[11px] bg-blue-50 hover:bg-blue-100 text-blue-700 px-2.5 py-1 rounded-lg font-bold transition-colors cursor-pointer"
+                                >
+                                  Open
+                                </button>
+                                <button
+                                  onClick={(e) => handleDeleteBoard(b.id, e)}
+                                  className="text-[11px] bg-rose-50 hover:bg-rose-100 text-rose-600 px-2.5 py-1 rounded-lg font-bold transition-colors cursor-pointer"
+                                >
+                                  Delete
+                                </button>
+                              </td>
+                            </tr>
+                          ))
                         )}
                       </tbody>
                     </table>

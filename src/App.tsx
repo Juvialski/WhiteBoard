@@ -111,18 +111,39 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Track user presence and heartbeat
+  // Track user presence and heartbeat with throttling to minimize Firestore writes
+  const lastPresenceUpdateRef = React.useRef<number>(0);
+  const lastPresenceStateRef = React.useRef<{ isOnline: boolean; boardId: string | null } | null>(null);
+
   useEffect(() => {
     if (!profile) return;
 
-    const updatePresence = async (isOnline: boolean) => {
+    const updatePresence = async (isOnline: boolean, forceWrite: boolean = false) => {
+      const now = Date.now();
+      const prevState = lastPresenceStateRef.current;
+
+      // Throttle: Skip write if state hasn't changed and less than 60s has passed
+      if (
+        !forceWrite &&
+        prevState &&
+        prevState.isOnline === isOnline &&
+        prevState.boardId === (boardId || null) &&
+        now - lastPresenceUpdateRef.current < 60000 &&
+        isOnline === true
+      ) {
+        return;
+      }
+
+      lastPresenceUpdateRef.current = now;
+      lastPresenceStateRef.current = { isOnline, boardId: boardId || null };
+
       try {
         const presenceRef = doc(db, 'presence', profile.id);
         await setDoc(presenceRef, {
           id: profile.id,
           name: profile.name,
           email: profile.email || 'Guest User',
-          lastActive: Date.now(),
+          lastActive: now,
           isOnline: isOnline,
           role: profile.role || 'student',
           currentBoardId: boardId || null,
@@ -139,13 +160,13 @@ export default function App() {
     // Heartbeat every 2 minutes (120s) ONLY when tab is visible to prevent idle sandbox writes
     const interval = setInterval(() => {
       if (document.visibilityState === 'visible') {
-        updatePresence(true);
+        updatePresence(true, true);
       }
     }, 120000);
 
     // Tab visibility handler
     const handleVisibilityChange = () => {
-      updatePresence(document.visibilityState === 'visible');
+      updatePresence(document.visibilityState === 'visible', true);
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -154,7 +175,7 @@ export default function App() {
     return () => {
       clearInterval(interval);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      updatePresence(false);
+      updatePresence(false, true);
     };
   }, [profile, boardId, boardName]);
 
