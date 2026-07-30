@@ -454,12 +454,20 @@ export default function WhiteboardCanvas({
 
             // Smooth camera follow logic when actively following a target user
             if (followedUserIdRef.current === msg.userId) {
-              if (msg.panX !== undefined && msg.panY !== undefined) {
+              const targetZoom = msg.zoom !== undefined ? msg.zoom : 1;
+              const containerW = window.innerWidth;
+              const containerH = window.innerHeight;
+
+              if (msg.x !== undefined && msg.y !== undefined) {
+                const targetPanX = containerW / 2 - msg.x * targetZoom;
+                const targetPanY = containerH / 2 - msg.y * targetZoom;
+                setPanX((prev) => prev + (targetPanX - prev) * 0.35);
+                setPanY((prev) => prev + (targetPanY - prev) * 0.35);
+                setZoom((prev) => prev + (targetZoom - prev) * 0.35);
+              } else if (msg.panX !== undefined && msg.panY !== undefined) {
                 setPanX((prev) => prev + (msg.panX - prev) * 0.35);
                 setPanY((prev) => prev + (msg.panY - prev) * 0.35);
-                if (msg.zoom !== undefined) {
-                  setZoom((prev) => prev + (msg.zoom - prev) * 0.35);
-                }
+                setZoom((prev) => prev + (targetZoom - prev) * 0.35);
               }
             }
           } else if (msg.type === "request_follow") {
@@ -663,6 +671,47 @@ export default function WhiteboardCanvas({
       setSyncNotification(prev => ({ ...prev, visible: false }));
     }, duration);
   }, []);
+
+  const handleSetFollowedUser = React.useCallback(
+    (targetId: string | null) => {
+      setFollowedUserId((prev) => {
+        const nextId = prev === targetId ? null : targetId;
+        followedUserIdRef.current = nextId;
+
+        if (nextId) {
+          const targetCollab = socketCollaboratorsRef.current[nextId];
+          if (targetCollab) {
+            const targetZoom = targetCollab.zoom || 1;
+            const containerW = window.innerWidth;
+            const containerH = window.innerHeight;
+
+            let targetPanX = targetCollab.panX;
+            let targetPanY = targetCollab.panY;
+
+            if (targetCollab.x !== undefined && targetCollab.y !== undefined) {
+              targetPanX = containerW / 2 - targetCollab.x * targetZoom;
+              targetPanY = containerH / 2 - targetCollab.y * targetZoom;
+            }
+
+            if (targetPanX !== undefined && targetPanY !== undefined) {
+              setZoom(targetZoom);
+              setPanX(targetPanX);
+              setPanY(targetPanY);
+            }
+
+            showSyncToast(`Now following ${targetCollab.name}'s view`, "info");
+          } else {
+            showSyncToast("Following user...", "info");
+          }
+        } else if (prev !== null) {
+          showSyncToast("Stopped following user.", "info");
+        }
+
+        return nextId;
+      });
+    },
+    [showSyncToast]
+  );
 
   // Undo History state
   interface UndoAction {
@@ -4054,8 +4103,9 @@ export default function WhiteboardCanvas({
         handleRedo={handleRedo}
         currentUser={currentUser}
         socketCollaboratorsRef={socketCollaboratorsRef}
+        activeCollaboratorIds={activeCollaboratorIds}
         followedUserId={followedUserId}
-        setFollowedUserId={setFollowedUserId}
+        setFollowedUserId={handleSetFollowedUser}
         isPresenterMode={isPresenterMode}
         setIsPresenterMode={setIsPresenterMode}
         wsRef={wsRef}
@@ -4500,6 +4550,8 @@ export default function WhiteboardCanvas({
             currentUser={currentUser}
             zoom={zoom}
             socketCollaboratorsRef={wsConnected ? socketCollaboratorsRef : undefined}
+            followedUserId={followedUserId}
+            onFollowUser={handleSetFollowedUser}
           />
 
         </div>

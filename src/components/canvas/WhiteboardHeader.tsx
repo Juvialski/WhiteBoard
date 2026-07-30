@@ -36,6 +36,7 @@ interface WhiteboardHeaderProps {
   handleRedo: () => void;
   currentUser: UserProfile;
   socketCollaboratorsRef: React.MutableRefObject<Record<string, any>>;
+  activeCollaboratorIds?: string[];
   followedUserId: string | null;
   setFollowedUserId: (id: string | null) => void;
   isPresenterMode: boolean;
@@ -74,6 +75,7 @@ export const WhiteboardHeader: React.FC<WhiteboardHeaderProps> = ({
   handleRedo,
   currentUser,
   socketCollaboratorsRef,
+  activeCollaboratorIds,
   followedUserId,
   setFollowedUserId,
   isPresenterMode,
@@ -229,13 +231,16 @@ export const WhiteboardHeader: React.FC<WhiteboardHeaderProps> = ({
 
         {/* Online Collaborators Avatars List with Follow Feature */}
         <div className="hidden sm:flex items-center space-x-1 sm:space-x-1.5 shrink-0">
-          {Object.values(socketCollaboratorsRef.current).map((collab) => {
+          {(activeCollaboratorIds && activeCollaboratorIds.length > 0
+            ? activeCollaboratorIds.map((id) => socketCollaboratorsRef.current[id]).filter(Boolean)
+            : Object.values(socketCollaboratorsRef.current)
+          ).map((collab) => {
             if (collab.id === currentUser.id) return null;
             const isFollowed = followedUserId === collab.id;
             return (
               <button
                 key={collab.id}
-                onClick={() => setFollowedUserId(isFollowed ? null : collab.id)}
+                onClick={() => setFollowedUserId(collab.id)}
                 className={`p-1 md:px-2.5 md:py-1 rounded-full flex items-center space-x-1.5 text-xs font-bold transition-all cursor-pointer border shrink-0 ${
                   isFollowed
                     ? "bg-blue-50 border-blue-500 text-blue-700 ring-2 ring-blue-500/30 scale-105"
