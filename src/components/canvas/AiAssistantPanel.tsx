@@ -9,6 +9,8 @@ interface AiAssistantPanelProps {
   onClose: () => void;
   userApiKey: string;
   setUserApiKey: (key: string) => void;
+  selectedModel?: string;
+  setSelectedModel?: (model: string) => void;
   showApiKey: boolean;
   setShowApiKey: (show: boolean) => void;
   currentUser: UserProfile;
@@ -29,6 +31,8 @@ export const AiAssistantPanel: React.FC<AiAssistantPanelProps> = ({
   onClose,
   userApiKey,
   setUserApiKey,
+  selectedModel = "gemini-2.5-flash",
+  setSelectedModel,
   showApiKey,
   setShowApiKey,
   currentUser,
@@ -177,6 +181,40 @@ export const AiAssistantPanel: React.FC<AiAssistantPanelProps> = ({
                 </button>
               )}
             </div>
+          </div>
+
+          {/* Model Selection Dropdown */}
+          <div className="mt-2.5 pt-2 border-t border-purple-100/60 space-y-1">
+            <label className="block text-[10px] font-bold text-purple-700 uppercase tracking-wider flex items-center justify-between">
+              <span>Select Gemini Model</span>
+              <span className="text-[9px] font-mono font-medium text-purple-600 bg-purple-100/60 px-1.5 py-0.5 rounded">
+                {selectedModel}
+              </span>
+            </label>
+            <select
+              value={selectedModel}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (setSelectedModel) setSelectedModel(val);
+                localStorage.setItem("user_gemini_model", val);
+              }}
+              className="w-full bg-white border border-slate-200 rounded-lg py-1.5 px-2 text-[11px] font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-600/20 focus:border-purple-600 cursor-pointer shadow-xs"
+              id="ai-model-selector"
+            >
+              <option value="gemini-2.5-flash">Gemini 2.5 Flash (Recommended - Fast & Reliable)</option>
+              <option value="gemini-flash-latest">Gemini Flash Latest</option>
+              <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
+              <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash Lite</option>
+              <option value="gemini-3.5-pro">Gemini 3.5 Pro</option>
+              <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
+              <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
+              <option value="gemini-2.5-pro">Gemini 2.5 Pro (Advanced Reasoning)</option>
+              <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+              <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+            </select>
+            <p className="text-[9.5px] text-slate-500 leading-tight">
+              Tip: If you encounter an "API key not valid" error, switch to <strong>Gemini 2.5 Flash</strong> or <strong>Gemini Flash Latest</strong>.
+            </p>
           </div>
         </div>
 

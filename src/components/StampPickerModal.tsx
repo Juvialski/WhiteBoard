@@ -212,6 +212,7 @@ export default function StampPickerModal({
         headers: {
           "Content-Type": "application/json",
           "x-user-api-key": userApiKey,
+          "x-user-model": localStorage.getItem("user_gemini_model") || "gemini-2.5-flash",
         },
         body: JSON.stringify({ prompt: aiPrompt }),
       });

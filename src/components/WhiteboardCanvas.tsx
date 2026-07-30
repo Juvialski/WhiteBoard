@@ -1285,6 +1285,9 @@ export default function WhiteboardCanvas({
     const raw = localStorage.getItem("user_gemini_api_key") || "";
     return secureDecrypt(raw, currentUser?.id);
   });
+  const [selectedModel, setSelectedModel] = useState<string>(() => {
+    return localStorage.getItem("user_gemini_model") || "gemini-2.5-flash";
+  });
   const [showApiKey, setShowApiKey] = useState(false);
 
   // Sync / decrypt API key safely if current user's profile ID shifts
@@ -3660,6 +3663,7 @@ export default function WhiteboardCanvas({
         headers: {
           "Content-Type": "application/json",
           "x-user-api-key": userApiKey,
+          "x-user-model": selectedModel,
         },
         body: JSON.stringify({ 
           points: stroke.points,
@@ -3753,6 +3757,7 @@ export default function WhiteboardCanvas({
         headers: {
           "Content-Type": "application/json",
           "x-user-api-key": userApiKey,
+          "x-user-model": selectedModel,
         },
         body: JSON.stringify({ 
           points: allPoints,
@@ -3856,6 +3861,7 @@ export default function WhiteboardCanvas({
         headers: {
           "Content-Type": "application/json",
           "x-user-api-key": userApiKey,
+          "x-user-model": selectedModel,
         },
         body: JSON.stringify({
           elements: targetElements,
@@ -4523,6 +4529,8 @@ export default function WhiteboardCanvas({
         onClose={() => setIsAiPanelOpen(false)}
         userApiKey={userApiKey}
         setUserApiKey={setUserApiKey}
+        selectedModel={selectedModel}
+        setSelectedModel={setSelectedModel}
         showApiKey={showApiKey}
         setShowApiKey={setShowApiKey}
         autoCorrectHandwriting={autoCorrectHandwriting}

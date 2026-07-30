@@ -74,13 +74,14 @@ app.get("/api/logs", (req, res) => {
 });
 
 
-// Helper to resolve the correct AI instance (strictly user-supplied key)
+// Helper to resolve the correct AI instance (user-supplied key or env key fallback)
 function getAiInstance(req: express.Request): GoogleGenAI | null {
   const userKey = req.headers["x-user-api-key"] as string;
-  if (userKey && userKey.trim()) {
+  const keyToUse = (userKey && userKey.trim()) || process.env.GEMINI_API_KEY;
+  if (keyToUse && keyToUse.trim()) {
     try {
       return new GoogleGenAI({
-        apiKey: userKey.trim(),
+        apiKey: keyToUse.trim(),
         httpOptions: {
           headers: {
             "User-Agent": "aistudio-build-userproxy",
@@ -88,10 +89,22 @@ function getAiInstance(req: express.Request): GoogleGenAI | null {
         },
       });
     } catch (e) {
-      console.error("Error creating custom GoogleGenAI client:", e);
+      console.error("Error creating GoogleGenAI client:", e);
     }
   }
   return null;
+}
+
+// Helper to determine the target Gemini model selected by user
+function getRequestedModel(req: express.Request): string {
+  const headerModel = req.headers["x-user-model"] as string;
+  if (headerModel && headerModel.trim()) {
+    return headerModel.trim();
+  }
+  if (req.body && req.body.model && typeof req.body.model === "string" && req.body.model.trim()) {
+    return req.body.model.trim();
+  }
+  return "gemini-2.5-flash"; // Default to gemini-2.5-flash which is broadly accessible
 }
 
 // API: Solve problems inside the whiteboard with illustrations
@@ -149,8 +162,9 @@ User Request / Question to solve:
 
 Provide the solution text and the visual elements layout coordinates.`;
 
+    const modelToUse = getRequestedModel(req);
     const response = await activeAi.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: modelToUse,
       contents: userPrompt,
       config: {
         systemInstruction,
@@ -204,7 +218,13 @@ Provide the solution text and the visual elements layout coordinates.`;
     res.json(data);
   } catch (err: any) {
     console.error("Solver error:", err);
-    res.status(500).json({ error: err.message || "An error occurred while calling Gemini to solve." });
+    const msg = err.message || String(err);
+    if (msg.includes("API key not valid") || msg.includes("INVALID_ARGUMENT") || msg.includes("400")) {
+      return res.status(400).json({
+        error: `AI Key or Model Error: ${msg}. Please verify your API Key in the AI Assistant settings, or try selecting 'Gemini 2.5 Flash' in the model selector.`
+      });
+    }
+    res.status(500).json({ error: msg });
   }
 });
 
@@ -245,8 +265,9 @@ ${pointsStr}
 
 Provide your classification and bounding box coordinates matching the drawing's dimensions.`;
 
+    const modelToUse = getRequestedModel(req);
     const response = await activeAi.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: modelToUse,
       contents: prompt,
       config: {
         systemInstruction,
@@ -278,7 +299,13 @@ Provide your classification and bounding box coordinates matching the drawing's 
     res.json(data);
   } catch (err: any) {
     console.error("Beautify error:", err);
-    res.status(500).json({ error: err.message || "An error occurred while calling Gemini to beautify." });
+    const msg = err.message || String(err);
+    if (msg.includes("API key not valid") || msg.includes("INVALID_ARGUMENT") || msg.includes("400")) {
+      return res.status(400).json({
+        error: `AI Key or Model Error: ${msg}. Please verify your API Key in the AI Assistant settings, or try selecting 'Gemini 2.5 Flash' in the model selector.`
+      });
+    }
+    res.status(500).json({ error: msg });
   }
 });
 
@@ -302,8 +329,9 @@ Analyze the description, and suggest:
 2. A short, catchy, encouraging text/nickname for the stamp (e.g. "Super Reader!", "Creative idea!", "Check math"). Max 20 characters.
 3. A beautiful, high-contrast, pleasant pastel hex color for the background (e.g. #fef08a, #bfdbfe, #bbf7d0, #fed7aa, #e9d5ff, #fbcfe8, #99f6e4, etc.).`;
 
+    const modelToUse = getRequestedModel(req);
     const response = await activeAi.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: modelToUse,
       contents: `Generate an aesthetic, fun custom stamp matching this concept: "${prompt}"`,
       config: {
         systemInstruction,
@@ -325,7 +353,13 @@ Analyze the description, and suggest:
     res.json(data);
   } catch (err: any) {
     console.error("AI Stamp Generator error:", err);
-    res.status(500).json({ error: err.message || "An error occurred while generating stamp with Gemini." });
+    const msg = err.message || String(err);
+    if (msg.includes("API key not valid") || msg.includes("INVALID_ARGUMENT") || msg.includes("400")) {
+      return res.status(400).json({
+        error: `AI Key or Model Error: ${msg}. Please verify your API Key in the AI Assistant settings, or try selecting 'Gemini 2.5 Flash' in the model selector.`
+      });
+    }
+    res.status(500).json({ error: msg });
   }
 });
 
