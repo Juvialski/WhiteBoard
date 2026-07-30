@@ -411,22 +411,36 @@ export default function Dashboard({
   });
 
   const getTodayDateStr = () => {
-    const d = new Date();
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+    return new Date().toISOString().split('T')[0];
   };
 
   const todayStr = getTodayDateStr();
+  const localDateStr = (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  })();
+
   let totalWritesToday = 0;
   let totalReadsToday = 0;
   let totalTeacherWritesToday = 0;
+  let totalWritesAllTime = 0;
+  let totalReadsAllTime = 0;
 
   boards.forEach((b) => {
-    totalWritesToday += b.dailyWrites?.[todayStr] || 0;
-    totalReadsToday += b.dailyReads?.[todayStr] || 0;
-    totalTeacherWritesToday += b.teacherDailyWrites?.[todayStr] || 0;
+    const writesToday = (b.dailyWrites?.[todayStr] || 0) + (todayStr !== localDateStr ? (b.dailyWrites?.[localDateStr] || 0) : 0);
+    const readsToday = (b.dailyReads?.[todayStr] || 0) + (todayStr !== localDateStr ? (b.dailyReads?.[localDateStr] || 0) : 0);
+    const teacherWritesToday = (b.teacherDailyWrites?.[todayStr] || 0) + (todayStr !== localDateStr ? (b.teacherDailyWrites?.[localDateStr] || 0) : 0);
+
+    totalWritesToday += writesToday;
+    totalReadsToday += readsToday;
+    totalTeacherWritesToday += teacherWritesToday;
+
+    if (b.dailyWrites) {
+      Object.values(b.dailyWrites).forEach((v) => { totalWritesAllTime += (v || 0); });
+    }
+    if (b.dailyReads) {
+      Object.values(b.dailyReads).forEach((v) => { totalReadsAllTime += (v || 0); });
+    }
   });
 
   // Generate a list of dates for the last N days
@@ -1206,7 +1220,7 @@ export default function Dashboard({
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4 border-t border-slate-200 pt-3 text-xs">
+                    <div className="grid grid-cols-3 gap-2 border-t border-slate-200 pt-3 text-xs">
                       <div>
                         <span className="text-slate-400 font-medium">Teacher Writes:</span>
                         <strong className="text-slate-700 block mt-0.5 font-bold">{totalTeacherWritesToday.toLocaleString()} units</strong>
@@ -1214,6 +1228,10 @@ export default function Dashboard({
                       <div>
                         <span className="text-slate-400 font-medium">Student Writes:</span>
                         <strong className="text-slate-700 block mt-0.5 font-bold">{Math.max(0, totalWritesToday - totalTeacherWritesToday).toLocaleString()} units</strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 font-medium">All-Time Tracked:</span>
+                        <strong className="text-slate-700 block mt-0.5 font-bold">{totalWritesAllTime.toLocaleString()} units</strong>
                       </div>
                     </div>
                   </div>
@@ -1246,8 +1264,9 @@ export default function Dashboard({
                       </div>
                     </div>
 
-                    <div className="text-[10px] text-slate-500 pt-2 leading-relaxed">
-                      <span>Synchronized live from active whiteboard room initializations and real-time element snapshot queries.</span>
+                    <div className="flex justify-between items-center text-[11px] border-t border-slate-200 pt-3">
+                      <span className="text-slate-400 font-medium">All-Time Tracked Reads:</span>
+                      <strong className="text-slate-700 font-bold">{totalReadsAllTime.toLocaleString()} units</strong>
                     </div>
                   </div>
                 </div>
