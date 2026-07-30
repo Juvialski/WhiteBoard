@@ -74,53 +74,109 @@ app.get("/api/logs", (req, res) => {
 });
 
 
-// Helper to resolve the correct AI instance (user-supplied key or env key fallback)
-function getAiInstance(req: express.Request): GoogleGenAI | null {
-  const userKey = req.headers["x-user-api-key"] as string;
-  const keyToUse = (userKey && userKey.trim()) || process.env.GEMINI_API_KEY;
-  if (keyToUse && keyToUse.trim()) {
-    try {
-      return new GoogleGenAI({
-        apiKey: keyToUse.trim(),
-        httpOptions: {
-          headers: {
-            "User-Agent": "aistudio-build-userproxy",
-          },
+// Helper to resolve AI client given a key
+function createAiClient(apiKey: string): GoogleGenAI | null {
+  if (!apiKey || !apiKey.trim()) return null;
+  try {
+    return new GoogleGenAI({
+      apiKey: apiKey.trim(),
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build-userproxy",
         },
-      });
-    } catch (e) {
-      console.error("Error creating GoogleGenAI client:", e);
-    }
+      },
+    });
+  } catch (e) {
+    console.error("Error creating GoogleGenAI client:", e);
+    return null;
   }
-  return null;
 }
 
 // Helper to determine the target Gemini model selected by user
 function getRequestedModel(req: express.Request): string {
   const headerModel = req.headers["x-user-model"] as string;
+  let rawModel = "";
   if (headerModel && headerModel.trim()) {
-    return headerModel.trim();
+    rawModel = headerModel.trim();
+  } else if (req.body && req.body.model && typeof req.body.model === "string" && req.body.model.trim()) {
+    rawModel = req.body.model.trim();
   }
-  if (req.body && req.body.model && typeof req.body.model === "string" && req.body.model.trim()) {
-    return req.body.model.trim();
+  return rawModel || "gemini-2.5-flash";
+}
+
+// Unified Gemini API execution helper with key fallback and exact requested model execution
+async function safeGenerateContent(
+  req: express.Request,
+  generateParams: { systemInstruction?: string; contents: any; config?: any }
+) {
+  const userKey = (req.headers["x-user-api-key"] as string || "").trim();
+  const envKey = (process.env.GEMINI_API_KEY || "").trim();
+  const primaryModel = getRequestedModel(req);
+
+  // List of keys to try: userKey first (if provided), then envKey
+  const keysToTry: { key: string; isUser: boolean }[] = [];
+  if (userKey) keysToTry.push({ key: userKey, isUser: true });
+  if (envKey && envKey !== userKey) keysToTry.push({ key: envKey, isUser: false });
+
+  if (keysToTry.length === 0) {
+    throw new Error(
+      "No valid Gemini API key found. Please enter your Google AI Studio API Key in the AI Assistant settings panel."
+    );
   }
-  return "gemini-2.5-flash"; // Default to gemini-2.5-flash which is broadly accessible
+
+  // Models to try: exact requested model first, then fallback to gemini-2.5-flash if different
+  const modelsToTry = [primaryModel];
+  if (primaryModel !== "gemini-2.5-flash") {
+    modelsToTry.push("gemini-2.5-flash");
+  }
+
+  let lastError: any = null;
+
+  for (const { key, isUser } of keysToTry) {
+    const aiClient = createAiClient(key);
+    if (!aiClient) continue;
+
+    for (const model of modelsToTry) {
+      try {
+        const response = await aiClient.models.generateContent({
+          model,
+          contents: generateParams.contents,
+          config: generateParams.config,
+        });
+        return response; // Success!
+      } catch (err: any) {
+        lastError = err;
+        const msg = err?.message || String(err);
+        console.warn(`Gemini call failed (model=${model}, isUserKey=${isUser}): ${msg}`);
+        
+        // If it's an API key error for the user key, break out to try server envKey
+        if (msg.includes("API key not valid") || msg.includes("API_KEY_INVALID") || msg.includes("400")) {
+          if (isUser) {
+            console.warn("User API key invalid or expired. Attempting server GEMINI_API_KEY fallback...");
+            break; // Try next key
+          }
+        }
+      }
+    }
+  }
+
+  const errMsg = lastError?.message || String(lastError);
+  if (errMsg.includes("API key not valid") || errMsg.includes("API_KEY_INVALID") || errMsg.includes("400")) {
+    throw new Error(
+      "The Google AI Studio API Key is invalid or expired. Please click 'Clear' or re-paste your valid key in the AI Assistant panel, or get a new free key at aistudio.google.com."
+    );
+  }
+
+  throw lastError || new Error("Failed to execute Gemini API request.");
 }
 
 // API: Solve problems inside the whiteboard with illustrations
 app.post("/api/ai/solve", async (req, res) => {
-  const activeAi = getAiInstance(req);
-  if (!activeAi) {
-    return res.status(400).json({ 
-      error: "AI features are exclusive to users with their own API keys. Please enter your personal Google AI Studio API Key in the AI Assistant settings panel to enable these features." 
-    });
-  }
-
   const { elements, prompt } = req.body;
 
   try {
     // Build a clean text representation of the whiteboard elements to help the AI understand
-    const elementsSummary = elements
+    const elementsSummary = (elements || [])
       .map((el: any) => {
         if (el.type === "text") {
           return `- Text Box (ID: ${el.id}): "${el.text}" at position (${Math.round(el.x)}, ${Math.round(el.y)})`;
@@ -162,9 +218,7 @@ User Request / Question to solve:
 
 Provide the solution text and the visual elements layout coordinates.`;
 
-    const modelToUse = getRequestedModel(req);
-    const response = await activeAi.models.generateContent({
-      model: modelToUse,
+    const response = await safeGenerateContent(req, {
       contents: userPrompt,
       config: {
         systemInstruction,
@@ -219,22 +273,12 @@ Provide the solution text and the visual elements layout coordinates.`;
   } catch (err: any) {
     console.error("Solver error:", err);
     const msg = err.message || String(err);
-    if (msg.includes("API key not valid") || msg.includes("INVALID_ARGUMENT") || msg.includes("400")) {
-      return res.status(400).json({
-        error: `AI Key or Model Error: ${msg}. Please verify your API Key in the AI Assistant settings, or try selecting 'Gemini 2.5 Flash' in the model selector.`
-      });
-    }
     res.status(500).json({ error: msg });
   }
 });
 
 // API: Correct drawing / handwriting strokes to text or tidy shapes
 app.post("/api/ai/beautify", async (req, res) => {
-  const activeAi = getAiInstance(req);
-  if (!activeAi) {
-    return res.status(400).json({ error: "AI features are exclusive to users with their own API keys. Please enter your personal Google AI Studio API Key in the AI Assistant settings panel to enable these features." });
-  }
-
   const { points } = req.body;
 
   if (!points || points.length < 2) {
@@ -265,9 +309,7 @@ ${pointsStr}
 
 Provide your classification and bounding box coordinates matching the drawing's dimensions.`;
 
-    const modelToUse = getRequestedModel(req);
-    const response = await activeAi.models.generateContent({
-      model: modelToUse,
+    const response = await safeGenerateContent(req, {
       contents: prompt,
       config: {
         systemInstruction,
@@ -300,22 +342,12 @@ Provide your classification and bounding box coordinates matching the drawing's 
   } catch (err: any) {
     console.error("Beautify error:", err);
     const msg = err.message || String(err);
-    if (msg.includes("API key not valid") || msg.includes("INVALID_ARGUMENT") || msg.includes("400")) {
-      return res.status(400).json({
-        error: `AI Key or Model Error: ${msg}. Please verify your API Key in the AI Assistant settings, or try selecting 'Gemini 2.5 Flash' in the model selector.`
-      });
-    }
     res.status(500).json({ error: msg });
   }
 });
 
 // API: Generate / suggest dynamic custom stamps using AI
 app.post("/api/ai/stamp", async (req, res) => {
-  const activeAi = getAiInstance(req);
-  if (!activeAi) {
-    return res.status(400).json({ error: "AI features are exclusive to users with their own API keys. Please enter your personal Google AI Studio API Key in the AI Assistant settings panel to enable these features." });
-  }
-
   const { prompt } = req.body;
   if (!prompt || !prompt.trim()) {
     return res.status(400).json({ error: "Please provide a description/prompt for the stamp." });
@@ -325,13 +357,11 @@ app.post("/api/ai/stamp", async (req, res) => {
     const systemInstruction = `You are a creative educational helper for a whiteboard workspace.
 The user wants to generate a custom stamp (like a teacher comment or feedback sticker).
 Analyze the description, and suggest:
-1. One perfect, fitting emoji (e.g. 🍎, 🚀, 💡, 🌟, 🦖, etc.).
+1. One perfect, fitting emoji (e.g. 🍎, 🚀, 💡, 🌟, REX, etc.).
 2. A short, catchy, encouraging text/nickname for the stamp (e.g. "Super Reader!", "Creative idea!", "Check math"). Max 20 characters.
 3. A beautiful, high-contrast, pleasant pastel hex color for the background (e.g. #fef08a, #bfdbfe, #bbf7d0, #fed7aa, #e9d5ff, #fbcfe8, #99f6e4, etc.).`;
 
-    const modelToUse = getRequestedModel(req);
-    const response = await activeAi.models.generateContent({
-      model: modelToUse,
+    const response = await safeGenerateContent(req, {
       contents: `Generate an aesthetic, fun custom stamp matching this concept: "${prompt}"`,
       config: {
         systemInstruction,
@@ -354,11 +384,6 @@ Analyze the description, and suggest:
   } catch (err: any) {
     console.error("AI Stamp Generator error:", err);
     const msg = err.message || String(err);
-    if (msg.includes("API key not valid") || msg.includes("INVALID_ARGUMENT") || msg.includes("400")) {
-      return res.status(400).json({
-        error: `AI Key or Model Error: ${msg}. Please verify your API Key in the AI Assistant settings, or try selecting 'Gemini 2.5 Flash' in the model selector.`
-      });
-    }
     res.status(500).json({ error: msg });
   }
 });

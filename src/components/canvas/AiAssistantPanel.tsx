@@ -201,19 +201,21 @@ export const AiAssistantPanel: React.FC<AiAssistantPanelProps> = ({
               className="w-full bg-white border border-slate-200 rounded-lg py-1.5 px-2 text-[11px] font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-600/20 focus:border-purple-600 cursor-pointer shadow-xs"
               id="ai-model-selector"
             >
-              <option value="gemini-2.5-flash">Gemini 2.5 Flash (Recommended - Fast & Reliable)</option>
-              <option value="gemini-flash-latest">Gemini Flash Latest</option>
+              <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
               <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
               <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash Lite</option>
-              <option value="gemini-3.5-pro">Gemini 3.5 Pro</option>
-              <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
-              <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
-              <option value="gemini-2.5-pro">Gemini 2.5 Pro (Advanced Reasoning)</option>
-              <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
-              <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+              <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite</option>
+              <option value="gemini-3.1-pro">Gemini 3.1 Pro</option>
+              <option value="gemini-3.0-flash">Gemini 3 Flash</option>
+              <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+              <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite</option>
+              <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+              <option value="gemini-2.0-flash">Gemini 2 Flash</option>
+              <option value="gemini-2.0-flash-lite">Gemini 2 Flash Lite</option>
+              <option value="gemini-flash-latest">Gemini Flash Latest</option>
             </select>
             <p className="text-[9.5px] text-slate-500 leading-tight">
-              Tip: If you encounter an "API key not valid" error, switch to <strong>Gemini 2.5 Flash</strong> or <strong>Gemini Flash Latest</strong>.
+              Select your preferred model quota from your Google AI Studio key.
             </p>
           </div>
         </div>
