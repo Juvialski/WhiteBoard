@@ -1,6 +1,6 @@
 {
   "name": "Collaborative Whiteboard",
-  "description": "An interactive digital whiteboard featuring real-time synchronization, shapes, connectors, freehand drawing, hand-written ink correction, and AI-powered visual solvers.",
+  "description": "An interactive digital whiteboard featuring real-time synchronization, shapes, connectors, freehand drawing, voice notes, and collaborative canvas tools.",
   "requestFramePermissions": [
     "microphone"
   ],

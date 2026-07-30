@@ -46,7 +46,6 @@ import KeyboardShortcutsModal from "./KeyboardShortcutsModal";
 import ClearCanvasModal from "./ClearCanvasModal";
 import { ElementWrapper, DrawingItem, RemoteDrawingStreamsLayer } from "./canvas/ElementWrapper";
 import { WhiteboardHeader } from "./canvas/WhiteboardHeader";
-import { AiAssistantPanel } from "./canvas/AiAssistantPanel";
 import {
   ReadOnlyAlertBanner,
   SyncNotificationToast,
@@ -1322,32 +1321,6 @@ export default function WhiteboardCanvas({
   };
 
   const [isShortcutsExpanded, setIsShortcutsExpanded] = useState(true);
-
-  // AI Classroom Assistant States
-  const [isAiPanelOpen, setIsAiPanelOpen] = useState(false);
-  const [autoCorrectHandwriting, setAutoCorrectHandwriting] = useState(true);
-  const [aiProblemInput, setAiProblemInput] = useState("");
-  const [isAiLoading, setIsAiLoading] = useState(false);
-  const [aiResponseText, setAiResponseText] = useState("");
-  const [aiResponseTitle, setAiResponseTitle] = useState("");
-  const [userApiKey, setUserApiKey] = useState<string>(() => {
-    const raw = localStorage.getItem("user_gemini_api_key") || "";
-    return secureDecrypt(raw, currentUser?.id);
-  });
-  const [selectedModel, setSelectedModel] = useState<string>(() => {
-    return localStorage.getItem("user_gemini_model") || "gemini-2.5-flash";
-  });
-  const [showApiKey, setShowApiKey] = useState(false);
-
-  // Sync / decrypt API key safely if current user's profile ID shifts
-  useEffect(() => {
-    const raw = localStorage.getItem("user_gemini_api_key") || "";
-    if (raw) {
-      setUserApiKey(secureDecrypt(raw, currentUser?.id));
-    } else {
-      setUserApiKey("");
-    }
-  }, [currentUser?.id]);
 
   // Fetch board elements in real time with local caching and write-minimizer guards
   useEffect(() => {
@@ -3016,11 +2989,6 @@ export default function WhiteboardCanvas({
         try {
           await saveElementLocallyAndSync(id, newStroke);
           pushToUndo({ type: "add", elementId: id, afterData: newStroke });
-
-          // Only trigger AI beautification if it's not a highlighter and it actually has more than 2 points (e.g. drawn letters/words)
-          if (autoCorrectHandwriting && !isHighlighter && points.length > 2) {
-            triggerAiBeautification(newStroke);
-          }
         } catch (err) {
           console.error("Error saving sketch:", err);
         }
@@ -3648,352 +3616,7 @@ export default function WhiteboardCanvas({
     }
   };
 
-  // --- AI CLASSROOM ASSISTANT HELPER FUNCTIONS ---
-  // Renders drawings on a temporary client-side high-contrast canvas to feed to Gemini
-  const renderStrokesToImage = (strokes: Point[][], strokeColor: string = "#1e293b", strokeWidthValue: number = 4): string => {
-    let minX = Infinity;
-    let maxX = -Infinity;
-    let minY = Infinity;
-    let maxY = -Infinity;
-    let hasPoints = false;
 
-    for (const stroke of strokes) {
-      for (const pt of stroke) {
-        if (pt.x < minX) minX = pt.x;
-        if (pt.x > maxX) maxX = pt.x;
-        if (pt.y < minY) minY = pt.y;
-        if (pt.y > maxY) maxY = pt.y;
-        hasPoints = true;
-      }
-    }
-
-    if (!hasPoints) return "";
-
-    const padding = 24;
-    const width = Math.max(50, (maxX - minX) + padding * 2);
-    const height = Math.max(50, (maxY - minY) + padding * 2);
-
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return "";
-
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, width, height);
-
-    ctx.strokeStyle = strokeColor;
-    ctx.lineWidth = strokeWidthValue;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-
-    for (const stroke of strokes) {
-      if (stroke.length === 0) continue;
-      ctx.beginPath();
-      ctx.moveTo(stroke[0].x - minX + padding, stroke[0].y - minY + padding);
-      for (let i = 1; i < stroke.length; i++) {
-        ctx.lineTo(stroke[i].x - minX + padding, stroke[i].y - minY + padding);
-      }
-      ctx.stroke();
-    }
-
-    return canvas.toDataURL("image/png");
-  };
-
-  const triggerAiBeautification = async (stroke: DrawingElement) => {
-    if (!userApiKey || !userApiKey.trim()) {
-      return; // Do nothing silently if user has not provided their own API key
-    }
-    try {
-      const strokeImage = renderStrokesToImage([stroke.points], "#1e293b", 4);
-
-      const res = await fetch("/api/ai/beautify", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-user-api-key": userApiKey,
-          "x-user-model": selectedModel,
-        },
-        body: JSON.stringify({ 
-          points: stroke.points,
-          image: strokeImage
-        }),
-      });
-      if (!res.ok) {
-        const errData = await res.json();
-        console.error("AI Beautification failed:", errData.error);
-        return;
-      }
-      const data = await res.json();
-
-      if (data.type === "shape" && data.shapeType) {
-        // Delete original stroke
-        await saveElementLocallyAndSync(stroke.id, null, false, 'delete');
-
-        // Add new shape element
-        const shapeId = "shape-" + Date.now() + Math.floor(Math.random() * 100);
-        const newShape: ShapeElement = {
-          id: shapeId,
-          type: "shape",
-          shapeType: data.shapeType as ShapeType,
-          x: data.bounds.x,
-          y: data.bounds.y,
-          width: Math.max(80, data.bounds.width),
-          height: Math.max(80, data.bounds.height),
-          text: "",
-          color: activeColor,
-          borderColor: "#1e293b",
-          zIndex: elements.length + 10,
-          reactions: {},
-        };
-        await saveElementLocallyAndSync(shapeId, newShape);
-        pushToUndo({ type: "add", elementId: shapeId, afterData: newShape });
-      } else if (data.type === "text" && data.text) {
-        // Delete original stroke
-        await saveElementLocallyAndSync(stroke.id, null, false, 'delete');
-
-        // Add new text element
-        const textId = "text-" + Date.now() + Math.floor(Math.random() * 100);
-        const newText: TextElement = {
-          id: textId,
-          type: "text",
-          x: data.bounds.x,
-          y: data.bounds.y,
-          width: Math.max(120, data.bounds.width + 40),
-          height: Math.max(40, data.bounds.height + 20),
-          text: data.text,
-          color: "#1e293b",
-          fontSize: 18,
-          zIndex: elements.length + 10,
-          reactions: {},
-        };
-        await saveElementLocallyAndSync(textId, newText);
-        pushToUndo({ type: "add", elementId: textId, afterData: newText });
-      }
-    } catch (err) {
-      console.error("Error beautifying stroke:", err);
-    }
-  };
-
-  const handleBeautifySelection = async () => {
-    if (!userApiKey || !userApiKey.trim()) {
-      alert(
-        "AI features are exclusive to users with their own API keys. Please enter your Google AI Studio API Key in the AI Assistant settings panel (bottom right icon) to activate this feature.",
-      );
-      setIsAiPanelOpen(true);
-      return;
-    }
-
-    const selectedDrawings = elements.filter(
-      (el) => selectedIds.includes(el.id) && el.type === "drawing",
-    ) as DrawingElement[];
-
-    if (selectedDrawings.length === 0) {
-      alert(
-        "Please select one or more freehand drawing strokes on the canvas first (using the Select tool).",
-      );
-      return;
-    }
-
-    setIsAiLoading(true);
-    try {
-      const sortedDrawings = [...selectedDrawings].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
-      const allPoints = sortedDrawings.flatMap((d) => d.points);
-      const strokeImage = renderStrokesToImage(sortedDrawings.map((d) => d.points), "#1e293b", 4);
-
-      const res = await fetch("/api/ai/beautify", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-user-api-key": userApiKey,
-          "x-user-model": selectedModel,
-        },
-        body: JSON.stringify({ 
-          points: allPoints,
-          image: strokeImage
-        }),
-      });
-      if (!res.ok) {
-        const errData = await res.json();
-        alert("AI Beautification failed: " + errData.error);
-        return;
-      }
-      const data = await res.json();
-
-      if (data.type === "shape" && data.shapeType) {
-        await Promise.all(
-          selectedDrawings.map((d) =>
-            saveElementLocallyAndSync(d.id, null, false, 'delete'),
-          ),
-        );
-
-        const shapeId = "shape-" + Date.now() + Math.floor(Math.random() * 100);
-        const newShape: ShapeElement = {
-          id: shapeId,
-          type: "shape",
-          shapeType: data.shapeType as ShapeType,
-          x: data.bounds.x,
-          y: data.bounds.y,
-          width: Math.max(100, data.bounds.width),
-          height: Math.max(100, data.bounds.height),
-          text: "",
-          color: activeColor,
-          borderColor: "#1e293b",
-          zIndex: elements.length + 10,
-          reactions: {},
-        };
-        await saveElementLocallyAndSync(shapeId, newShape);
-        setSelectedIds([shapeId]);
-        setSelectedId(shapeId);
-      } else if (data.type === "text" && data.text) {
-        await Promise.all(
-          selectedDrawings.map((d) =>
-            saveElementLocallyAndSync(d.id, null, false, 'delete'),
-          ),
-        );
-
-        const textId = "text-" + Date.now() + Math.floor(Math.random() * 100);
-        const newText: TextElement = {
-          id: textId,
-          type: "text",
-          x: data.bounds.x,
-          y: data.bounds.y,
-          width: Math.max(150, data.bounds.width + 40),
-          height: Math.max(50, data.bounds.height + 20),
-          text: data.text,
-          color: "#1e293b",
-          fontSize: 18,
-          zIndex: elements.length + 10,
-          reactions: {},
-        };
-        await saveElementLocallyAndSync(textId, newText);
-        setSelectedIds([textId]);
-        setSelectedId(textId);
-      } else {
-        alert(
-          "AI couldn't clearly recognize this as a simple shape or text. Try writing or drawing more clearly!",
-        );
-      }
-    } catch (err) {
-      console.error("Error beautifying selection:", err);
-    } finally {
-      setIsAiLoading(false);
-    }
-  };
-
-  const handleSolveProblem = async (customPrompt?: string) => {
-    if (!userApiKey || !userApiKey.trim()) {
-      alert(
-        "AI features are exclusive to users with their own API keys. Please enter your Google AI Studio API Key in the AI Assistant settings panel (bottom right icon) to activate this feature.",
-      );
-      setIsAiPanelOpen(true);
-      return;
-    }
-
-    if (selectedIds.length === 0) {
-      alert(
-        "Please select the specific parts or equations on the whiteboard first (using the Select tool) to activate the solver.",
-      );
-      return;
-    }
-    setIsAiLoading(true);
-    setAiResponseText("");
-    setAiResponseTitle("");
-
-    try {
-      const targetElements = elements.filter((el) =>
-        selectedIds.includes(el.id),
-      );
-
-      const res = await fetch("/api/ai/solve", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-user-api-key": userApiKey,
-          "x-user-model": selectedModel,
-        },
-        body: JSON.stringify({
-          elements: targetElements,
-          prompt: customPrompt || aiProblemInput,
-        }),
-      });
-
-      if (!res.ok) {
-        const errData = await res.json();
-        alert("AI Solver failed: " + errData.error);
-        return;
-      }
-
-      const data = await res.json();
-      setAiResponseText(data.explanation);
-      setAiResponseTitle(data.suggestedTitle);
-
-      if (data.elements && data.elements.length > 0) {
-        let centerX = 100;
-        let centerY = 100;
-        if (containerRef.current) {
-          const rect = containerRef.current.getBoundingClientRect();
-          centerX = (rect.width / 2 - panX) / zoom;
-          centerY = (rect.height / 2 - panY) / zoom;
-        }
-
-        const shiftX = Math.round(centerX - 400);
-        const shiftY = Math.round(centerY - 200);
-
-        const createdIds: string[] = [];
-        await Promise.all(
-          data.elements.map(async (el: any) => {
-            const elId = el?.id || Math.floor(Math.random() * 1000000).toString();
-            const id = typeof elId === "string" && elId.startsWith("ai-")
-              ? elId
-              : `ai-${elId}-${Date.now()}`;
-            const posX = Math.round((el.x || 0) + shiftX);
-            const posY = Math.round((el.y || 0) + shiftY);
-
-            const baseElement: any = {
-              id,
-              type: el.type,
-              x: posX,
-              y: posY,
-              width: el.width || 120,
-              height: el.height || 80,
-              text: el.text || "",
-              zIndex: el.zIndex || elements.length + 10,
-              reactions: {},
-            };
-
-            if (el.type === "shape") {
-              baseElement.shapeType = el.shapeType || "rect";
-              baseElement.color = el.color || "#bfdbfe";
-              baseElement.borderColor = el.borderColor || "#1e293b";
-            } else if (el.type === "sticky") {
-              baseElement.color = el.color || "#fef08a";
-            } else if (el.type === "text") {
-              baseElement.color = el.color || "#1e293b";
-              baseElement.fontSize = el.fontSize || 16;
-            } else if (el.type === "math") {
-              baseElement.color = el.color || "#1e1b4b";
-              baseElement.fontSize = el.fontSize || 20;
-              baseElement.backgroundColor = el.backgroundColor || "#e0e7ff";
-              baseElement.borderStyle = el.borderStyle || "solid";
-              baseElement.borderColor = el.borderColor || "#6366f1";
-            }
-            await saveElementLocallyAndSync(id, baseElement);
-            createdIds.push(id);
-          }),
-        );
-
-        if (createdIds.length > 0) {
-          setSelectedIds(createdIds);
-          setSelectedId(createdIds[0]);
-        }
-      }
-    } catch (err) {
-      console.error("Error solving problem:", err);
-    } finally {
-      setIsAiLoading(false);
-    }
-  };
 
   // Zoom handlers
   const handleZoomIn = () => {
@@ -4112,8 +3735,6 @@ export default function WhiteboardCanvas({
         isTeacher={isTeacher}
         studentsCanWrite={studentsCanWrite}
         handleToggleStudentsCanWrite={handleToggleStudentsCanWrite}
-        isAiPanelOpen={isAiPanelOpen}
-        setIsAiPanelOpen={setIsAiPanelOpen}
         isPdfBoard={isPdfBoard}
         handleDownloadPdfWithDrawings={handleDownloadPdfWithDrawings}
         isGeneratingPdf={isGeneratingPdf}
@@ -4575,29 +4196,6 @@ export default function WhiteboardCanvas({
         onDismiss={() => setSyncNotification((prev) => ({ ...prev, visible: false }))}
       />
 
-      {/* AI Classroom Assistant Sliding/Floating Side Panel */}
-      <AiAssistantPanel
-        isOpen={isAiPanelOpen}
-        onClose={() => setIsAiPanelOpen(false)}
-        userApiKey={userApiKey}
-        setUserApiKey={setUserApiKey}
-        selectedModel={selectedModel}
-        setSelectedModel={setSelectedModel}
-        showApiKey={showApiKey}
-        setShowApiKey={setShowApiKey}
-        autoCorrectHandwriting={autoCorrectHandwriting}
-        setAutoCorrectHandwriting={setAutoCorrectHandwriting}
-        handleBeautifySelection={handleBeautifySelection}
-        isAiLoading={isAiLoading}
-        selectedIds={selectedIds}
-        aiProblemInput={aiProblemInput}
-        setAiProblemInput={setAiProblemInput}
-        handleSolveProblem={handleSolveProblem}
-        aiResponseText={aiResponseText}
-        aiResponseTitle={aiResponseTitle}
-        currentUser={currentUser}
-      />
-
       {/* Floating Follow Indicator Banner */}
       <FollowIndicatorBanner
         followedUserId={followedUserId}
@@ -4687,7 +4285,6 @@ export default function WhiteboardCanvas({
         isOpen={isStampModalOpen}
         onClose={() => setIsStampModalOpen(false)}
         onSelectStamp={handleSaveStamp}
-        userApiKey={userApiKey}
       />
     </div>
   );

@@ -16,7 +16,6 @@ import {
   ZoomOut,
   Maximize2,
   ChevronRight,
-  Sparkles,
   ArrowRight,
   Grid,
   Hexagon,

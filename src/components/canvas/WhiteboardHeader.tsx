@@ -6,7 +6,6 @@ import {
   Video,
   Unlock,
   Lock,
-  Sparkles,
   Download,
   Loader2,
   Image as ImageIcon,
@@ -45,8 +44,6 @@ interface WhiteboardHeaderProps {
   isTeacher: boolean;
   studentsCanWrite: boolean;
   handleToggleStudentsCanWrite: () => void;
-  isAiPanelOpen: boolean;
-  setIsAiPanelOpen: (open: boolean) => void;
   isPdfBoard: boolean;
   handleDownloadPdfWithDrawings: () => void;
   isGeneratingPdf: boolean;
@@ -84,8 +81,6 @@ export const WhiteboardHeader: React.FC<WhiteboardHeaderProps> = ({
   isTeacher,
   studentsCanWrite,
   handleToggleStudentsCanWrite,
-  isAiPanelOpen,
-  setIsAiPanelOpen,
   isPdfBoard,
   handleDownloadPdfWithDrawings,
   isGeneratingPdf,
@@ -361,21 +356,6 @@ export const WhiteboardHeader: React.FC<WhiteboardHeaderProps> = ({
           </div>
         )}
 
-        <button
-          onClick={() => setIsAiPanelOpen(!isAiPanelOpen)}
-          className={`hidden md:flex p-1.5 md:px-3 md:py-1 rounded-xl text-xs font-semibold items-center space-x-1.5 transition-all cursor-pointer shrink-0 ${
-            isAiPanelOpen
-              ? "bg-purple-600 hover:bg-purple-700 text-white shadow-md border-purple-600 scale-102"
-              : "bg-white hover:bg-slate-50 text-slate-700 border border-slate-200/80 shadow-xs"
-          }`}
-          title="AI Assistant"
-        >
-          <Sparkles
-            className={`w-3.5 h-3.5 shrink-0 ${isAiPanelOpen ? "text-white animate-pulse" : "text-purple-600"}`}
-          />
-          <span className="hidden lg:inline">AI Assistant</span>
-        </button>
-
         {isPdfBoard && (
           <button
             onClick={handleDownloadPdfWithDrawings}
@@ -548,22 +528,6 @@ export const WhiteboardHeader: React.FC<WhiteboardHeaderProps> = ({
                   )}
                 </div>
               )}
-
-              {/* AI Assistant */}
-              <button
-                onClick={() => {
-                  setIsAiPanelOpen(!isAiPanelOpen);
-                  setIsHeaderMenuOpen(false);
-                }}
-                className={`w-full px-3 py-2 rounded-xl text-xs font-semibold flex items-center space-x-2 transition-all cursor-pointer border ${
-                  isAiPanelOpen
-                    ? "bg-purple-600 border-purple-700 text-white shadow-md"
-                    : "bg-white hover:bg-slate-50 text-slate-700 border-slate-200"
-                }`}
-              >
-                <Sparkles className={`w-4 h-4 shrink-0 ${isAiPanelOpen ? "text-white animate-pulse" : "text-purple-600"}`} />
-                <span>AI Assistant</span>
-              </button>
 
               {/* Download PDF */}
               {isPdfBoard && (

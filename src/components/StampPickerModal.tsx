@@ -10,7 +10,6 @@ import {
   X, 
   Trash2, 
   Check, 
-  Sparkles, 
   Palette, 
   Smile, 
   HelpCircle,
@@ -31,7 +30,6 @@ interface StampPickerModalProps {
     color?: string,
     stampShape?: StampElement["stampShape"]
   ) => void;
-  userApiKey?: string;
 }
 
 const PASTEL_COLORS = [
@@ -51,7 +49,6 @@ export default function StampPickerModal({
   isOpen,
   onClose,
   onSelectStamp,
-  userApiKey,
 }: StampPickerModalProps) {
   const [activeTab, setActiveTab] = useState<"stamps" | "custom" | "signature">("stamps");
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -83,11 +80,6 @@ export default function StampPickerModal({
     previewClipPath = "polygon(10% 0%, 90% 0%, 100% 50%, 90% 100%, 10% 100%, 0% 50%)";
     previewShapeClass = "";
   }
-
-  // AI Stamp Assistant State
-  const [aiPrompt, setAiPrompt] = useState("");
-  const [isAiLoading, setIsAiLoading] = useState(false);
-  const [aiError, setAiError] = useState("");
 
   useEffect(() => {
     if (activeTab === "signature" && canvasRef.current) {
@@ -194,48 +186,6 @@ export default function StampPickerModal({
     { type: "needs_revision", label: "Needs Revision", icon: <AlertCircle className="w-6 h-6 text-rose-500" />, color: "border-rose-200 hover:bg-rose-50", bgColor: "#f43f5e" },
     { type: "approved", label: "Approved", icon: <FileCheck className="w-6 h-6 text-teal-600" />, color: "border-teal-200 hover:bg-teal-50", bgColor: "#0d9488" },
   ];
-
-  // AI Stamp generator logic
-  const handleAiGenerateStamp = async () => {
-    if (!aiPrompt.trim()) return;
-    if (!userApiKey || !userApiKey.trim()) {
-      setAiError("API Key required. Please input your custom Google AI Studio API Key in the AI Assistant settings sidebar first.");
-      return;
-    }
-
-    setIsAiLoading(true);
-    setAiError("");
-
-    try {
-      const res = await fetch("/api/ai/stamp", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-user-api-key": userApiKey,
-          "x-user-model": localStorage.getItem("user_gemini_model") || "gemini-2.5-flash",
-        },
-        body: JSON.stringify({ prompt: aiPrompt }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to generate stamp");
-      }
-
-      const data = await res.json();
-      if (data.emoji) setCustomEmoji(data.emoji);
-      if (data.text) setCustomText(data.text);
-      if (data.color) setSelectedColor(data.color);
-
-      // Clear prompt
-      setAiPrompt("");
-    } catch (err: any) {
-      console.error(err);
-      setAiError(err.message || "An error occurred while communicating with Gemini.");
-    } finally {
-      setIsAiLoading(false);
-    }
-  };
 
   const placeCustomStamp = () => {
     // We compose the stamp label: emoji + space + text
@@ -421,52 +371,6 @@ export default function StampPickerModal({
                   ))}
                 </div>
               </div>
-            </div>
-
-            {/* AI Assistant Generator Card */}
-            <div className="border border-indigo-100 bg-indigo-50/40 rounded-2xl p-3.5 flex flex-col space-y-2.5">
-              <div className="flex items-center space-x-1.5 text-indigo-700 font-extrabold text-xs">
-                <Sparkles className="w-4 h-4 text-indigo-500 animate-pulse" />
-                <span>AI Stamp Design Assistant</span>
-              </div>
-              <p className="text-[10px] text-slate-500 leading-relaxed">
-                Describe any concept (e.g. "rocket for science", "dino for high effort") and let Gemini suggest a custom emoji, slogan, and theme color.
-              </p>
-              
-              <div className="flex space-x-2">
-                <input
-                  type="text"
-                  value={aiPrompt}
-                  onChange={(e) => setAiPrompt(e.target.value)}
-                  disabled={isAiLoading}
-                  placeholder="Ask Gemini to design a stamp..."
-                  className="flex-1 px-3 py-2 border border-slate-200 bg-white rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && aiPrompt.trim()) {
-                      handleAiGenerateStamp();
-                    }
-                  }}
-                />
-                <button
-                  onClick={handleAiGenerateStamp}
-                  disabled={isAiLoading || !aiPrompt.trim()}
-                  className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center space-x-1"
-                >
-                  {isAiLoading ? (
-                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  ) : (
-                    <Sparkles className="w-3.5 h-3.5" />
-                  )}
-                  <span>Design</span>
-                </button>
-              </div>
-
-              {aiError && (
-                <div className="p-2 border border-rose-200 bg-rose-50 rounded-xl text-[10px] font-bold text-rose-600 leading-normal flex items-start space-x-1 animate-fade-in">
-                  <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 text-rose-500 mt-0.5" />
-                  <span>{aiError}</span>
-                </div>
-              )}
             </div>
 
             <button
