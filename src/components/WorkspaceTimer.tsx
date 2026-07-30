@@ -60,7 +60,15 @@ export default function WorkspaceTimer({ isOpen, onClose, onTimerSync, syncedSta
         prevSyncedStateRef.current = syncedState;
         setIsRunning(syncedState.isRunning);
         setMode(syncedState.mode);
-        setStartedAt(syncedState.startedAt ?? null);
+
+        let validStartedAt: number | null = null;
+        if (syncedState.isRunning) {
+          const raw = syncedState.startedAt;
+          const parsed = typeof raw === 'number' ? raw : Number(raw);
+          validStartedAt = parsed && !isNaN(parsed) && parsed > 0 ? parsed : Date.now();
+        }
+        setStartedAt(validStartedAt);
+
         if (syncedState.mode === 'timer') {
           setRemainingSeconds(syncedState.remainingSeconds);
           setTotalSeconds(syncedState.totalSeconds);
@@ -110,10 +118,16 @@ export default function WorkspaceTimer({ isOpen, onClose, onTimerSync, syncedSta
 
   // Calculate current seconds dynamically with millisecond precision
   const getCurrentDisplaySeconds = () => {
-    if (!isRunning || !startedAt) {
+    if (!isRunning) {
       return mode === 'timer' ? remainingSeconds : stopwatchSeconds;
     }
-    const elapsedMs = Date.now() - startedAt;
+    const parsedStartedAt = typeof startedAt === 'number' ? startedAt : Number(startedAt);
+    const effectiveStartedAt =
+      parsedStartedAt && !isNaN(parsedStartedAt) && parsedStartedAt > 0
+        ? parsedStartedAt
+        : Date.now();
+
+    const elapsedMs = Math.max(0, Date.now() - effectiveStartedAt);
     if (mode === 'timer') {
       const remainingMs = remainingSeconds * 1000 - elapsedMs;
       return Math.max(0, Math.ceil(remainingMs / 1000));
@@ -130,9 +144,16 @@ export default function WorkspaceTimer({ isOpen, onClose, onTimerSync, syncedSta
     const interval = setInterval(() => {
       setTick((t) => t + 1);
 
+      // Ensure effectiveStartedAt is populated if missing while running
+      const parsedStartedAt = typeof startedAt === 'number' ? startedAt : Number(startedAt);
+      const effectiveStartedAt =
+        parsedStartedAt && !isNaN(parsedStartedAt) && parsedStartedAt > 0
+          ? parsedStartedAt
+          : Date.now();
+
       // Check if the countdown timer has completed
-      if (mode === 'timer' && startedAt) {
-        const elapsedMs = Date.now() - startedAt;
+      if (mode === 'timer') {
+        const elapsedMs = Date.now() - effectiveStartedAt;
         const currentLeftMs = remainingSeconds * 1000 - elapsedMs;
         if (currentLeftMs <= 0) {
           setIsRunning(false);
@@ -167,9 +188,14 @@ export default function WorkspaceTimer({ isOpen, onClose, onTimerSync, syncedSta
     let currentRemaining = remainingSeconds;
     let currentStopwatch = stopwatchSeconds;
 
-    if (!nextIsRunning && startedAt) {
-      // Freeze at precisely calculated current values
-      const elapsedMs = now - startedAt;
+    if (!nextIsRunning) {
+      // Freeze at precisely calculated current values on pause
+      const parsedStartedAt = typeof startedAt === 'number' ? startedAt : Number(startedAt);
+      const effectiveStartedAt =
+        parsedStartedAt && !isNaN(parsedStartedAt) && parsedStartedAt > 0
+          ? parsedStartedAt
+          : now;
+      const elapsedMs = Math.max(0, now - effectiveStartedAt);
       if (mode === 'timer') {
         const remainingMs = Math.max(0, remainingSeconds * 1000 - elapsedMs);
         currentRemaining = Math.max(0, Math.ceil(remainingMs / 1000));

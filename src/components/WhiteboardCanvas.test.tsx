@@ -80,7 +80,7 @@ describe('WhiteboardCanvas', () => {
     // Toolbar buttons are rendered
     expect(screen.getByTitle('Select & Edit (V)')).toBeTruthy();
     expect(screen.getByTitle('Sticky Note (N)')).toBeTruthy();
-    expect(screen.getByTitle('AI Assistant')).toBeTruthy();
+    expect(screen.getByTitle('Sprint Timer & Stopwatch')).toBeTruthy();
   });
 
   it('handles back button click', () => {
@@ -99,7 +99,7 @@ describe('WhiteboardCanvas', () => {
     expect(onBack).toHaveBeenCalled();
   });
 
-  it('renders AI Assistant trigger and opens AI Assistant panel', () => {
+  it('renders Sprint Timer trigger and opens Sprint Timer modal', () => {
     render(
       <WhiteboardCanvas 
         boardId="b1" 
@@ -109,8 +109,8 @@ describe('WhiteboardCanvas', () => {
       />
     );
 
-    const aiBtn = screen.getByTitle('AI Assistant');
-    fireEvent.click(aiBtn);
-    expect(screen.getByText('AI Tutor & Problem Solver')).toBeTruthy();
+    const timerBtn = screen.getByTitle('Sprint Timer & Stopwatch');
+    fireEvent.click(timerBtn);
+    expect(screen.getByText('Sprint Timer')).toBeTruthy();
   });
 });
