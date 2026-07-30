@@ -1157,7 +1157,7 @@ export default function Dashboard({
                 </div>
               </div>
 
-              {/* Direct Firestore Database Metrics & Optimization Overview */}
+              {/* Direct Firestore Database Metrics & Quotas Overview */}
               <div className="bg-white border border-slate-200 rounded-3xl p-6 space-y-6 shadow-xs">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                   <div className="flex items-center gap-2.5">
@@ -1167,36 +1167,108 @@ export default function Dashboard({
                       </svg>
                     </div>
                     <div>
-                      <h3 className="text-sm font-bold text-slate-900">Firestore Direct Database Architecture & Infrastructure Metrics</h3>
-                      <p className="text-[10px] text-slate-500 mt-0.5">Real-time room inventory directly connected to your Firebase Firestore project.</p>
+                      <h3 className="text-sm font-bold text-slate-900">Firestore Free-Tier Quotas & Live Database Metrics</h3>
+                      <p className="text-[10px] text-slate-500 mt-0.5">Real-time resource tracking synchronized directly with Firestore documents.</p>
                     </div>
                   </div>
-                  <a
-                    href="https://console.firebase.google.com/"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 text-[10px] bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition-colors shadow-xs"
-                  >
-                    <span>Firebase Billing Console</span>
-                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                    </svg>
-                  </a>
+                  <span className="text-[10px] bg-slate-100 border border-slate-200 text-slate-600 px-3 py-1 rounded-full font-bold uppercase tracking-wider">
+                    Date: {todayStr}
+                  </span>
                 </div>
 
-                {/* Explanation Card on Quota & Metrics Accuracy */}
-                <div className="bg-amber-50/70 border border-amber-200/80 rounded-2xl p-4 flex gap-3 text-xs text-amber-900 leading-relaxed">
-                  <div className="p-1.5 bg-amber-100 rounded-lg text-amber-700 shrink-0 h-fit">
+                {/* Quota Progress Cards Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Daily Writes Quota card */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4 shadow-2xs">
+                    <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2">
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Daily Writes Quota</span>
+                        <h4 className="text-2xl font-black text-slate-800">
+                          {totalWritesToday.toLocaleString()} <span className="text-xs font-semibold text-slate-500">/ 40,000 write units</span>
+                        </h4>
+                      </div>
+                      <div className="bg-blue-50 text-blue-700 font-bold text-[10px] uppercase px-3 py-1.5 rounded-xl border border-blue-100 self-start">
+                        {Math.max(0, 40000 - totalWritesToday).toLocaleString()} Left to consume
+                      </div>
+                    </div>
+
+                    {/* Progress bar */}
+                    <div className="space-y-1.5">
+                      <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                        <div 
+                          className="bg-blue-600 h-2 rounded-full transition-all duration-500"
+                          style={{ width: `${Math.min(100, (totalWritesToday / 40000) * 100)}%` }}
+                        />
+                      </div>
+                      <div className="flex justify-between text-[10px] font-semibold text-slate-500">
+                        <span>{((totalWritesToday / 40000) * 100).toFixed(2)}% consumed</span>
+                        <span>Limit: 40,000/day</span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4 border-t border-slate-200 pt-3 text-xs">
+                      <div>
+                        <span className="text-slate-400 font-medium">Teacher Writes:</span>
+                        <strong className="text-slate-700 block mt-0.5 font-bold">{totalTeacherWritesToday.toLocaleString()} units</strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 font-medium">Student Writes:</span>
+                        <strong className="text-slate-700 block mt-0.5 font-bold">{Math.max(0, totalWritesToday - totalTeacherWritesToday).toLocaleString()} units</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Daily Reads Quota card */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4 shadow-2xs">
+                    <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2">
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Daily Reads Quota</span>
+                        <h4 className="text-2xl font-black text-slate-800">
+                          {totalReadsToday.toLocaleString()} <span className="text-xs font-semibold text-slate-500">/ 50,000 read units</span>
+                        </h4>
+                      </div>
+                      <div className="bg-indigo-50 text-indigo-700 font-bold text-[10px] uppercase px-3 py-1.5 rounded-xl border border-indigo-100 self-start">
+                        {Math.max(0, 50000 - totalReadsToday).toLocaleString()} Left to consume
+                      </div>
+                    </div>
+
+                    {/* Progress bar */}
+                    <div className="space-y-1.5">
+                      <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                        <div 
+                          className="bg-indigo-600 h-2 rounded-full transition-all duration-500"
+                          style={{ width: `${Math.min(100, (totalReadsToday / 50000) * 100)}%` }}
+                        />
+                      </div>
+                      <div className="flex justify-between text-[10px] font-semibold text-slate-500">
+                        <span>{((totalReadsToday / 50000) * 100).toFixed(2)}% consumed</span>
+                        <span>Limit: 50,000/day</span>
+                      </div>
+                    </div>
+
+                    <div className="text-[10px] text-slate-500 pt-2 leading-relaxed">
+                      <span>Synchronized live from active whiteboard room initializations and real-time element snapshot queries.</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Units Explanation Callout */}
+                <div className="bg-blue-50/70 border border-blue-200/80 rounded-2xl p-4 flex gap-3 text-xs text-blue-950 leading-relaxed">
+                  <div className="p-1.5 bg-blue-100 rounded-lg text-blue-700 shrink-0 h-fit">
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
                   </div>
                   <div className="space-y-1">
-                    <span className="font-bold text-amber-950 block">Important Note on Daily Read & Write Billing Units</span>
-                    <p className="text-amber-800">
-                      Client-side synthetic read/write trackers were misleading because updating client counters incurred extra database writes. 
-                      Official daily usage is tracked strictly by Google Cloud at the infrastructure layer. Click "Firebase Billing Console" above for 100% accurate live quota usage.
+                    <span className="font-bold text-blue-950 block">Understanding "Unit" Reads and Writes in Firestore</span>
+                    <p className="text-blue-900 text-[11px]">
+                      <strong>1 Unit = 1 Document Operation.</strong> Google Cloud Firestore tracks daily usage and billing by discrete document operations:
                     </p>
+                    <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-blue-800">
+                      <li><strong>1 Write Unit:</strong> Creating, updating, or deleting 1 document in Firestore.</li>
+                      <li><strong>1 Read Unit:</strong> Fetching or listening to 1 document returned by a query or listener.</li>
+                      <li><strong>Blob Optimization Saving Quota:</strong> Because our app batches drawing paths and whiteboard elements into document blobs (shards), writing 50 shapes in 1 blob counts as <strong>only 1 Write Unit</strong> instead of 50 separate write operations!</li>
+                    </ul>
                   </div>
                 </div>
 
@@ -1240,7 +1312,7 @@ export default function Dashboard({
                 <div className="bg-slate-50 rounded-2xl border border-slate-200 p-5 space-y-4">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <div>
-                      <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Direct Firestore Room Inventory</h4>
+                      <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Direct Firestore Room Inventory & Operation Breakdown</h4>
                       <p className="text-[10px] text-slate-500 mt-0.5">Live records queried directly from the <code className="bg-slate-200/80 px-1 py-0.5 rounded font-mono">/whiteboards</code> collection.</p>
                     </div>
                     <span className="text-[10px] bg-white border border-slate-200 text-slate-600 px-2.5 py-1 rounded-md font-semibold self-start sm:self-auto">
@@ -1255,49 +1327,62 @@ export default function Dashboard({
                           <th className="p-3 pl-4">Board Name</th>
                           <th className="p-3">Created By</th>
                           <th className="p-3">Assigned Student</th>
-                          <th className="p-3">Creation Date</th>
+                          <th className="p-3 text-center">Reads Today</th>
+                          <th className="p-3 text-center">Writes Today</th>
+                          <th className="p-3 text-center">Teacher Writes</th>
                           <th className="p-3 text-right pr-4">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {boards.length === 0 ? (
                           <tr>
-                            <td colSpan={5} className="p-6 text-center text-slate-400 italic">
+                            <td colSpan={7} className="p-6 text-center text-slate-400 italic">
                               No boards found in Firestore.
                             </td>
                           </tr>
                         ) : (
-                          boards.map((b) => (
-                            <tr key={b.id} className="hover:bg-slate-50/50 transition-colors">
-                              <td className="p-3 pl-4 font-bold text-slate-800 max-w-[240px] truncate">{b.name}</td>
-                              <td className="p-3 text-slate-500 font-medium">{b.createdBy}</td>
-                              <td className="p-3">
-                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
-                                  {b.studentName || 'All Students'}
-                                </span>
-                              </td>
-                              <td className="p-3 text-slate-400 text-[11px] font-mono">
-                                {new Date(b.createdAt).toLocaleDateString()}
-                              </td>
-                              <td className="p-3 text-right pr-4 space-x-2">
-                                <button
-                                  onClick={() => {
-                                    setIsAdminPanelOpen(false);
-                                    handleJoinBoard(b);
-                                  }}
-                                  className="text-[11px] bg-blue-50 hover:bg-blue-100 text-blue-700 px-2.5 py-1 rounded-lg font-bold transition-colors cursor-pointer"
-                                >
-                                  Open
-                                </button>
-                                <button
-                                  onClick={(e) => handleDeleteBoard(b.id, e)}
-                                  className="text-[11px] bg-rose-50 hover:bg-rose-100 text-rose-600 px-2.5 py-1 rounded-lg font-bold transition-colors cursor-pointer"
-                                >
-                                  Delete
-                                </button>
-                              </td>
-                            </tr>
-                          ))
+                          boards.map((b) => {
+                            const bReads = b.dailyReads?.[todayStr] || 0;
+                            const bWrites = b.dailyWrites?.[todayStr] || 0;
+                            const bTeacherWrites = b.teacherDailyWrites?.[todayStr] || 0;
+                            return (
+                              <tr key={b.id} className="hover:bg-slate-50/50 transition-colors">
+                                <td className="p-3 pl-4 font-bold text-slate-800 max-w-[200px] truncate">{b.name}</td>
+                                <td className="p-3 text-slate-500 font-medium">{b.createdBy}</td>
+                                <td className="p-3">
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
+                                    {b.studentName || 'All Students'}
+                                  </span>
+                                </td>
+                                <td className="p-3 text-center font-mono font-bold text-indigo-600">
+                                  {bReads.toLocaleString()}
+                                </td>
+                                <td className="p-3 text-center font-mono font-bold text-blue-600">
+                                  {bWrites.toLocaleString()}
+                                </td>
+                                <td className="p-3 text-center font-mono text-slate-600">
+                                  {bTeacherWrites.toLocaleString()}
+                                </td>
+                                <td className="p-3 text-right pr-4 space-x-2">
+                                  <button
+                                    onClick={() => {
+                                      setIsAdminPanelOpen(false);
+                                      handleJoinBoard(b);
+                                    }}
+                                    className="text-[11px] bg-blue-50 hover:bg-blue-100 text-blue-700 px-2.5 py-1 rounded-lg font-bold transition-colors cursor-pointer"
+                                  >
+                                    Open
+                                  </button>
+                                  <button
+                                    onClick={(e) => handleDeleteBoard(b.id, e)}
+                                    className="text-[11px] bg-rose-50 hover:bg-rose-100 text-rose-600 px-2.5 py-1 rounded-lg font-bold transition-colors cursor-pointer"
+                                  >
+                                    Delete
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })
                         )}
                       </tbody>
                     </table>

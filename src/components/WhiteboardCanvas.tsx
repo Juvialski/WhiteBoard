@@ -1305,6 +1305,15 @@ export default function WhiteboardCanvas({
     let isInitialLoad = true;
 
     let unsubscribe = onSnapshot(q, (snapshot) => {
+      if (isInitialLoad && snapshot.docs.length > 0) {
+        const todayStr = new Date().toISOString().split('T')[0];
+        setDoc(doc(db, "whiteboards", boardId), {
+          dailyReads: {
+            [todayStr]: increment(snapshot.docs.length)
+          }
+        }, { merge: true }).catch(err => console.error("Error logging dailyReads:", err));
+      }
+
       if (!isInitialLoad && hasUnsavedChanges.current && activeUsersCountRef.current <= 1) {
         return;
       }
@@ -1676,10 +1685,28 @@ export default function WhiteboardCanvas({
         }
       });
 
+      const writeCount = Object.keys(blobUpdates).length;
+
       Object.keys(blobUpdates).forEach(blobId => {
         const ref = doc(db, "whiteboards", boardId, "elements", blobId);
         batch.set(ref, { data: blobUpdates[blobId] }, { merge: true });
       });
+
+      // Record exact, accurate Firestore write operations on the board document
+      const todayStr = new Date().toISOString().split('T')[0];
+      const boardRef = doc(db, "whiteboards", boardId);
+      const isTeacher = currentUser?.role === 'teacher';
+
+      batch.set(boardRef, {
+        dailyWrites: {
+          [todayStr]: increment(writeCount + 1)
+        },
+        ...(isTeacher ? {
+          teacherDailyWrites: {
+            [todayStr]: increment(writeCount + 1)
+          }
+        } : {})
+      }, { merge: true });
 
       await batch.commit();
       hasUnsavedChanges.current = false;
