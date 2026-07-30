@@ -804,7 +804,7 @@ export default function WhiteboardCanvas({
     setPanY(targetPanY);
   }, [pdfPages, containerDimensions]);
 
-  const handleTimerSync = (timerState: any) => {
+  const handleTimerSync = React.useCallback((timerState: any) => {
     setSyncedTimerState(timerState);
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(
@@ -816,7 +816,7 @@ export default function WhiteboardCanvas({
         })
       );
     }
-  };
+  }, [boardId, isTimerOpen]);
 
   // Decay and Draw laser trails on Canvas
   const drawLaserTrails = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
@@ -1330,7 +1330,7 @@ export default function WhiteboardCanvas({
     let isInitialLoad = true;
 
     let unsubscribe = onSnapshot(q, (snapshot) => {
-      if (isInitialLoad && snapshot.docs.length > 0) {
+      if (isInitialLoad && snapshot?.docs && snapshot.docs.length > 0) {
         const todayStr = new Date().toISOString().split('T')[0];
         setDoc(doc(db, "whiteboards", boardId), {
           dailyReads: {
