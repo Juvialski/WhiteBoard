@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { collection, query, onSnapshot, doc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Collaborator, UserProfile } from '../types';
+import { isSandboxEnvironment } from '../utils/firebaseSandboxGuard';
 
 interface LiveCursorsProps {
   boardId: string;
@@ -91,6 +92,7 @@ export default function LiveCursors({
     }
 
         // Listen to all active cursors for this board (Firestore fallback)
+    if (isSandboxEnvironment()) return;
     let unsubscribe: any;
     const timeout = setTimeout(() => {
       const cursorsRef = collection(db, 'whiteboards', boardId, 'cursors');

@@ -5,6 +5,7 @@ import dotenv from "dotenv";
 import http from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import fsUtils from "fs";
+import { GoogleGenAI, Type } from "@google/genai";
 
 dotenv.config();
 
@@ -69,6 +70,88 @@ app.get("/api/logs", (req, res) => {
     }
   } catch (e) {
     res.status(500).send("Error reading logs: " + e.message);
+  }
+});
+
+// AI Stamp Generation API
+app.post("/api/ai/stamp", async (req, res) => {
+  try {
+    const { prompt, preferredShape, count } = req.body;
+    // Check user provided API key from body or header
+    const userApiKey = req.body.apiKey || (req.headers["x-gemini-api-key"] as string);
+
+    if (!userApiKey || !userApiKey.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: "API key required",
+        message: "AI Stamp Generation requires your Google AI Studio API key.",
+        apiKeyUrl: "https://aistudio.google.com/app/apikey"
+      });
+    }
+
+    const ai = new GoogleGenAI({
+      apiKey: userApiKey.trim(),
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build"
+        }
+      }
+    });
+
+    const numStamps = Math.min(Math.max(Number(count) || 4, 1), 6);
+    const shapeConstraint = preferredShape && preferredShape !== "any" 
+      ? `Preferred shape for all stamps is "${preferredShape}".` 
+      : `Vary shapes across: "rounded-rect", "circle", "star", "badge", "diamond", "banner", "hexagon", "ribbon", "heart", "shield", "crest".`;
+
+    const systemInstruction = `You are a creative educational and classroom feedback stamp generator.
+Given a user prompt or topic, generate ${numStamps} unique, visually distinct stamp design concepts.
+For each stamp, provide:
+1. "label": Punchy 1-3 word text (e.g., "Space Ace", "Quantum Math", "Top Effort", "Lab Approved").
+2. "emoji": Single, highly relevant emoji (e.g., "🚀", "⚛️", "🌟", "🏆", "🧠").
+3. "color": Pastel hex color (e.g., "#bfdbfe", "#fbcfe8", "#bbf7d0", "#e9d5ff", "#fef08a", "#99f6e4", "#fed7aa", "#fecaca").
+4. "shape": One of "rounded-rect", "circle", "star", "badge", "diamond", "banner", "hexagon", "ribbon", "heart", "shield", "crest".
+5. "description": Short 1-sentence tip on when to award this stamp.
+
+${shapeConstraint}`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.6-flash",
+      contents: prompt || "Educational praise and feedback stamps for students",
+      config: {
+        systemInstruction,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              label: { type: Type.STRING },
+              emoji: { type: Type.STRING },
+              color: { type: Type.STRING },
+              shape: { type: Type.STRING },
+              description: { type: Type.STRING }
+            },
+            required: ["label", "emoji", "color", "shape"]
+          }
+        }
+      }
+    });
+
+    const jsonText = response.text || "[]";
+    const stamps = JSON.parse(jsonText);
+
+    return res.json({
+      success: true,
+      stamps
+    });
+  } catch (err: any) {
+    console.error("AI Stamp Generation Error:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to generate stamps",
+      message: err.message || "An error occurred while generating stamps with Gemini API.",
+      apiKeyUrl: "https://aistudio.google.com/app/apikey"
+    });
   }
 });
 

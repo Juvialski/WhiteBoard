@@ -41,6 +41,21 @@ export default function StampComponent({
   } else if (shape === "banner") {
     clipPath = "polygon(10% 0%, 90% 0%, 100% 50%, 90% 100%, 10% 100%, 0% 50%)";
     shapeClass = "overflow-hidden";
+  } else if (shape === "hexagon") {
+    clipPath = "polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%)";
+    shapeClass = "overflow-hidden";
+  } else if (shape === "ribbon") {
+    clipPath = "polygon(0% 0%, 100% 0%, 88% 50%, 100% 100%, 0% 100%, 12% 50%)";
+    shapeClass = "overflow-hidden";
+  } else if (shape === "heart") {
+    clipPath = "polygon(50% 85%, 15% 55%, 0% 30%, 15% 5%, 40% 5%, 50% 25%, 60% 5%, 85% 5%, 100% 30%, 85% 55%)";
+    shapeClass = "overflow-hidden";
+  } else if (shape === "shield") {
+    clipPath = "polygon(0% 0%, 100% 0%, 100% 65%, 50% 100%, 0% 65%)";
+    shapeClass = "overflow-hidden";
+  } else if (shape === "crest") {
+    clipPath = "polygon(20% 0%, 80% 0%, 100% 20%, 100% 80%, 50% 100%, 0% 80%, 0% 20%)";
+    shapeClass = "overflow-hidden";
   } else {
     shapeClass = "rounded-2xl overflow-hidden";
   }

@@ -13,6 +13,7 @@ import {
   deleteField,
 } from "firebase/firestore";
 import { db } from "../firebase";
+import { isSandboxEnvironment, getSandboxLocalElements, saveSandboxLocalElements } from "../utils/firebaseSandboxGuard";
 import {
   BoardElement,
   Point,
@@ -1324,21 +1325,29 @@ export default function WhiteboardCanvas({
 
   // Fetch board elements in real time with local caching and write-minimizer guards
   useEffect(() => {
+    if (isSandboxEnvironment()) {
+      const initial = getSandboxLocalElements(boardId);
+      setElements(initial);
+
+      const handleLocalElementsUpdate = (e: CustomEvent) => {
+        if (e.detail && e.detail.boardId === boardId) {
+          const updated = getSandboxLocalElements(boardId);
+          setElements(updated);
+        }
+      };
+
+      window.addEventListener('lucid_spark_elements_updated', handleLocalElementsUpdate as EventListener);
+      return () => {
+        window.removeEventListener('lucid_spark_elements_updated', handleLocalElementsUpdate as EventListener);
+      };
+    }
+
     const elementsRefColl = collection(db, "whiteboards", boardId, "elements");
     const q = query(elementsRefColl);
 
     let isInitialLoad = true;
 
     let unsubscribe = onSnapshot(q, (snapshot) => {
-      if (isInitialLoad && snapshot?.docs && snapshot.docs.length > 0) {
-        const todayStr = new Date().toISOString().split('T')[0];
-        setDoc(doc(db, "whiteboards", boardId), {
-          dailyReads: {
-            [todayStr]: increment(snapshot.docs.length)
-          }
-        }, { merge: true }).catch(err => console.error("Error logging dailyReads:", err));
-      }
-
       if (!isInitialLoad && hasUnsavedChanges.current && activeUsersCountRef.current <= 1) {
         return;
       }
@@ -1467,8 +1476,8 @@ export default function WhiteboardCanvas({
   useEffect(() => {
     let isMounted = true;
     
-    // When WebSockets are active, WebSocket real-time presence handles collaborator tracking with 0 Firestore reads
-    if (wsConnected) return;
+    // When WebSockets are active or in sandbox mode, skip Firestore cursor reads completely
+    if (wsConnected || isSandboxEnvironment()) return;
 
     const fetchCursors = async () => {
       try {
@@ -1674,6 +1683,12 @@ export default function WhiteboardCanvas({
 
   // Flushes pending Solo changes to cloud
   const flushPendingChanges = React.useCallback(async () => {
+    if (isSandboxEnvironment()) {
+      hasUnsavedChanges.current = false;
+      setSyncStatus('synced');
+      return;
+    }
+
     const queue = { ...pendingSyncElements.current };
     const keys = Object.keys(queue);
     if (keys.length === 0) {
@@ -1716,22 +1731,6 @@ export default function WhiteboardCanvas({
         const ref = doc(db, "whiteboards", boardId, "elements", blobId);
         batch.set(ref, { data: blobUpdates[blobId] }, { merge: true });
       });
-
-      // Record exact, accurate Firestore write operations on the board document
-      const todayStr = new Date().toISOString().split('T')[0];
-      const boardRef = doc(db, "whiteboards", boardId);
-      const isTeacher = currentUser?.role === 'teacher';
-
-      batch.set(boardRef, {
-        dailyWrites: {
-          [todayStr]: increment(writeCount + 1)
-        },
-        ...(isTeacher ? {
-          teacherDailyWrites: {
-            [todayStr]: increment(writeCount + 1)
-          }
-        } : {})
-      }, { merge: true });
 
       await batch.commit();
       hasUnsavedChanges.current = false;
@@ -1794,7 +1793,11 @@ export default function WhiteboardCanvas({
 
     // Save fallback cache to localStorage and IndexedDB
     try {
-      localStorage.setItem(`whiteboard_elements_${boardId}`, JSON.stringify(updatedElements));
+      if (isSandboxEnvironment()) {
+        saveSandboxLocalElements(boardId, updatedElements);
+      } else {
+        localStorage.setItem(`whiteboard_elements_${boardId}`, JSON.stringify(updatedElements));
+      }
       if (isDrawing) {
         const fullDrawings = updatedElements.filter(el => el.type === 'drawing') as DrawingElement[];
         await idbSet(`drawings_${boardId}`, fullDrawings);
@@ -1813,6 +1816,12 @@ export default function WhiteboardCanvas({
         actionType,
         isMerge
       }));
+    }
+
+    if (isSandboxEnvironment()) {
+      hasUnsavedChanges.current = false;
+      setSyncStatus('synced');
+      return;
     }
 
     // Crucial: ALWAYS use the debounced/batched queue to write elements to Firestore.

@@ -20,10 +20,11 @@ The application implements a hybrid real-time synchronization strategy to achiev
                  | Firestore     |     | WebSockets (3000)|
                  +---------------+     +------------------+
 
-### A. Firestore Persistence (Durable State)
+### A. Firestore Persistence (Durable State) & Sandbox Guard
 - Board Elements (Sticky notes, shapes, text, drawing strokes, image/audio/stamp elements, math LaTeX blocks) are saved in Firestore under:
   `/whiteboards/{boardId}/elements/{elementId}`
-- Snapshot Listener (`onSnapshot`): Updates the client state in real time when any structural elements are modified or deleted.
+- Sandbox Guard (`isSandboxEnvironment()`): Automatically detects the AI Studio Sandbox environment (`ais-dev-*`, `localhost`, `127.0.0.1`). In Sandbox mode, ALL Firebase Firestore reads and writes (`getDocs`, `setDoc`, `addDoc`, `deleteDoc`, `onSnapshot`) are permanently short-circuited and banned to guarantee **0 Firebase Quota Usage**. Data is saved to and retrieved from `localStorage` (`lucid_spark_boards`, `lucid_spark_board_elements_{id}`). When deployed to the Shared/Production environment (`ais-pre-*`), real Firestore synchronization executes as normal.
+- Snapshot Listener (`onSnapshot`): Updates the client state in real time when any structural elements are modified or deleted in non-sandbox mode.
 - Throttling & Quota Constraint (CRITICAL): Standard Firestore limits write throughput to 1 write/second per document, and the Firebase free tier limits total writes per day (Quota limit exceeded: resource-exhausted). You MUST NOT perform unthrottled Firestore writes on drag, resize, or active drawing gestures.
 - Centralized Queue Manager: NEVER use direct `setDoc`, `addDoc`, or `updateDoc` for individual board elements. You MUST use the central `saveElementLocallyAndSync(id, data)` function. This function debounces and batches updates locally and updates data in "blob/shard" documents to strictly prevent quota exhaustion.
 

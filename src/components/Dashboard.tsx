@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { collection, query, getDocs, onSnapshot, addDoc, deleteDoc, doc, writeBatch, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Whiteboard, UserProfile } from '../types';
-import { Plus, Trash2, ArrowRight, User, BookOpen, GraduationCap, Users, Sparkles, Copy, Check, FileUp, Loader2, ChevronDown, ChevronUp, Calendar, BarChart2, List, RefreshCw } from 'lucide-react';
+import { Plus, Trash2, ArrowRight, User, BookOpen, GraduationCap, Users, Sparkles, Copy, Check, FileUp, Loader2, ChevronDown, ChevronUp, Calendar, BarChart2, List, RefreshCw, ShieldCheck } from 'lucide-react';
+import { isSandboxEnvironment, getSandboxLocalBoards, saveSandboxLocalBoards, saveSandboxLocalElements } from '../utils/firebaseSandboxGuard';
 
 interface DashboardProps {
   onSelectBoard: (boardId: string, profile: UserProfile) => void;
@@ -64,6 +65,7 @@ export default function Dashboard({
 
   // Load presence and settings for admin
   useEffect(() => {
+    if (isSandboxEnvironment()) return;
     const isAdmin = currentUserProfile?.email === 'al.matubis17@gmail.com';
     if (!isAdmin) return;
 
@@ -174,19 +176,23 @@ export default function Dashboard({
     setIsUploadingPdf(true);
     try {
       const finalUserName = userName.trim() || 'Anonymous User';
+      let docId = `pdf-${Date.now()}`;
       
-      const docRef = await addDoc(collection(db, 'whiteboards'), {
-        name: `PDF: ${pdfUploadState.file.name.replace('.pdf', '')}`,
-        description: 'PDF Workspace',
-        createdAt: Date.now(),
-        createdBy: finalUserName,
-        studentId: assignedStudent ? assignedStudent.toLowerCase().replace(/\s+/g, '-') : '',
-        studentName: assignedStudent.trim() || 'All Collaborative',
-        studentsCanWrite: true,
-        dailyWrites: {},
-        dailyReads: {},
-        teacherDailyWrites: {},
-      });
+      if (!isSandboxEnvironment()) {
+        const docRef = await addDoc(collection(db, 'whiteboards'), {
+          name: `PDF: ${pdfUploadState.file.name.replace('.pdf', '')}`,
+          description: 'PDF Workspace',
+          createdAt: Date.now(),
+          createdBy: finalUserName,
+          studentId: assignedStudent ? assignedStudent.toLowerCase().replace(/\s+/g, '-') : '',
+          studentName: assignedStudent.trim() || 'All Collaborative',
+          studentsCanWrite: true,
+          dailyWrites: {},
+          dailyReads: {},
+          teacherDailyWrites: {},
+        });
+        docId = docRef.id;
+      }
 
       let currentX = 0;
       let currentY = 0;
@@ -217,7 +223,23 @@ export default function Dashboard({
         }
       }
       
-      await setDoc(doc(db, 'whiteboards', docRef.id, 'elements', 'elements_blob'), { data: pdfBlobMap });
+      if (isSandboxEnvironment()) {
+        const currentBoards = getSandboxLocalBoards();
+        const newBoard = {
+          id: docId,
+          name: `PDF: ${pdfUploadState.file.name.replace('.pdf', '')}`,
+          description: 'PDF Workspace',
+          createdAt: Date.now(),
+          createdBy: finalUserName,
+          studentId: assignedStudent ? assignedStudent.toLowerCase().replace(/\s+/g, '-') : '',
+          studentName: assignedStudent.trim() || 'All Collaborative',
+          studentsCanWrite: true,
+        };
+        saveSandboxLocalBoards([newBoard, ...currentBoards]);
+        saveSandboxLocalElements(docId, Object.values(pdfBlobMap));
+      } else {
+        await setDoc(doc(db, 'whiteboards', docId, 'elements', 'elements_blob'), { data: pdfBlobMap });
+      }
 
       const finalName = userName.trim() || (role === 'teacher' ? 'Teacher' : 'Student-' + Math.floor(Math.random() * 1000));
       localStorage.setItem('lucid_spark_user_name', finalName);
@@ -236,7 +258,7 @@ export default function Dashboard({
         localStorage.setItem('lucid_spark_user_id', profile.id);
       }
       
-      onSelectBoard(docRef.id, profile);
+      onSelectBoard(docId, profile);
       setPdfUploadState(null);
     } catch (err) {
       console.error('Error creating PDF board:', err);
@@ -278,6 +300,11 @@ export default function Dashboard({
 
   // Fetch whiteboards with getDocs (quota-optimized to prevent multi-user read cascades)
   const fetchBoards = React.useCallback(async () => {
+    if (isSandboxEnvironment()) {
+      const loadedBoards = getSandboxLocalBoards();
+      setBoards(loadedBoards);
+      return;
+    }
     try {
       const q = query(collection(db, 'whiteboards'));
       const snapshot = await getDocs(q);
@@ -308,14 +335,25 @@ export default function Dashboard({
   useEffect(() => {
     fetchBoards();
 
+    // Listen to local board updates in sandbox mode
+    const handleLocalUpdate = () => {
+      if (isSandboxEnvironment()) {
+        fetchBoards();
+      }
+    };
+    window.addEventListener('lucid_spark_boards_updated', handleLocalUpdate);
+
     // Periodic poll every 2 minutes (120s) when window is active to save reads
     const interval = setInterval(() => {
-      if (document.visibilityState === 'visible') {
+      if (document.visibilityState === 'visible' && !isSandboxEnvironment()) {
         fetchBoards();
       }
     }, 120000);
 
-    return () => clearInterval(interval);
+    return () => {
+      window.removeEventListener('lucid_spark_boards_updated', handleLocalUpdate);
+      clearInterval(interval);
+    };
   }, [fetchBoards, refreshTrigger]);
 
   const handleCreateBoard = async (e: React.FormEvent) => {
@@ -323,6 +361,29 @@ export default function Dashboard({
     if (!newBoardName.trim()) return;
 
     const finalUserName = userName.trim() || 'Anonymous User';
+
+    if (isSandboxEnvironment()) {
+      const current = getSandboxLocalBoards();
+      const newBoard = {
+        id: 'sandbox-board-' + Date.now(),
+        name: newBoardName.trim(),
+        description: newBoardDesc.trim(),
+        createdAt: Date.now(),
+        createdBy: finalUserName,
+        studentId: assignedStudent ? assignedStudent.toLowerCase().replace(/\s+/g, '-') : '',
+        studentName: assignedStudent.trim() || 'All Collaborative',
+        studentsCanWrite: true,
+        dailyWrites: {},
+        dailyReads: {},
+        teacherDailyWrites: {},
+      };
+      saveSandboxLocalBoards([newBoard, ...current]);
+      setNewBoardName('');
+      setNewBoardDesc('');
+      setAssignedStudent('');
+      fetchBoards();
+      return;
+    }
 
     try {
       await addDoc(collection(db, 'whiteboards'), {
@@ -354,6 +415,13 @@ export default function Dashboard({
 
   const confirmDeleteBoard = async () => {
     if (!boardToDelete) return;
+    if (isSandboxEnvironment()) {
+      const current = getSandboxLocalBoards();
+      saveSandboxLocalBoards(current.filter(b => b.id !== boardToDelete));
+      setBoardToDelete(null);
+      fetchBoards();
+      return;
+    }
     try {
       await deleteDoc(doc(db, 'whiteboards', boardToDelete));
       setBoardToDelete(null);
@@ -511,7 +579,16 @@ export default function Dashboard({
           <div className="h-4 w-[1px] bg-slate-200"></div>
           <div className="flex flex-col">
             <h1 className="text-sm font-semibold leading-tight text-slate-900">Whiteboard Workspace</h1>
-            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Synced to Firebase: Active Session</p>
+            <p className="text-[10px] text-amber-600 uppercase tracking-wider font-bold flex items-center space-x-1">
+              {isSandboxEnvironment() ? (
+                <>
+                  <ShieldCheck className="w-3 h-3 inline text-amber-600" />
+                  <span>Sandbox Mode: 0 Firebase Operations</span>
+                </>
+              ) : (
+                <span>Synced to Firebase: Active Session</span>
+              )}
+            </p>
           </div>
         </div>
 

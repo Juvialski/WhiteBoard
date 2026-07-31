@@ -5,7 +5,8 @@ import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
 import { UserProfile } from './types';
 import Dashboard from './components/Dashboard';
 import WhiteboardCanvas from './components/WhiteboardCanvas';
-import { Sparkles, ArrowRight } from 'lucide-react';
+import { Sparkles, ArrowRight, ShieldCheck } from 'lucide-react';
+import { isSandboxEnvironment, getSandboxLocalBoards } from './utils/firebaseSandboxGuard';
 
 const COLLABORATOR_COLORS = [
   '#ef4444', '#f97316', '#f59e0b', '#10b981', 
@@ -94,6 +95,10 @@ export default function App() {
 
   // Listen to global app status (kill-switch)
   useEffect(() => {
+    if (isSandboxEnvironment()) {
+      setAppEnabled(true);
+      return;
+    }
     const settingsRef = doc(db, 'admin_settings', 'global');
     const unsubscribe = onSnapshot(settingsRef, (docSnap) => {
       if (docSnap.exists()) {
@@ -114,20 +119,31 @@ export default function App() {
   // Track user presence and heartbeat with throttling to minimize Firestore writes
   const lastPresenceUpdateRef = React.useRef<number>(0);
   const lastPresenceStateRef = React.useRef<{ isOnline: boolean; boardId: string | null } | null>(null);
+  const boardIdRef = React.useRef<string | null>(boardId);
+  const boardNameRef = React.useRef<string>(boardName);
+
+  useEffect(() => {
+    boardIdRef.current = boardId;
+    boardNameRef.current = boardName;
+  }, [boardId, boardName]);
 
   useEffect(() => {
     if (!profile) return;
 
     const updatePresence = async (isOnline: boolean, forceWrite: boolean = false) => {
+      if (isSandboxEnvironment()) return; // Permanently ban Firestore presence writes in sandbox mode
+
       const now = Date.now();
       const prevState = lastPresenceStateRef.current;
+      const currentBoardId = boardIdRef.current;
+      const currentBoardName = boardNameRef.current;
 
       // Throttle: Skip write if state hasn't changed and less than 60s has passed
       if (
         !forceWrite &&
         prevState &&
         prevState.isOnline === isOnline &&
-        prevState.boardId === (boardId || null) &&
+        prevState.boardId === (currentBoardId || null) &&
         now - lastPresenceUpdateRef.current < 60000 &&
         isOnline === true
       ) {
@@ -135,7 +151,7 @@ export default function App() {
       }
 
       lastPresenceUpdateRef.current = now;
-      lastPresenceStateRef.current = { isOnline, boardId: boardId || null };
+      lastPresenceStateRef.current = { isOnline, boardId: currentBoardId || null };
 
       try {
         const presenceRef = doc(db, 'presence', profile.id);
@@ -146,8 +162,8 @@ export default function App() {
           lastActive: now,
           isOnline: isOnline,
           role: profile.role || 'student',
-          currentBoardId: boardId || null,
-          currentBoardName: boardId ? boardName : null
+          currentBoardId: currentBoardId || null,
+          currentBoardName: currentBoardId ? currentBoardName : null
         }, { merge: true });
       } catch (err) {
         console.error('Error updating user presence:', err);
@@ -160,13 +176,15 @@ export default function App() {
     // Heartbeat every 2 minutes (120s) ONLY when tab is visible to prevent idle sandbox writes
     const interval = setInterval(() => {
       if (document.visibilityState === 'visible') {
-        updatePresence(true, true);
+        updatePresence(true);
       }
     }, 120000);
 
     // Tab visibility handler
     const handleVisibilityChange = () => {
-      updatePresence(document.visibilityState === 'visible', true);
+      if (document.visibilityState === 'visible') {
+        updatePresence(true);
+      }
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -175,9 +193,29 @@ export default function App() {
     return () => {
       clearInterval(interval);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      // Mark offline only when profile changes or user logs out
       updatePresence(false, true);
     };
-  }, [profile, boardId, boardName]);
+  }, [profile]);
+
+  // Update presence when user switches board
+  useEffect(() => {
+    if (!profile || isSandboxEnvironment()) return;
+    const now = Date.now();
+    // Throttle board switch presence updates by at least 10 seconds
+    if (now - lastPresenceUpdateRef.current < 10000) return;
+    
+    const presenceRef = doc(db, 'presence', profile.id);
+    setDoc(presenceRef, {
+      currentBoardId: boardId || null,
+      currentBoardName: boardId ? boardName : null,
+      lastActive: now,
+      isOnline: true
+    }, { merge: true }).catch(err => console.error('Error updating board presence:', err));
+    
+    lastPresenceUpdateRef.current = now;
+    lastPresenceStateRef.current = { isOnline: true, boardId: boardId || null };
+  }, [profile, boardId]);
 
   const handleSignInGoogle = async () => {
     try {
@@ -201,6 +239,12 @@ export default function App() {
 
   const joinBoardDirectly = async (targetId: string, userProfile: UserProfile) => {
     setBoardId(targetId);
+    if (isSandboxEnvironment()) {
+      const localBoards = getSandboxLocalBoards();
+      const found = localBoards.find((b: any) => b.id === targetId);
+      if (found) setBoardName(found.name);
+      return;
+    }
     // Fetch board name from Firestore
     try {
       const boardDoc = await getDoc(doc(db, 'whiteboards', targetId));
@@ -216,14 +260,20 @@ export default function App() {
     setProfile(selectedProfile);
     setBoardId(targetId);
     
-    // Fetch board info
-    try {
-      const boardDoc = await getDoc(doc(db, 'whiteboards', targetId));
-      if (boardDoc.exists()) {
-        setBoardName(boardDoc.data().name || 'Collaborative Whiteboard');
+    if (isSandboxEnvironment()) {
+      const localBoards = getSandboxLocalBoards();
+      const found = localBoards.find((b: any) => b.id === targetId);
+      if (found) setBoardName(found.name);
+    } else {
+      // Fetch board info
+      try {
+        const boardDoc = await getDoc(doc(db, 'whiteboards', targetId));
+        if (boardDoc.exists()) {
+          setBoardName(boardDoc.data().name || 'Collaborative Whiteboard');
+        }
+      } catch (err) {
+        console.error('Error fetching board:', err);
       }
-    } catch (err) {
-      console.error('Error fetching board:', err);
     }
 
     // Set URL parameter so browser refresh maintains state

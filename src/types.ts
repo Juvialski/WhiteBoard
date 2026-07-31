@@ -195,7 +195,7 @@ export interface StampElement {
   label?: string;
   signatureDataUrl?: string; // base64 if custom drawn signature
   color?: string;
-  stampShape?: "rounded-rect" | "circle" | "star" | "badge" | "diamond" | "banner";
+  stampShape?: "rounded-rect" | "circle" | "star" | "badge" | "diamond" | "banner" | "hexagon" | "ribbon" | "heart" | "shield" | "crest";
   zIndex: number;
   updatedAt?: number;
   locked?: boolean;
