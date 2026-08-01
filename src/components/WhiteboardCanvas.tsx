@@ -290,12 +290,6 @@ const getShardId = (id: string, maxShards: number = 10) => {
   return Math.abs(hash) % maxShards;
 };
 
-const getBlobRefId = (isDrawing: boolean, id: string) => {
-  const shardId = getShardId(id, 10);
-  const prefix = isDrawing ? "drawings_blob" : "elements_blob";
-  return shardId === 0 ? prefix : `${prefix}_${shardId}`;
-};
-
 export default function WhiteboardCanvas({
   boardId,
   boardName,
@@ -1535,7 +1529,7 @@ export default function WhiteboardCanvas({
     };
   }, []);
 
-  // Flushes pending Solo changes to cloud
+  // Flushes pending changes to cloud
   const flushPendingChanges = React.useCallback(async () => {
     if (isSandboxEnvironment()) {
       hasUnsavedChanges.current = false;
@@ -1543,63 +1537,16 @@ export default function WhiteboardCanvas({
       return;
     }
 
-    const queue = { ...pendingSyncElements.current };
-    const keys = Object.keys(queue);
-    if (keys.length === 0) {
-      hasUnsavedChanges.current = false;
-      setSyncStatus('synced');
-      return;
-    }
-
     setSyncStatus('saving-cloud');
-    pendingSyncElements.current = {};
-
     try {
-      const batch = writeBatch(db);
-      const blobUpdates: Record<string, any> = {};
-
-      keys.forEach((id) => {
-        const item = queue[id];
-        if (!item) return;
-        const isDraw = item.data?.type === 'drawing' || id.startsWith('draw-');
-
-        const blobId = getBlobRefId(isDraw, id);
-        if (!blobUpdates[blobId]) blobUpdates[blobId] = {};
-
-        if (item.action === 'delete') {
-          blobUpdates[blobId][id] = deleteField();
-        } else {
-          const { id: _, ...data } = item.data;
-          const cleanData = sanitizeForFirestore(data);
-          if (isDraw) {
-            blobUpdates[blobId][id] = { ...cleanData, points: simplifyPoints(cleanData.points, 1.5) };
-          } else {
-            blobUpdates[blobId][id] = cleanData;
-          }
-        }
-      });
-
-      const writeCount = Object.keys(blobUpdates).length;
-
-      Object.keys(blobUpdates).forEach(blobId => {
-        const ref = doc(db, "whiteboards", boardId, "elements", blobId);
-        batch.set(ref, { data: blobUpdates[blobId] }, { merge: true });
-      });
-
-      await batch.commit();
+      await flushBoardCheckpoint(boardId, 'manual-flush');
       hasUnsavedChanges.current = false;
       setSyncStatus('synced');
-    } catch (err) {
+    } catch (err: any) {
       console.error("Flush pending changes to cloud failed:", err);
-      // Restore failed items back to the queue safely
-      Object.keys(queue).forEach(id => {
-        if (!pendingSyncElements.current[id]) {
-          pendingSyncElements.current[id] = queue[id];
-        }
-      });
       hasUnsavedChanges.current = true;
       setSyncStatus('offline');
-      showSyncToast("Sync failed: " + err.message, "error", 10000);
+      showSyncToast("Sync failed: " + (err?.message || 'Error'), "error", 10000);
     }
   }, [boardId, showSyncToast]);
 
@@ -3109,36 +3056,24 @@ export default function WhiteboardCanvas({
         pastedElements.push(newEl);
         pushToUndo({ type: "add", elementId: newId, afterData: newEl });
 
-        const isDraw = newEl.type === 'drawing';
-        const blobId = getBlobRefId(isDraw, newId);
-        if (!blobUpdates[blobId]) blobUpdates[blobId] = {};
-        
-        const { id, ...data } = newEl;
-        if (isDraw) {
-          blobUpdates[blobId][newId] = { ...data, points: simplifyPoints((data as any).points, 1.2) };
-        } else {
-          blobUpdates[blobId][newId] = data;
-        }
+        queueElementMutation(boardId, newId, newEl, 'set');
       }
 
       setElements(updatedList);
       elementsRef.current = updatedList;
 
-      Object.keys(blobUpdates).forEach(blobId => {
-        const ref = doc(db, "whiteboards", boardId, "elements", blobId);
-        batch.set(ref, { data: blobUpdates[blobId] }, { merge: true });
-      });
-
       try {
-        await batch.commit();
+        if (!isSandboxEnvironment()) {
+          await flushBoardCheckpoint(boardId, 'pasteElements');
+        }
         setSyncStatus('synced');
         setSelectedIds(newPasteIds);
         setSelectedId(null);
         setClipboardElements(pastedElements);
-      } catch (err) {
+      } catch (err: any) {
         console.error("Error pasting elements:", err);
         setSyncStatus('offline');
-        showSyncToast("Paste failed: " + err.message, "error", 10000);
+        showSyncToast("Paste failed: " + (err?.message || 'Error'), "error", 10000);
       }
     }
   };
@@ -3396,10 +3331,15 @@ export default function WhiteboardCanvas({
     const elementsToKeep = elements.filter(el => typeof el?.id === "string" && el.id.startsWith("pdf-page-"));
     const elementsToDelete = elements.filter(el => typeof el?.id === "string" && !el.id.startsWith("pdf-page-"));
 
-    // Immediate state and local storage clean
     setElements(elementsToKeep);
+    elementsRef.current = elementsToKeep;
+
     try {
-      localStorage.setItem(`whiteboard_elements_${boardId}`, JSON.stringify(elementsToKeep));
+      if (isSandboxEnvironment()) {
+        saveSandboxLocalElements(boardId, elementsToKeep);
+      } else {
+        localStorage.setItem(`whiteboard_elements_${boardId}`, JSON.stringify(elementsToKeep));
+      }
     } catch (e) {
       console.error(e);
     }
@@ -3408,35 +3348,17 @@ export default function WhiteboardCanvas({
     setUndoStack([]);
     setRedoStack([]);
 
-    const isSolo = activeUsersCount <= 1;
+    elementsToDelete.forEach((el) => {
+      queueElementMutation(boardId, el.id, null, 'delete');
+    });
 
-    if (isSolo) {
-      // Add all currently loaded elements to pendingSync as deletions
-      elementsToDelete.forEach((el) => {
-        pendingSyncElements.current[el.id] = { data: null, action: 'delete' };
-      });
-      hasUnsavedChanges.current = true;
-      setSyncStatus('saved-local');
-      if (debounceTimer.current) clearTimeout(debounceTimer.current);
-      debounceTimer.current = setTimeout(() => {
-        flushPendingChanges();
-      }, 1000); // clear board is significant, trigger save faster
+    if (isSandboxEnvironment()) {
+      hasUnsavedChanges.current = false;
+      setSyncStatus('synced');
     } else {
       setSyncStatus('saving-cloud');
       try {
-        const batch = writeBatch(db);
-        const elementsBlobRef = doc(db, "whiteboards", boardId, "elements", "elements_blob");
-        const drawingsBlobRef = doc(db, "whiteboards", boardId, "elements", "drawings_blob");
-        
-        batch.delete(elementsBlobRef);
-        batch.delete(drawingsBlobRef);
-
-        elementsToDelete.forEach((el) => {
-          const docRef = doc(db, "whiteboards", boardId, "elements", el.id);
-          batch.delete(docRef);
-        });
-
-        await batch.commit();
+        await flushBoardCheckpoint(boardId, 'clearBoard');
         setSyncStatus('synced');
       } catch (err) {
         console.error("Error clearing whiteboard:", err);

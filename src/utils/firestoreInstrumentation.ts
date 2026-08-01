@@ -13,7 +13,7 @@ export interface OperationStats {
   byLabel: Record<string, { reads: number; writes: number; deletes: number }>;
 }
 
-let isEnabled = process.env.NODE_ENV !== 'production';
+let isEnabled = typeof process !== 'undefined' && process.env ? process.env.NODE_ENV !== 'production' : true;
 
 const stats: OperationStats = {
   reads: 0,

@@ -2,12 +2,14 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper functions for validating types and lengths
     function isValidId(id) {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
-    // Returns true if the current requester is the verified administrator al.matubis17@gmail.com
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
     function isAdmin() {
       return request.auth != null 
         && request.auth.token.email == 'al.matubis17@gmail.com' 
@@ -22,31 +24,32 @@ service cloud.firestore {
     // Whiteboards collection rules
     match /whiteboards/{boardId} {
       allow read: if true;
-      allow create, update, delete: if isValidId(boardId);
+      allow create, update: if isAuthenticated() && isValidId(boardId);
+      allow delete: if isAuthenticated() && isValidId(boardId);
 
       // Subcollection: stateChunks (modern chunked board state)
       match /stateChunks/{chunkId} {
         allow read: if true;
-        allow create, update, delete: if isValidId(boardId) && isValidId(chunkId);
+        allow write: if isAuthenticated() && isValidId(boardId) && isValidId(chunkId);
       }
 
-      // Legacy subcollection: elements (read-only for migration)
+      // Legacy subcollection: elements (READ ONLY for client migration)
       match /elements/{elementId} {
         allow read: if true;
-        allow create, update, delete: if isValidId(boardId) && isValidId(elementId);
+        allow write: if false; // Strictly block all client writes to legacy elements
       }
 
       // Subcollection: live collaborator cursors
       match /cursors/{cursorId} {
         allow read: if true;
-        allow create, update, delete: if isValidId(cursorId);
+        allow write: if isAuthenticated() && isValidId(cursorId);
       }
     }
 
     // Global User Presence rules
     match /presence/{userId} {
       allow read: if true;
-      allow create, update, delete: if isValidId(userId);
+      allow write: if isAuthenticated() && isValidId(userId);
     }
 
     // Admin Settings rules

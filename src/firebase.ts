@@ -1,6 +1,7 @@
 import { initializeApp } from "firebase/app";
 import { initializeFirestore, persistentLocalCache } from "firebase/firestore";
-import { getAuth, GoogleAuthProvider } from "firebase/auth";
+import { getAuth, GoogleAuthProvider, signInAnonymously, onAuthStateChanged } from "firebase/auth";
+import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
   projectId: "whiteboard-ee02a",
@@ -24,5 +25,18 @@ const db = initializeFirestore(app, {
 const auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
 
-export { app, db, auth, googleProvider };
+// Initialize Storage
+const storage = getStorage(app);
+
+// Auto sign-in anonymously for guest users to satisfy security rules (request.auth != null)
+onAuthStateChanged(auth, (user) => {
+  if (!user) {
+    signInAnonymously(auth).catch((err) => {
+      console.warn("Anonymous auth failed (sandbox/offline mode active):", err);
+    });
+  }
+});
+
+export { app, db, auth, googleProvider, storage };
+
 

@@ -19,6 +19,7 @@
     "esbuild": "^0.28.1",
     "express": "^4.21.2",
     "firebase": "^12.16.0",
+    "firebase-admin": "^14.2.0",
     "idb-keyval": "^6.3.0",
     "jspdf": "^4.2.1",
     "katex": "^0.18.1",
@@ -32,6 +33,7 @@
     "ws": "^8.21.1"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.1",
     "@testing-library/jest-dom": "^7.0.0",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",

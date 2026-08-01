@@ -4,13 +4,13 @@ import {
   getDoc,
   getDocs,
   onSnapshot,
-  setDoc,
-  writeBatch,
+  runTransaction,
   query,
+  deleteField,
 } from 'firebase/firestore';
-import { get as idbGet, set as idbSet } from 'idb-keyval';
+import { get as idbGet, set as idbSet, del as idbDel } from 'idb-keyval';
 import { db } from '../firebase';
-import { BoardElement, Whiteboard } from '../types';
+import { BoardElement } from '../types';
 import { isSandboxEnvironment, getSandboxLocalElements, saveSandboxLocalElements } from '../utils/firebaseSandboxGuard';
 import { trackOperation } from '../utils/firestoreInstrumentation';
 
@@ -31,6 +31,17 @@ export interface MutationItem {
   data: BoardElement | null;
   action: 'set' | 'delete';
   generation: number;
+  updatedAt: number;
+}
+
+export interface RemoteOperation {
+  operationId: string;
+  clientId: string;
+  baseRevision: number;
+  elementId: string;
+  action: 'set' | 'delete';
+  data: BoardElement | null;
+  updatedAt: number;
 }
 
 interface BoardControl {
@@ -48,13 +59,17 @@ interface BoardControl {
   unsubscribers: (() => void)[];
   currentElementsMap: Map<string, BoardElement>;
   chunksMap: Map<string, Map<string, BoardElement>>;
+  elementChunkMap: Map<string, string>;
+  chunkIdsList: string[];
+  appliedOperationIds: Set<string>;
 }
 
 const activeControls = new Map<string, BoardControl>();
 
 const IDLE_FLUSH_DELAY = 2000;
 const MAX_FLUSH_INTERVAL = 10000;
-const TARGET_CHUNK_SIZE_BYTES = 250000; // ~250KB per chunk
+export const TARGET_CHUNK_SIZE_BYTES = 250000; // ~250KB max per chunk
+export const MAX_SINGLE_ELEMENT_BYTES = 250000;
 
 function getOrCreateControl(boardId: string): BoardControl {
   let control = activeControls.get(boardId);
@@ -74,6 +89,9 @@ function getOrCreateControl(boardId: string): BoardControl {
       unsubscribers: [],
       currentElementsMap: new Map(),
       chunksMap: new Map(),
+      elementChunkMap: new Map(),
+      chunkIdsList: [],
+      appliedOperationIds: new Set(),
     };
     activeControls.set(boardId, control);
   }
@@ -81,7 +99,7 @@ function getOrCreateControl(boardId: string): BoardControl {
 }
 
 /**
- * Sanitize element objects for Firestore (removes undefined values)
+ * Sanitize element objects for Firestore (removes undefined values recursively)
  */
 export function sanitizeForFirestore(obj: any): any {
   if (obj === null || obj === undefined || typeof obj !== 'object') return obj;
@@ -97,7 +115,7 @@ export function sanitizeForFirestore(obj: any): any {
 }
 
 /**
- * High performance point simplification to reduce stroke coordinate payload sizes
+ * High performance point simplification to reduce freehand stroke payload sizes
  */
 export function simplifyPoints(points: { x: number; y: number }[], tolerance: number = 1.2): { x: number; y: number }[] {
   if (!points || points.length <= 2) return points || [];
@@ -117,7 +135,7 @@ export function simplifyPoints(points: { x: number; y: number }[], tolerance: nu
 }
 
 /**
- * Chunk board elements size-awarely into deterministic state chunks
+ * Partition elements into size-aware chunks
  */
 export function partitionElementsIntoChunks(
   input: Map<string, BoardElement> | BoardElement[],
@@ -140,7 +158,11 @@ export function partitionElementsIntoChunks(
     }
 
     const jsonString = JSON.stringify(el);
-    const byteSize = jsonString.length * 2; // rough byte estimate
+    const byteSize = jsonString.length * 2;
+
+    if (byteSize > MAX_SINGLE_ELEMENT_BYTES) {
+      console.warn(`Element ${id} size (${byteSize} bytes) exceeds maximum single element limit!`);
+    }
 
     if (currentChunkBytes + byteSize > maxSizeBytes && Object.keys(currentChunkData).length > 0) {
       chunks.set(currentChunkId, currentChunkData);
@@ -162,8 +184,7 @@ export function partitionElementsIntoChunks(
 }
 
 /**
- * Loads board state once (reads manifest doc and stateChunks).
- * NEVER performs automatic migration writes or mass deletes.
+ * Loads board state once without querying legacy /elements collection.
  */
 export async function loadBoardState(boardId: string): Promise<BoardState> {
   if (isSandboxEnvironment()) {
@@ -201,25 +222,21 @@ export async function loadBoardState(boardId: string): Promise<BoardState> {
 
   const boardData = boardSnap.data();
   const schemaVersion = boardData.schemaVersion || 1;
+  const migrationStatus = boardData.migrationStatus;
 
-  // Check if legacy board format
-  if (schemaVersion < 2) {
-    const legacyColl = collection(db, 'whiteboards', boardId, 'elements');
-    trackOperation('read', 'legacy-check', 1);
-    const legacySnap = await getDocs(query(legacyColl));
-    if (!legacySnap.empty) {
-      return {
-        boardId,
-        schemaVersion: 1,
-        currentRevision: 0,
-        chunkIds: [],
-        totalElements: legacySnap.size,
-        elements: [],
-        isLegacy: true,
-        migrationRequired: true,
-        updatedAt: boardData.updatedAt || Date.now(),
-      };
-    }
+  // Modern client NEVER queries legacy /elements collection
+  if (schemaVersion < 2 || migrationStatus === 'pending') {
+    return {
+      boardId,
+      schemaVersion,
+      currentRevision: 0,
+      chunkIds: [],
+      totalElements: 0,
+      elements: [],
+      isLegacy: true,
+      migrationRequired: true,
+      updatedAt: boardData.updatedAt || Date.now(),
+    };
   }
 
   // Modern stateChunks loading
@@ -227,15 +244,20 @@ export async function loadBoardState(boardId: string): Promise<BoardState> {
   trackOperation('read', 'board-initial-load', 1);
   const chunksSnap = await getDocs(query(chunksColl));
 
+  const validChunkIds = new Set(boardData.chunkIds || []);
   const elementsMap = new Map<string, BoardElement>();
+
   chunksSnap.forEach((docSnap) => {
-    const chunkData = docSnap.data();
-    if (chunkData && chunkData.elements) {
-      Object.entries(chunkData.elements).forEach(([elId, rawEl]: [string, any]) => {
-        if (rawEl && typeof rawEl === 'object') {
-          elementsMap.set(elId, { id: elId, ...rawEl } as BoardElement);
-        }
-      });
+    // Read ONLY chunks listed in current manifest chunkIds
+    if (validChunkIds.has(docSnap.id)) {
+      const chunkData = docSnap.data();
+      if (chunkData && chunkData.elements) {
+        Object.entries(chunkData.elements).forEach(([elId, rawEl]: [string, any]) => {
+          if (rawEl && typeof rawEl === 'object') {
+            elementsMap.set(elId, { id: elId, ...rawEl } as BoardElement);
+          }
+        });
+      }
     }
   });
 
@@ -245,7 +267,7 @@ export async function loadBoardState(boardId: string): Promise<BoardState> {
     boardId,
     schemaVersion: 2,
     currentRevision: boardData.currentRevision || 1,
-    chunkIds: boardData.chunkIds || Array.from(chunksSnap.docs.map((d) => d.id)),
+    chunkIds: boardData.chunkIds || [],
     totalElements: elements.length,
     elements,
     isLegacy: false,
@@ -255,9 +277,8 @@ export async function loadBoardState(boardId: string): Promise<BoardState> {
 }
 
 /**
- * Subscribes to board state changes via Firestore stateChunks.
- * Processes snapshot docChanges() incrementally and detects legacy boards.
- * Performs ZERO migration writes or deletes.
+ * Subscribes to board state changes.
+ * ZERO queries or writes to legacy /elements collection.
  */
 export function subscribeToBoardState(
   boardId: string,
@@ -304,12 +325,13 @@ export function subscribeToBoardState(
     return unsub;
   }
 
-  // 1. Listen to board manifest document
+  // 1. Listen to board manifest
   const boardRef = doc(db, 'whiteboards', boardId);
   let boardMeta = {
     schemaVersion: 2,
     currentRevision: 0,
     chunkIds: [] as string[],
+    migrationStatus: 'complete',
     updatedAt: Date.now(),
   };
 
@@ -323,30 +345,24 @@ export function subscribeToBoardState(
         schemaVersion: data.schemaVersion || 1,
         currentRevision: data.currentRevision || 0,
         chunkIds: data.chunkIds || [],
+        migrationStatus: data.migrationStatus || (data.schemaVersion >= 2 ? 'complete' : 'pending'),
         updatedAt: data.updatedAt || Date.now(),
       };
 
-      if (boardMeta.schemaVersion < 2) {
-        // If legacy board, verify if legacy elements exist
-        const legacyColl = collection(db, 'whiteboards', boardId, 'elements');
-        getDocs(query(legacyColl))
-          .then((legacySnap) => {
-            trackOperation('read', 'legacy-check', legacySnap.size);
-            if (!legacySnap.empty) {
-              callback({
-                boardId,
-                schemaVersion: 1,
-                currentRevision: 0,
-                chunkIds: [],
-                totalElements: legacySnap.size,
-                elements: [],
-                isLegacy: true,
-                migrationRequired: true,
-                updatedAt: boardMeta.updatedAt,
-              });
-            }
-          })
-          .catch((err) => console.error('Error checking legacy elements:', err));
+      control.chunkIdsList = boardMeta.chunkIds;
+
+      if (boardMeta.schemaVersion < 2 || boardMeta.migrationStatus === 'pending') {
+        callback({
+          boardId,
+          schemaVersion: boardMeta.schemaVersion,
+          currentRevision: 0,
+          chunkIds: [],
+          totalElements: 0,
+          elements: [],
+          isLegacy: true,
+          migrationRequired: true,
+          updatedAt: boardMeta.updatedAt,
+        });
       }
     },
     (err) => console.error('Error in board manifest snapshot:', err)
@@ -359,15 +375,25 @@ export function subscribeToBoardState(
     (snapshot) => {
       trackOperation('read', 'board-listener-update', snapshot.docChanges().length || 1);
 
-      // Do not overwrite client state if local pending mutations are being committed
-      if (control.pendingMutations.size > 0 && control.dirtyGeneration > control.committedGeneration) {
+      if (boardMeta.schemaVersion < 2 || boardMeta.migrationStatus === 'pending') {
         return;
       }
 
+      const validChunkIds = new Set(boardMeta.chunkIds);
       let chunksChanged = false;
 
       snapshot.docChanges().forEach((change) => {
         const chunkId = change.doc.id;
+        
+        // Ignore stale chunks not in current manifest chunkIds
+        if (!validChunkIds.has(chunkId)) {
+          if (control.chunksMap.has(chunkId)) {
+            control.chunksMap.delete(chunkId);
+            chunksChanged = true;
+          }
+          return;
+        }
+
         if (change.type === 'removed') {
           if (control.chunksMap.has(chunkId)) {
             control.chunksMap.delete(chunkId);
@@ -389,19 +415,47 @@ export function subscribeToBoardState(
       });
 
       if (chunksChanged || snapshot.empty) {
+        // Flatten ONLY chunks listed in validChunkIds
         const flattened = new Map<string, BoardElement>();
-        control.chunksMap.forEach((chunkElements) => {
-          chunkElements.forEach((el, id) => {
-            flattened.set(id, el);
-          });
+        control.elementChunkMap.clear();
+
+        validChunkIds.forEach((cId) => {
+          const chunkElements = control.chunksMap.get(cId);
+          if (chunkElements) {
+            chunkElements.forEach((el, id) => {
+              // Remote snapshot merging: do not overwrite local pending uncommitted mutations
+              const pending = control.pendingMutations.get(id);
+              if (pending) {
+                if (pending.action === 'set' && pending.data) {
+                  flattened.set(id, pending.data);
+                }
+                // If pending delete, do not set
+              } else {
+                flattened.set(id, el);
+              }
+              control.elementChunkMap.set(id, cId);
+            });
+          }
+        });
+
+        // Add any locally added elements that are pending
+        control.pendingMutations.forEach((item, id) => {
+          if (item.action === 'set' && item.data) {
+            flattened.set(id, item.data);
+          } else if (item.action === 'delete') {
+            flattened.delete(id);
+          }
         });
 
         control.currentElementsMap = flattened;
         const elementsList = Array.from(flattened.values());
 
-        // Cache locally to IndexedDB asynchronously
+        // Cache locally in IndexedDB
         try {
-          idbSet(`board_elements_${boardId}`, elementsList).catch(() => {});
+          idbSet(`board_elements_${boardId}`, {
+            revision: boardMeta.currentRevision,
+            elements: elementsList,
+          }).catch(() => {});
         } catch (_) {}
 
         callback({
@@ -411,8 +465,8 @@ export function subscribeToBoardState(
           chunkIds: boardMeta.chunkIds,
           totalElements: elementsList.length,
           elements: elementsList,
-          isLegacy: boardMeta.schemaVersion < 2 && snapshot.empty,
-          migrationRequired: boardMeta.schemaVersion < 2 && snapshot.empty,
+          isLegacy: false,
+          migrationRequired: false,
           updatedAt: boardMeta.updatedAt,
         });
       }
@@ -431,7 +485,7 @@ export function subscribeToBoardState(
 
 /**
  * Queue an element mutation (set or delete).
- * Coalesces repeated updates to the same element in memory and schedules controlled checkpoint flushes.
+ * Coalesces repeated updates in memory and schedules checkpoint flushes.
  */
 export function queueElementMutation(
   boardId: string,
@@ -440,6 +494,20 @@ export function queueElementMutation(
   action: 'set' | 'delete' = 'set'
 ): void {
   const control = getOrCreateControl(boardId);
+
+  // Validate single element size limit
+  if (action === 'set' && data) {
+    let sanitized = sanitizeForFirestore(data);
+    if (sanitized.type === 'drawing' && Array.isArray(sanitized.points)) {
+      sanitized = { ...sanitized, points: simplifyPoints(sanitized.points, 1.2) };
+    }
+    const byteSize = JSON.stringify(sanitized).length * 2;
+    if (byteSize > MAX_SINGLE_ELEMENT_BYTES) {
+      console.error(`Element ${elementId} (${byteSize} bytes) exceeds max single element size limit!`);
+      throw new Error(`Element exceeds maximum allowable size per chunk (${MAX_SINGLE_ELEMENT_BYTES} bytes).`);
+    }
+  }
+
   control.dirtyGeneration++;
 
   control.pendingMutations.set(elementId, {
@@ -447,16 +515,20 @@ export function queueElementMutation(
     data: data ? sanitizeForFirestore(data) : null,
     action,
     generation: control.dirtyGeneration,
+    updatedAt: Date.now(),
   });
 
-  // Update in-memory board state immediately
+  // Update in-memory state immediately for instant UI feedback
   if (action === 'delete') {
     control.currentElementsMap.delete(elementId);
   } else if (data) {
-    control.currentElementsMap.set(elementId, data);
+    let el = sanitizeForFirestore(data);
+    if (el.type === 'drawing' && Array.isArray(el.points)) {
+      el = { ...el, points: simplifyPoints(el.points, 1.2) };
+    }
+    control.currentElementsMap.set(elementId, el);
   }
 
-  // Update local sandbox or localStorage cache
   if (isSandboxEnvironment()) {
     saveSandboxLocalElements(boardId, Array.from(control.currentElementsMap.values()));
     return;
@@ -474,13 +546,41 @@ export function queueElementMutation(
 
   const elapsed = Date.now() - (control.firstMutationTime || Date.now());
   if (elapsed >= MAX_FLUSH_INTERVAL && !control.maxTimer) {
-    flushBoardCheckpoint(boardId, 'max-interval');
+    control.maxTimer = setTimeout(() => {
+      flushBoardCheckpoint(boardId, 'max-interval');
+    }, MAX_FLUSH_INTERVAL - elapsed);
   }
 }
 
 /**
- * Flushes pending element mutations to Firestore stateChunks in controlled checkpoints.
- * Uses mutex guard (isFlushInProgress), queue generations, and exponential backoff retry.
+ * Apply a remote WebSocket operation preview in memory without marking it as a local pending mutation.
+ */
+export function applyRemoteOperation(boardId: string, op: RemoteOperation): void {
+  const control = getOrCreateControl(boardId);
+  if (control.appliedOperationIds.has(op.operationId)) {
+    return; // Deduplicate
+  }
+  control.appliedOperationIds.add(op.operationId);
+  if (control.appliedOperationIds.size > 2000) {
+    const oldest = Array.from(control.appliedOperationIds).slice(0, 500);
+    oldest.forEach((id) => control.appliedOperationIds.delete(id));
+  }
+
+  // If local uncommitted mutation exists for this element, local mutation takes precedence
+  if (control.pendingMutations.has(op.elementId)) {
+    return;
+  }
+
+  if (op.action === 'delete') {
+    control.currentElementsMap.delete(op.elementId);
+  } else if (op.data) {
+    control.currentElementsMap.set(op.elementId, op.data);
+  }
+}
+
+/**
+ * Flushes pending mutations to Firestore stateChunks using concurrency-safe transactions.
+ * Rewrites ONLY affected chunks and updates manifest revision atomically.
  */
 export async function flushBoardCheckpoint(boardId: string, reason: string = 'manual'): Promise<void> {
   const control = getOrCreateControl(boardId);
@@ -511,77 +611,75 @@ export async function flushBoardCheckpoint(boardId: string, reason: string = 'ma
   const mutationsSnapshot = new Map(control.pendingMutations);
 
   const executeFlush = async () => {
-    let attempts = 0;
-    const maxAttempts = 3;
-    let delay = 1000;
+    try {
+      const currentElements = new Map(control.currentElementsMap);
 
-    while (attempts < maxAttempts) {
-      try {
-        attempts++;
-        const currentElements = new Map(control.currentElementsMap);
+      // Incremental stable chunk partitioning
+      const partitionResult = partitionElementsIntoChunks(currentElements);
+      const newChunkIds = Array.from(partitionResult.keys());
 
-        // Partition elements into size-aware stateChunks
-        const chunkMap = partitionElementsIntoChunks(currentElements);
-        const chunkIds = Array.from(chunkMap.keys());
+      // Use runTransaction for concurrency-safe atomic manifest & chunk commit
+      await runTransaction(db, async (transaction) => {
+        const boardRef = doc(db, 'whiteboards', boardId);
+        const boardSnap = await transaction.get(boardRef);
 
-        const batch = writeBatch(db);
-        let batchOps = 0;
+        const currentRev = boardSnap.exists() ? boardSnap.data().currentRevision || 0 : 0;
+        const nextRevision = currentRev + 1;
 
-        // Write stateChunks
-        chunkMap.forEach((chunkData, chunkId) => {
+        let totalOps = 1;
+
+        // Write updated stateChunks
+        partitionResult.forEach((chunkData, chunkId) => {
           const chunkRef = doc(db, 'whiteboards', boardId, 'stateChunks', chunkId);
-          batch.set(
-            chunkRef,
-            {
-              chunkId,
-              elements: chunkData,
-              elementCount: Object.keys(chunkData).length,
-              updatedAt: Date.now(),
-            },
-            { merge: true }
-          );
-          batchOps++;
+          // Complete document overwrite (merge: false) ensures removed nested keys do not survive!
+          transaction.set(chunkRef, {
+            chunkId,
+            elements: chunkData,
+            elementCount: Object.keys(chunkData).length,
+            updatedAt: Date.now(),
+          });
+          totalOps++;
         });
 
-        // Update board manifest document
-        const boardRef = doc(db, 'whiteboards', boardId);
-        const nextRevision = (control.lastAppliedRevision || 0) + 1;
-        batch.set(
+        // Delete stale chunks removed from manifest
+        const oldChunkIds = boardSnap.exists() ? (boardSnap.data().chunkIds || []) : [];
+        const staleChunkIds = oldChunkIds.filter((id: string) => !partitionResult.has(id));
+        staleChunkIds.forEach((staleId: string) => {
+          const staleRef = doc(db, 'whiteboards', boardId, 'stateChunks', staleId);
+          transaction.delete(staleRef);
+          totalOps++;
+        });
+
+        // Update board manifest doc
+        transaction.set(
           boardRef,
           {
             schemaVersion: 2,
             currentRevision: nextRevision,
-            chunkIds,
+            chunkIds: newChunkIds,
             totalElements: currentElements.size,
+            migrationStatus: 'complete',
             updatedAt: Date.now(),
           },
           { merge: true }
         );
-        batchOps++;
 
-        trackOperation('write', 'board-checkpoint', batchOps);
-        await batch.commit();
-
+        trackOperation('write', 'board-checkpoint', totalOps);
         control.lastAppliedRevision = nextRevision;
-        control.committedGeneration = Math.max(control.committedGeneration, committingGeneration);
+      });
 
-        // Clear only committed mutations up to captured generation
-        for (const [elId, item] of mutationsSnapshot.entries()) {
-          const currentPending = control.pendingMutations.get(elId);
-          if (currentPending && currentPending.generation <= committingGeneration) {
-            control.pendingMutations.delete(elId);
-          }
-        }
+      control.committedGeneration = Math.max(control.committedGeneration, committingGeneration);
 
-        break; // Success
-      } catch (err: any) {
-        console.error(`Flush checkpoint failed (attempt ${attempts}/${maxAttempts}):`, err);
-        if (attempts >= maxAttempts) {
-          throw err;
+      // Clear only mutations up to captured generation
+      for (const [elId, item] of mutationsSnapshot.entries()) {
+        const currentPending = control.pendingMutations.get(elId);
+        if (currentPending && currentPending.generation <= committingGeneration) {
+          control.pendingMutations.delete(elId);
         }
-        await new Promise((res) => setTimeout(res, delay));
-        delay = Math.min(delay * 2, 16000); // Bounded exponential backoff
       }
+    } catch (err: any) {
+      console.error('Flush checkpoint transaction failed:', err);
+      throw err;
     }
   };
 
@@ -600,7 +698,7 @@ export async function flushBoardCheckpoint(boardId: string, reason: string = 'ma
 }
 
 /**
- * Dispose and clean up active subscriptions and timers for a board
+ * Clean up active persistence controls, timers, and snapshot subscriptions.
  */
 export function disposeBoardPersistence(boardId?: string): void {
   if (boardId) {

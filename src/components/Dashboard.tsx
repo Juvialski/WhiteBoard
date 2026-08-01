@@ -187,6 +187,11 @@ export default function Dashboard({
           studentId: assignedStudent ? assignedStudent.toLowerCase().replace(/\s+/g, '-') : '',
           studentName: assignedStudent.trim() || 'All Collaborative',
           studentsCanWrite: true,
+          schemaVersion: 2,
+          currentRevision: 1,
+          chunkIds: ['chunk_0'],
+          totalElements: 0,
+          migrationStatus: 'complete',
           dailyWrites: {},
           dailyReads: {},
           teacherDailyWrites: {},
@@ -222,6 +227,8 @@ export default function Dashboard({
           currentX += img.width + gap;
         }
       }
+
+      const totalPdfElements = Object.keys(pdfBlobMap).length;
       
       if (isSandboxEnvironment()) {
         const currentBoards = getSandboxLocalBoards();
@@ -234,11 +241,24 @@ export default function Dashboard({
           studentId: assignedStudent ? assignedStudent.toLowerCase().replace(/\s+/g, '-') : '',
           studentName: assignedStudent.trim() || 'All Collaborative',
           studentsCanWrite: true,
+          schemaVersion: 2,
+          currentRevision: 1,
+          chunkIds: ['chunk_0'],
+          totalElements: totalPdfElements,
+          migrationStatus: 'complete',
         };
         saveSandboxLocalBoards([newBoard, ...currentBoards]);
         saveSandboxLocalElements(docId, Object.values(pdfBlobMap));
       } else {
-        await setDoc(doc(db, 'whiteboards', docId, 'elements', 'elements_blob'), { data: pdfBlobMap });
+        await setDoc(doc(db, 'whiteboards', docId, 'stateChunks', 'chunk_0'), {
+          chunkId: 'chunk_0',
+          elements: pdfBlobMap,
+          elementCount: totalPdfElements,
+          updatedAt: Date.now(),
+        });
+        await setDoc(doc(db, 'whiteboards', docId), {
+          totalElements: totalPdfElements,
+        }, { merge: true });
       }
 
       const finalName = userName.trim() || (role === 'teacher' ? 'Teacher' : 'Student-' + Math.floor(Math.random() * 1000));
@@ -394,6 +414,11 @@ export default function Dashboard({
         studentId: assignedStudent ? assignedStudent.toLowerCase().replace(/\s+/g, '-') : '',
         studentName: assignedStudent.trim() || 'All Collaborative',
         studentsCanWrite: true,
+        schemaVersion: 2,
+        currentRevision: 0,
+        chunkIds: [],
+        totalElements: 0,
+        migrationStatus: 'complete',
         dailyWrites: {},
         dailyReads: {},
         teacherDailyWrites: {},
@@ -936,6 +961,11 @@ export default function Dashboard({
                       studentId: userName ? userName.toLowerCase().replace(/\s+/g, '-') : '',
                       studentName: userName || 'Student Practice',
                       studentsCanWrite: true,
+                      schemaVersion: 2,
+                      currentRevision: 0,
+                      chunkIds: [],
+                      totalElements: 0,
+                      migrationStatus: 'complete',
                       dailyWrites: {},
                       dailyReads: {},
                       teacherDailyWrites: {},

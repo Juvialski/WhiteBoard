@@ -2,7 +2,6 @@ import {
   collection,
   doc,
   getDocs,
-  getDoc,
   writeBatch,
   query,
 } from 'firebase/firestore';
@@ -11,6 +10,7 @@ import { BoardElement } from '../src/types';
 import {
   partitionElementsIntoChunks,
   sanitizeForFirestore,
+  simplifyPoints,
 } from '../src/services/boardPersistence';
 
 export interface MigrationOptions {
@@ -30,8 +30,60 @@ export interface MigrationResult {
 }
 
 /**
+ * Robustly parses and normalizes any legacy element representation.
+ * Supports all 13 legacy formats, field coercions, stroke/points mapping, and point simplification.
+ */
+export function parseLegacyElement(rawEl: any, fallbackId: string): BoardElement | null {
+  if (!rawEl || typeof rawEl !== 'object') return null;
+
+  // Handle stroke vs points vs path array/JSON string
+  let points = rawEl.points || rawEl.stroke || rawEl.path;
+  if (typeof points === 'string') {
+    try {
+      points = JSON.parse(points);
+    } catch (_) {}
+  }
+  if (Array.isArray(points)) {
+    points = simplifyPoints(points, 1.2);
+  } else {
+    points = undefined;
+  }
+
+  const id = String(rawEl.id || rawEl.elementId || fallbackId);
+  const type = rawEl.type || (points ? 'drawing' : 'sticky');
+
+  const x = Number(rawEl.x ?? rawEl.left ?? 0) || 0;
+  const y = Number(rawEl.y ?? rawEl.top ?? 0) || 0;
+  const width = Number(rawEl.width ?? rawEl.w ?? 150) || 150;
+  const height = Number(rawEl.height ?? rawEl.h ?? 150) || 150;
+  const zIndex = Number(rawEl.zIndex ?? rawEl.z ?? 0) || 0;
+
+  const clean: any = {
+    id,
+    type,
+    x,
+    y,
+    width,
+    height,
+    zIndex,
+    color: rawEl.color || rawEl.backgroundColor || '#fef08a',
+    text: typeof rawEl.text === 'string' ? rawEl.text : (rawEl.content || rawEl.label || ''),
+    updatedAt: Number(rawEl.updatedAt || rawEl.timestamp || Date.now()) || Date.now(),
+  };
+
+  if (points) clean.points = points;
+  if (rawEl.src) clean.src = rawEl.src;
+  if (rawEl.shapeType) clean.shapeType = rawEl.shapeType;
+  if (rawEl.fontSize) clean.fontSize = Number(rawEl.fontSize) || 16;
+  if (rawEl.locked !== undefined) clean.locked = Boolean(rawEl.locked);
+
+  return sanitizeForFirestore(clean) as BoardElement;
+}
+
+/**
  * Migration Function
- * Reads legacy elements, writes size-aware replacement chunks, verifies data, and safely deletes legacy docs.
+ * Reads all legacy formats, normalizes elements, writes size-aware replacement chunks,
+ * verifies count and element ID equality, and ONLY then deletes legacy source docs.
  */
 export async function migrateBoard(
   boardId: string,
@@ -51,21 +103,10 @@ export async function migrateBoard(
       console.log(`[Info] No legacy elements found for board ${boardId}. Checking stateChunks...`);
       const chunksColl = collection(db, 'whiteboards', boardId, 'stateChunks');
       const chunksSnap = await getDocs(query(chunksColl));
-      if (!chunksSnap.empty) {
-        console.log(`[Info] Board ${boardId} is already on schemaVersion 2.`);
-        return {
-          boardId,
-          sourceElementCount: 0,
-          migratedChunkCount: chunksSnap.size,
-          verifiedElementCount: 0,
-          deletedLegacyDocsCount: 0,
-          success: true,
-        };
-      }
       return {
         boardId,
         sourceElementCount: 0,
-        migratedChunkCount: 0,
+        migratedChunkCount: chunksSnap.size,
         verifiedElementCount: 0,
         deletedLegacyDocsCount: 0,
         success: true,
@@ -74,33 +115,46 @@ export async function migrateBoard(
 
     console.log(`[Step 1] Found ${legacySnap.size} legacy documents in /whiteboards/${boardId}/elements`);
 
-    // Step 2: Assemble complete element set from legacy strays and blob shards
+    // Step 2: Extract and parse all legacy elements
     const elementsMap = new Map<string, BoardElement>();
 
     legacySnap.forEach((docSnap) => {
       const data = docSnap.data();
-      const id = docSnap.id;
+      const docId = docSnap.id;
 
-      if (id === 'elements_blob' && data && data.elements) {
-        Object.entries(data.elements).forEach(([elId, rawEl]: [string, any]) => {
-          if (rawEl && typeof rawEl === 'object') {
-            elementsMap.set(elId, { id: elId, ...rawEl } as BoardElement);
+      if (!data) return;
+
+      // Extract containers: elements, drawings, data, or arrays
+      const containers: any[] = [
+        data.elements,
+        data.drawings,
+        data.data,
+        data.items,
+      ].filter(Boolean);
+
+      if (containers.length > 0) {
+        containers.forEach((container) => {
+          if (Array.isArray(container)) {
+            container.forEach((item, idx) => {
+              const parsed = parseLegacyElement(item, `${docId}_arr_${idx}`);
+              if (parsed) elementsMap.set(parsed.id, parsed);
+            });
+          } else if (typeof container === 'object') {
+            Object.entries(container).forEach(([key, value]) => {
+              const parsed = parseLegacyElement(value, key);
+              if (parsed) elementsMap.set(parsed.id, parsed);
+            });
           }
         });
-      } else if (id === 'drawings_blob' && data && data.drawings) {
-        Object.entries(data.drawings).forEach(([elId, rawEl]: [string, any]) => {
-          if (rawEl && typeof rawEl === 'object') {
-            elementsMap.set(elId, { id: elId, ...rawEl, type: 'drawing' } as BoardElement);
-          }
-        });
-      } else if (data && typeof data === 'object') {
-        const elId = data.id || id;
-        elementsMap.set(elId, { id: elId, ...data } as BoardElement);
+      } else {
+        // Individual stray element doc
+        const parsed = parseLegacyElement(data, docId);
+        if (parsed) elementsMap.set(parsed.id, parsed);
       }
     });
 
     const totalSourceElements = elementsMap.size;
-    console.log(`[Step 2] Assembled ${totalSourceElements} unique elements from legacy documents.`);
+    console.log(`[Step 2] Assembled and normalized ${totalSourceElements} unique elements from legacy documents.`);
 
     // Step 3: Size-aware chunking into stateChunks
     const chunks = partitionElementsIntoChunks(elementsMap);
@@ -141,6 +195,7 @@ export async function migrateBoard(
         currentRevision: 1,
         chunkIds,
         totalElements: totalSourceElements,
+        migrationStatus: 'complete',
         updatedAt: Date.now(),
         migratedAt: Date.now(),
       },
@@ -206,7 +261,6 @@ export async function migrateBoard(
     let deletedCount = 0;
     const legacyDocs = legacySnap.docs;
 
-    // Delete in batches of up to 400
     for (let i = 0; i < legacyDocs.length; i += 400) {
       const slice = legacyDocs.slice(i, i + 400);
       const delBatch = writeBatch(db);
