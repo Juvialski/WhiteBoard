@@ -90,41 +90,6 @@ export default function LiveCursors({
       }, 1000 / 30);
       return () => clearInterval(interval);
     }
-
-        // Listen to all active cursors for this board (Firestore fallback)
-    if (isSandboxEnvironment()) return;
-    let unsubscribe: any;
-    const timeout = setTimeout(() => {
-      const cursorsRef = collection(db, 'whiteboards', boardId, 'cursors');
-      const q = query(cursorsRef);
-
-      unsubscribe = onSnapshot(q, (snapshot) => {
-        const activeList: Collaborator[] = [];
-        const now = Date.now();
-            
-        snapshot.forEach((docSnap) => {
-          const data = docSnap.data();
-          if (docSnap.id === currentUser.id) return;
-          if (now - (data.lastActive || 0) > 15000) return;
-
-          activeList.push({
-            id: docSnap.id,
-            name: data.name || 'Anonymous Sparker',
-            color: data.color || '#f97316',
-            x: data.x || 0,
-            y: data.y || 0,
-            lastActive: data.lastActive || 0,
-          });
-        });
-
-        setCollaborators(activeList);
-      });
-    }, 2000);
-
-    return () => {
-      clearTimeout(timeout);
-      if (unsubscribe) unsubscribe();
-    };
   }, [boardId, currentUser.id, socketCollaboratorsRef]);
 
   return (

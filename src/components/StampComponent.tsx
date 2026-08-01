@@ -1,6 +1,31 @@
-import React from "react";
+import React, { useState } from "react";
 import { StampElement, UserProfile } from "../types";
-import { CheckCircle2, Star, Award, AlertCircle, CheckSquare, FileCheck, Trash2 } from "lucide-react";
+import { CheckCircle2, Star, Award, AlertCircle, CheckSquare, FileCheck, Trash2, Shapes, Palette } from "lucide-react";
+
+const STAMP_SHAPES: { type: NonNullable<StampElement["stampShape"]>; label: string }[] = [
+  { type: "rounded-rect", label: "Rectangle" },
+  { type: "circle", label: "Circle" },
+  { type: "star", label: "Star" },
+  { type: "badge", label: "Badge" },
+  { type: "diamond", label: "Diamond" },
+  { type: "banner", label: "Banner" },
+  { type: "hexagon", label: "Hexagon" },
+  { type: "ribbon", label: "Ribbon" },
+  { type: "heart", label: "Heart" },
+  { type: "shield", label: "Shield" },
+  { type: "crest", label: "Crest" },
+];
+
+const PRESET_COLORS = [
+  "#4f46e5",
+  "#059669",
+  "#e11d48",
+  "#f97316",
+  "#7c3aed",
+  "#2563eb",
+  "#0284c7",
+  "#1e293b",
+];
 
 interface StampComponentProps {
   element: StampElement;
@@ -22,6 +47,7 @@ export default function StampComponent({
   onDelete,
   canWrite = true,
 }: StampComponentProps) {
+  const [showShapeMenu, setShowShapeMenu] = useState(false);
   const shape = element.stampShape || "rounded-rect";
   
   let clipPath = "";
@@ -179,17 +205,90 @@ export default function StampComponent({
           {renderStampBadge()}
         </div>
 
-        {isSelected && isInteractive && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-            }}
-            className="absolute -top-2 -right-2 p-1 bg-red-500 text-white rounded-full shadow-md hover:bg-red-600 transition-colors z-40"
-            title="Delete Stamp"
+        {isSelected && isInteractive && canWrite && (
+          <div 
+            className="absolute -top-11 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-white/95 backdrop-blur-md px-2 py-1 rounded-2xl shadow-xl border border-slate-200/90 z-50 pointer-events-auto cursor-default animate-fade-in"
+            onPointerDown={(e) => e.stopPropagation()}
           >
-            <Trash2 className="w-3 h-3" />
-          </button>
+            {/* Shape Switcher Button */}
+            <div className="relative">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowShapeMenu(!showShapeMenu);
+                }}
+                className="px-2 py-1 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer hover:scale-105 active:scale-95"
+                title="Change Stamp Shape"
+              >
+                <Shapes className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                <span className="capitalize text-[10px] font-extrabold max-w-[70px] truncate">
+                  {STAMP_SHAPES.find((s) => s.type === (element.stampShape || "rounded-rect"))?.label || "Shape"}
+                </span>
+              </button>
+
+              {/* Popover Menu for Shapes */}
+              {showShapeMenu && (
+                <div 
+                  className="absolute top-full mt-1.5 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-slate-200/90 p-2 grid grid-cols-2 sm:grid-cols-3 gap-1 w-52 z-50 animate-fade-in"
+                  onPointerDown={(e) => e.stopPropagation()}
+                >
+                  <span className="col-span-full text-[9px] font-extrabold text-slate-400 uppercase tracking-wider px-1 pb-1 border-b border-slate-100">
+                    Select Stamp Shape
+                  </span>
+                  {STAMP_SHAPES.map((s) => {
+                    const isCurrent = (element.stampShape || "rounded-rect") === s.type;
+                    return (
+                      <button
+                        key={s.type}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onUpdate({ stampShape: s.type });
+                          setShowShapeMenu(false);
+                        }}
+                        className={`px-2 py-1 rounded-xl text-[10px] font-bold truncate transition-all text-left cursor-pointer ${
+                          isCurrent
+                            ? "bg-indigo-50 text-indigo-600 border border-indigo-200 shadow-xs"
+                            : "bg-slate-50 text-slate-600 hover:bg-slate-100 border border-transparent"
+                        }`}
+                      >
+                        {s.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Quick Palette Colors */}
+            <div className="flex items-center gap-1 border-l border-slate-200/80 pl-1.5">
+              {PRESET_COLORS.map((c) => (
+                <button
+                  key={c}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onUpdate({ color: c });
+                  }}
+                  className={`w-3.5 h-3.5 rounded-full border transition-transform cursor-pointer hover:scale-125 ${
+                    element.color === c ? "ring-2 ring-indigo-500 ring-offset-1 scale-110 border-white" : "border-slate-300"
+                  }`}
+                  style={{ backgroundColor: c }}
+                  title="Change Stamp Color"
+                />
+              ))}
+            </div>
+
+            {/* Delete button */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+              className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer ml-0.5"
+              title="Delete Stamp"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
         )}
 
         {/* Resize corner handle */}

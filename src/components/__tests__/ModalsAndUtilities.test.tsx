@@ -85,13 +85,13 @@ describe('Modals & Workspace Utilities Test Suite', () => {
       const approvedStampBtn = screen.getByText('Approved');
       fireEvent.click(approvedStampBtn);
 
-      expect(onSelectStamp).toHaveBeenCalledWith('approved', 'Approved', undefined, expect.any(String));
+      expect(onSelectStamp).toHaveBeenCalledWith('approved', 'Approved', undefined, expect.any(String), expect.any(String));
     });
 
     it('switches to signature tab', () => {
       render(<StampPickerModal isOpen={true} onClose={vi.fn()} onSelectStamp={vi.fn()} />);
 
-      const sigTab = screen.getByText('Draw Signature');
+      const sigTab = screen.getByText('Signature');
       fireEvent.click(sigTab);
 
       expect(screen.getByText('Place Signature')).toBeTruthy();

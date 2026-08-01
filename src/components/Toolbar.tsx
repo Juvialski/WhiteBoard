@@ -76,6 +76,9 @@ interface ToolbarProps {
   onChangeGridMode: (mode: "dots" | "math" | "none") => void;
   hasSelection?: boolean;
   hasColorableSelection?: boolean;
+  hasStampSelection?: boolean;
+  selectedStampShape?: string;
+  onChangeStampShape?: (shape: string) => void;
   isPdfMode?: boolean;
   isZenMode?: boolean;
   onToggleZenMode?: () => void;
@@ -256,6 +259,9 @@ export default function Toolbar({
   onChangeGridMode,
   hasSelection = false,
   hasColorableSelection = false,
+  hasStampSelection = false,
+  selectedStampShape = "rounded-rect",
+  onChangeStampShape,
   isPdfMode = false,
   isZenMode = false,
   onToggleZenMode,
@@ -329,7 +335,7 @@ export default function Toolbar({
     "cartesian",
     "numberline",
     "advanced-cartesian",
-  ].includes(activeTool) || (activeTool === "select" && hasColorableSelection);
+  ].includes(activeTool) || (activeTool === "select" && (hasColorableSelection || hasStampSelection));
 
   const autoHideTimeoutRef = React.useRef<any>(null);
 
@@ -360,17 +366,18 @@ export default function Toolbar({
   }, [activeTool]);
 
   useEffect(() => {
-    if (hasColorableSelection) {
+    if (hasColorableSelection || hasStampSelection) {
       setShowSettingsPanel(true);
       resetAutoHideTimer();
     }
-  }, [hasColorableSelection]);
+  }, [hasColorableSelection, hasStampSelection]);
 
   useEffect(() => {
     return () => cancelAutoHideTimer();
   }, []);
 
   const getToolDisplayName = () => {
+    if (activeTool === "select" && hasStampSelection) return "Stamp Settings";
     if (activeTool === "select" && hasColorableSelection) return "Selection Theme";
     if (activeTool === "pencil") return "Pencil Settings";
     if (activeTool === "highlighter") return "Highlighter Settings";
@@ -408,6 +415,7 @@ export default function Toolbar({
     if (activeTool === "math") return "Renders advanced KaTeX mathematical equations on the board.";
     if (activeTool === "connector") return "Links shapes together using top, bottom, left or right socket anchors.";
     if (isGraphTool) return "Draw a standard cartesian graph or number line coordinates automatically.";
+    if (activeTool === "select" && hasStampSelection) return "Change the shape or color theme of selected stamp(s).";
     if (activeTool === "select" && hasColorableSelection) return "Update the background or outline color of selected elements.";
     return "";
   };
@@ -424,7 +432,7 @@ export default function Toolbar({
     "cartesian",
     "numberline",
     "advanced-cartesian",
-  ].includes(activeTool) || (activeTool === "select" && hasColorableSelection);
+  ].includes(activeTool) || (activeTool === "select" && (hasColorableSelection || hasStampSelection));
 
   const topOffsetClass = isZenMode || isTopBarHidden ? "md:top-3" : "md:top-16 lg:md:top-20";
 
@@ -846,6 +854,45 @@ export default function Toolbar({
                         }`}
                       >
                         <span className={isSelected ? "text-blue-600" : "text-slate-500 shrink-0"}>{s.icon}</span>
+                        <span className="truncate">{s.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Stamp Shape Selection Grid when a stamp is selected */}
+            {hasStampSelection && onChangeStampShape && (
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Stamp Shape
+                </span>
+                <div className="grid grid-cols-2 gap-1.5 max-h-[140px] overflow-y-auto pr-0.5" style={{ scrollbarWidth: "thin" }}>
+                  {[
+                    { type: "rounded-rect", label: "Rectangle" },
+                    { type: "circle", label: "Circle" },
+                    { type: "star", label: "Star" },
+                    { type: "badge", label: "Badge" },
+                    { type: "diamond", label: "Diamond" },
+                    { type: "banner", label: "Banner" },
+                    { type: "hexagon", label: "Hexagon" },
+                    { type: "ribbon", label: "Ribbon" },
+                    { type: "heart", label: "Heart" },
+                    { type: "shield", label: "Shield" },
+                    { type: "crest", label: "Crest" },
+                  ].map((s) => {
+                    const isSelected = selectedStampShape === s.type;
+                    return (
+                      <button
+                        key={s.type}
+                        onClick={() => onChangeStampShape(s.type)}
+                        className={`px-2 py-1.5 rounded-xl text-[11px] font-semibold flex items-center space-x-1.5 transition-all cursor-pointer border ${
+                          isSelected
+                            ? "bg-indigo-50 text-indigo-600 border-indigo-200 font-bold"
+                            : "bg-slate-50 text-slate-600 border-transparent hover:bg-slate-100"
+                        }`}
+                      >
                         <span className="truncate">{s.label}</span>
                       </button>
                     );

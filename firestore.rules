@@ -7,14 +7,6 @@ service cloud.firestore {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
-    function isStringWithLimit(val, maxLen) {
-      return val is string && val.size() <= maxLen;
-    }
-
-    function isNumber(val) {
-      return val is int || val is float;
-    }
-
     // Returns true if the current requester is the verified administrator al.matubis17@gmail.com
     function isAdmin() {
       return request.auth != null 
@@ -22,58 +14,39 @@ service cloud.firestore {
         && request.auth.token.email_verified == true;
     }
 
-    // Returns true if the workspace application is enabled for general use
-    function isAppEnabled() {
-      let path = /databases/$(database)/documents/admin_settings/global;
-      return !exists(path) || get(path).data.appEnabled == true;
-    }
-
-    // Check if the current user has access (either app is enabled or is admin)
-    function canAccess() {
-      return isAdmin() || isAppEnabled();
-    }
-
-    // Check if the current user has the teacher role in their presence document
-    function isTeacher() {
-      return request.auth != null 
-        && exists(/databases/$(database)/documents/presence/$(request.auth.uid))
-        && get(/databases/$(database)/documents/presence/$(request.auth.uid)).data.get('role', 'student') == 'teacher';
-    }
-
-    // Default deny catch-all to prevent unwanted access
+    // Default deny catch-all
     match /{document=**} {
       allow read, write: if false;
     }
 
     // Whiteboards collection rules
     match /whiteboards/{boardId} {
-      // Allow read to anyone who can access the app (supports query/list without wildcard issues)
-      allow read: if canAccess();
-      
-      allow create: if canAccess() && isValidId(boardId);
-      
-      allow update: if canAccess() && isValidId(boardId);
+      allow read: if true;
+      allow create, update, delete: if isValidId(boardId);
 
-      // Only teachers or administrators can delete whiteboards, or guests (authenticated or when app is enabled)
-      allow delete: if canAccess() && isValidId(boardId);
+      // Subcollection: stateChunks (modern chunked board state)
+      match /stateChunks/{chunkId} {
+        allow read: if true;
+        allow create, update, delete: if isValidId(boardId) && isValidId(chunkId);
+      }
 
-      // Subcollection: elements on a whiteboard
+      // Legacy subcollection: elements (read-only for migration)
       match /elements/{elementId} {
-        allow read: if canAccess();
-        allow create, update, delete: if canAccess() && isValidId(boardId) && isValidId(elementId);
+        allow read: if true;
+        allow create, update, delete: if isValidId(boardId) && isValidId(elementId);
       }
 
       // Subcollection: live collaborator cursors
       match /cursors/{cursorId} {
-        allow read: if canAccess();
-        allow create, update, delete: if canAccess() && isValidId(cursorId);
+        allow read: if true;
+        allow create, update, delete: if isValidId(cursorId);
       }
     }
 
     // Global User Presence rules
     match /presence/{userId} {
-      allow read: if canAccess();
-      allow create, update, delete: if canAccess() && isValidId(userId);
+      allow read: if true;
+      allow create, update, delete: if isValidId(userId);
     }
 
     // Admin Settings rules

@@ -15,6 +15,11 @@ import {
 import { db } from "../firebase";
 import { isSandboxEnvironment, getSandboxLocalElements, saveSandboxLocalElements } from "../utils/firebaseSandboxGuard";
 import {
+  subscribeToBoardState,
+  queueElementMutation,
+  flushBoardCheckpoint,
+} from "../services/boardPersistence";
+import {
   BoardElement,
   Point,
   UserProfile,
@@ -28,6 +33,7 @@ import {
   Collaborator,
   ConnectorElement,
   MathElement,
+  StampElement,
 } from "../types";
 
 import Toolbar, { Tool } from "./Toolbar";
@@ -339,6 +345,7 @@ export default function WhiteboardCanvas({
   
   const [clipboardElements, setClipboardElements] = useState<BoardElement[]>([]);
   const [boardData, setBoardData] = useState<Whiteboard | null>(null);
+  const [legacyMigrationRequired, setLegacyMigrationRequired] = useState(false);
   const [isTopBarHidden, setIsTopBarHidden] = useState(false);
   const [isHeaderMenuOpen, setIsHeaderMenuOpen] = useState(false);
 
@@ -1323,7 +1330,7 @@ export default function WhiteboardCanvas({
 
   const [isShortcutsExpanded, setIsShortcutsExpanded] = useState(true);
 
-  // Fetch board elements in real time with local caching and write-minimizer guards
+  // Fetch board elements in real time using boardPersistence service
   useEffect(() => {
     if (isSandboxEnvironment()) {
       const initial = getSandboxLocalElements(boardId);
@@ -1342,172 +1349,19 @@ export default function WhiteboardCanvas({
       };
     }
 
-    const elementsRefColl = collection(db, "whiteboards", boardId, "elements");
-    const q = query(elementsRefColl);
-
-    let isInitialLoad = true;
-
-    let unsubscribe = onSnapshot(q, (snapshot) => {
-      if (!isInitialLoad && hasUnsavedChanges.current && activeUsersCountRef.current <= 1) {
-        return;
+    const unsubscribe = subscribeToBoardState(boardId, (state) => {
+      if (state.migrationRequired) {
+        setLegacyMigrationRequired(true);
+      } else {
+        setLegacyMigrationRequired(false);
+        setElements(state.elements);
       }
-      isInitialLoad = false;
-
-            const loadedMap = new Map<string, BoardElement>();
-      let hasStrays = false;
-      const straysToDelete: string[] = [];
-      const shardUpdates: Record<string, any> = {};
-
-      snapshot.forEach((docSnap) => {
-        const id = docSnap.id;
-        const docData = docSnap.data();
-        if (!docData) return;
-
-        if (id.startsWith("elements_blob") || id.startsWith("drawings_blob")) {
-          if (docData && docData.data) {
-            Object.keys(docData.data).forEach(elId => {
-              const rawEl = docData.data[elId];
-              if (rawEl && typeof rawEl === "object") {
-                loadedMap.set(elId, { id: elId, ...rawEl } as BoardElement);
-              }
-            });
-          } else if (id.startsWith("drawings_blob") && docData && Array.isArray(docData.drawings)) {
-            docData.drawings.forEach((d: any) => {
-              if (d && typeof d === "object" && typeof d.id === "string") {
-                loadedMap.set(d.id, d);
-              }
-            });
-          }
-        } else {
-          // If it's a stray document, we only add it if it's NOT already in a blob
-          if (!id.startsWith("chat_") && !id.startsWith("meta_")) {
-            hasStrays = true;
-            if (/^[a-zA-Z0-9_\-]+$/.test(id)) {
-              straysToDelete.push(id);
-            } else {
-              console.warn("Skipping invalid stray ID:", id);
-            }
-            const isDrawing = docData.type === "drawing";
-            const blobId = getBlobRefId(isDrawing, id);
-            if (!shardUpdates[blobId]) shardUpdates[blobId] = {};
-            if (isDrawing) {
-              shardUpdates[blobId][id] = { ...docData, points: Array.isArray(docData.points) ? simplifyPoints(docData.points, 1.2) : [] };
-            } else {
-              shardUpdates[blobId][id] = docData;
-            }
-            
-            if (!loadedMap.has(id)) {
-              loadedMap.set(id, { id, ...docData } as BoardElement);
-            }
-          } else {
-            if (!loadedMap.has(id)) {
-              loadedMap.set(id, { id, ...docData } as BoardElement);
-            }
-          }
-        }
-      });
-
-      const loaded = Array.from(loadedMap.values()).filter(
-        (el): el is BoardElement => el !== null && el !== undefined && typeof el === "object" && typeof el.id === "string" && typeof el.type === "string"
-      );
-      setElements(loaded);
-
-      try {
-        localStorage.setItem(`whiteboard_elements_${boardId}`, JSON.stringify(loaded));
-        const drawings = loaded.filter(el => el.type === "drawing") as DrawingElement[];
-        idbSet(`drawings_${boardId}`, drawings).catch(e => console.error("IDB save error:", e));
-      } catch (e) {
-        console.error("Local storage error:", e);
-      }
-
-      // Background migration for old stray documents (runs at most once per board session)
-      if (hasStrays && straysToDelete.length > 0 && !isMigratingRef.current && !attemptedMigrationRef.current.has(boardId)) {
-        isMigratingRef.current = true;
-        attemptedMigrationRef.current.add(boardId);
-        (async () => {
-          console.log(`Migrating ${straysToDelete.length} stray documents...`);
-          try {
-             // Delete strays FIRST in batches of 400 so subsequent snapshots don't see them
-             for (let i = 0; i < straysToDelete.length; i += 400) {
-                const chunk = straysToDelete.slice(i, i + 400);
-                const deleteBatch = writeBatch(db);
-                chunk.forEach(strayId => {
-                   deleteBatch.delete(doc(db, "whiteboards", boardId, "elements", strayId));
-                });
-                try {
-                  await deleteBatch.commit();
-                } catch (err) {
-                   console.error("Migration deleteBatch failed for chunk", i, err);
-                   throw err;
-                }
-             }
-
-             // Update shards
-             for (const blobId of Object.keys(shardUpdates)) {
-               if (Object.keys(shardUpdates[blobId]).length > 0) {
-                 try {
-                   await setDoc(doc(db, "whiteboards", boardId, "elements", blobId), { data: shardUpdates[blobId] }, { merge: true });
-                 } catch (err) {
-                   console.error("Migration setDoc failed for blob", blobId, err);
-                   throw err;
-                 }
-               }
-             }
-             
-             console.log("Migration successful!");
-          } catch (err: any) {
-             console.error("Migration failed:", err); showSyncToast("Migration failed: " + err.message, "error", 10000);
-          } finally {
-             isMigratingRef.current = false;
-          }
-        })();
-      }
-    }, (error) => {
-      console.error("Snapshot connection error:", error);
-      setSyncStatus('offline');
     });
 
     return () => {
       unsubscribe();
     };
   }, [boardId]);
-
-  // Monitor active cursors to determine Solo User Mode (Solo) vs Collaborative Mode (Multiplayer)
-  useEffect(() => {
-    let isMounted = true;
-    
-    // When WebSockets are active or in sandbox mode, skip Firestore cursor reads completely
-    if (wsConnected || isSandboxEnvironment()) return;
-
-    const fetchCursors = async () => {
-      try {
-        const cursorsRef = collection(db, "whiteboards", boardId, "cursors");
-        const snapshot = await import('firebase/firestore').then(m => m.getDocs(cursorsRef));
-        if (!isMounted) return;
-        const now = Date.now();
-        let otherUsers = 0;
-        snapshot.forEach((docSnap) => {
-          if (docSnap.id !== currentUser.id) {
-            const data = docSnap.data();
-            if (now - (data.lastActive || 0) < 45000) {
-              otherUsers++;
-            }
-          }
-        });
-        setFirestoreActiveUsersCount(otherUsers + 1);
-      } catch (err) {
-        console.error("Error fetching cursors:", err);
-      }
-    };
-
-    fetchCursors();
-    const interval = setInterval(fetchCursors, 60000); // Check every 60 seconds when WS offline
-    
-    return () => {
-      isMounted = false;
-      clearInterval(interval);
-    };
-  }, [boardId, currentUser.id, wsConnected]);
 
   // Combine both sources of truth (WebSockets + Firestore) to determine Solo vs Collaborating
   useEffect(() => {
@@ -1824,57 +1678,15 @@ export default function WhiteboardCanvas({
       return;
     }
 
-    // Crucial: ALWAYS use the debounced/batched queue to write elements to Firestore.
-    // This allows multiple simultaneous updates (e.g. from rapid drawing or multi-user edits)
-    // to be merged and batched, preventing Quota Limit Exceeded errors under heavy classroom use.
-    const useDebouncedQueue = true;
-
-    if (useDebouncedQueue) {
-      hasUnsavedChanges.current = true;
-      setSyncStatus('saved-local');
-
-      if (actionType === 'delete') {
-        pendingSyncElements.current[elementId] = { data: null, action: 'delete' };
-      } else {
-        const currentFullEl = updatedElements.find(el => el.id === elementId);
-        if (currentFullEl) {
-          pendingSyncElements.current[elementId] = { data: currentFullEl, action: 'set' };
-        }
-      }
-
-      if (debounceTimer.current) clearTimeout(debounceTimer.current);
-      debounceTimer.current = setTimeout(() => {
-        flushPendingChanges();
-      }, 3000);
-    } else {
-      setSyncStatus('saving-cloud');
-      
-      try {
-        const isDraw = processedData && processedData.type === 'drawing';
-        const blobId = getBlobRefId(isDraw, elementId);
-        
-        if (actionType === 'delete') {
-          await setDoc(doc(db, "whiteboards", boardId, "elements", blobId), {
-            data: { [elementId]: deleteField() }
-          }, { merge: true });
-        } else {
-          let payload = sanitizeForFirestore(processedData);
-          if (isDraw) {
-             payload = { ...payload, points: simplifyPoints(payload.points, 1.2) };
-          }
-          await setDoc(doc(db, "whiteboards", boardId, "elements", blobId), {
-            data: { [elementId]: payload }
-          }, { merge: true });
-        }
-        
-        setSyncStatus('synced');
-      } catch (err) {
-        console.error("Error saving element:", err);
-        setSyncStatus('offline');
-        showSyncToast("Sync failed: " + err.message, "error", 10000);
-      }
-    }
-  }, [boardId, activeUsersCount, currentUser, setElements, setSyncStatus, flushPendingChanges]);
+    const currentFullEl = updatedElements.find(el => el.id === elementId);
+    queueElementMutation(
+      boardId,
+      elementId,
+      actionType === 'delete' ? null : (currentFullEl || processedData),
+      actionType
+    );
+    setSyncStatus('saved-local');
+  }, [boardId, setElements, setSyncStatus]);
 
   const handleInsertBlankPdfPage = React.useCallback(() => {
     const lastPage = pdfPages[pdfPages.length - 1];
@@ -3555,6 +3367,30 @@ export default function WhiteboardCanvas({
     }
   };
 
+  // Stamp shape change handler that updates selected stamp element shapes
+  const handleStampShapeChange = React.useCallback(async (stampShape: string) => {
+    const activeSelection =
+      selectedIds.length > 0 ? selectedIds : selectedId ? [selectedId] : [];
+    if (activeSelection.length > 0) {
+      if (!canWrite) {
+        triggerReadOnlyAlert();
+        return;
+      }
+      await Promise.all(
+        activeSelection.map(async (id) => {
+          try {
+            const el = elements.find((e) => e.id === id);
+            if (el && el.type === "stamp") {
+              await saveElementLocallyAndSync(id, { stampShape: stampShape as any }, true);
+            }
+          } catch (err) {
+            console.error("Error updating selected stamp shape:", err);
+          }
+        }),
+      );
+    }
+  }, [selectedIds, selectedId, canWrite, triggerReadOnlyAlert, elements, saveElementLocallyAndSync]);
+
   // Clear all items on the board
   const handleClearBoard = async () => {
     const elementsToKeep = elements.filter(el => typeof el?.id === "string" && el.id.startsWith("pdf-page-"));
@@ -3788,6 +3624,10 @@ export default function WhiteboardCanvas({
           }
           return true;
         });
+        const selectedStamp = selectedElements.find(el => el.type === "stamp") as StampElement | undefined;
+        const hasStampSelection = Boolean(selectedStamp);
+        const selectedStampShape = selectedStamp?.stampShape || "rounded-rect";
+
         return (
           <Toolbar
             activeTool={activeTool}
@@ -3819,6 +3659,9 @@ export default function WhiteboardCanvas({
             onChangeGridMode={setGridMode}
             hasSelection={selectedIds.length > 0 || selectedId !== null}
             hasColorableSelection={hasColorableSelection}
+            hasStampSelection={hasStampSelection}
+            selectedStampShape={selectedStampShape}
+            onChangeStampShape={handleStampShapeChange}
             isPdfMode={isPdfBoard}
             isZenMode={isZenMode}
             onToggleZenMode={handleToggleZenMode}
@@ -4198,6 +4041,12 @@ export default function WhiteboardCanvas({
 
       {/* Read-Only Mode Floating Notice Banner */}
       <ReadOnlyAlertBanner show={showReadOnlyAlert} />
+
+      {legacyMigrationRequired && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 bg-amber-600 text-white px-4 py-2 rounded-lg font-medium text-xs shadow-lg z-50 flex items-center space-x-2">
+          <span>⚠️ Board requires administrative migration to support new chunked storage. Board is currently read-only.</span>
+        </div>
+      )}
 
       {/* Offline Sync Floating Toast Notice */}
       <SyncNotificationToast
