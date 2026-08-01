@@ -1344,12 +1344,8 @@ export default function WhiteboardCanvas({
     }
 
     const unsubscribe = subscribeToBoardState(boardId, (state) => {
-      if (state.migrationRequired) {
-        setLegacyMigrationRequired(true);
-      } else {
-        setLegacyMigrationRequired(false);
-        setElements(state.elements);
-      }
+      setLegacyMigrationRequired(Boolean(state.migrationRequired));
+      setElements(state.elements);
     });
 
     return () => {

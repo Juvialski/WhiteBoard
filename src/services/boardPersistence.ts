@@ -3,8 +3,10 @@ import {
   doc,
   getDoc,
   getDocs,
+  setDoc,
   onSnapshot,
   runTransaction,
+  writeBatch,
   query,
   deleteField,
 } from 'firebase/firestore';
@@ -24,6 +26,154 @@ export interface BoardState {
   isLegacy: boolean;
   migrationRequired: boolean;
   updatedAt: number;
+}
+
+export function parseLegacyElement(rawEl: any, fallbackId: string): BoardElement | null {
+  if (!rawEl || typeof rawEl !== 'object') return null;
+
+  let points = rawEl.points || rawEl.stroke || rawEl.path;
+  if (typeof points === 'string') {
+    try {
+      points = JSON.parse(points);
+    } catch (_) {}
+  }
+  if (Array.isArray(points)) {
+    points = simplifyPoints(points, 1.2);
+  } else {
+    points = undefined;
+  }
+
+  const id = String(rawEl.id || rawEl.elementId || fallbackId);
+  const type = rawEl.type || (points ? 'drawing' : 'sticky');
+
+  const x = Number(rawEl.x ?? rawEl.left ?? 0) || 0;
+  const y = Number(rawEl.y ?? rawEl.top ?? 0) || 0;
+  const width = Number(rawEl.width ?? rawEl.w ?? 150) || 150;
+  const height = Number(rawEl.height ?? rawEl.h ?? 150) || 150;
+  const zIndex = Number(rawEl.zIndex ?? rawEl.z ?? 0) || 0;
+
+  const clean: any = {
+    id,
+    type,
+    x,
+    y,
+    width,
+    height,
+    zIndex,
+    color: rawEl.color || rawEl.backgroundColor || '#fef08a',
+    text: typeof rawEl.text === 'string' ? rawEl.text : (rawEl.content || rawEl.label || ''),
+    updatedAt: Number(rawEl.updatedAt || rawEl.timestamp || Date.now()) || Date.now(),
+  };
+
+  if (points) clean.points = points;
+  if (rawEl.src) clean.src = rawEl.src;
+  if (rawEl.shapeType) clean.shapeType = rawEl.shapeType;
+  if (rawEl.fontSize) clean.fontSize = Number(rawEl.fontSize) || 16;
+  if (rawEl.locked !== undefined) clean.locked = Boolean(rawEl.locked);
+
+  return sanitizeForFirestore(clean) as BoardElement;
+}
+
+export async function loadAndMigrateLegacyBoard(boardId: string): Promise<BoardElement[]> {
+  try {
+    const legacyColl = collection(db, 'whiteboards', boardId, 'elements');
+    trackOperation('read', 'legacy-board-migration', 1);
+    const legacySnap = await getDocs(query(legacyColl));
+    const elementsMap = new Map<string, BoardElement>();
+
+    legacySnap.forEach((docSnap) => {
+      const data = docSnap.data();
+      const docId = docSnap.id;
+      if (!data) return;
+
+      const containers: any[] = [
+        data.elements,
+        data.drawings,
+        data.data,
+        data.items,
+      ].filter(Boolean);
+
+      if (containers.length > 0) {
+        containers.forEach((container) => {
+          if (Array.isArray(container)) {
+            container.forEach((item, idx) => {
+              const parsed = parseLegacyElement(item, `${docId}_arr_${idx}`);
+              if (parsed) elementsMap.set(parsed.id, parsed);
+            });
+          } else if (typeof container === 'object') {
+            Object.entries(container).forEach(([key, value]) => {
+              const parsed = parseLegacyElement(value, key);
+              if (parsed) elementsMap.set(parsed.id, parsed);
+            });
+          }
+        });
+      } else {
+        const parsed = parseLegacyElement(data, docId);
+        if (parsed) elementsMap.set(parsed.id, parsed);
+      }
+    });
+
+    const elementsList = Array.from(elementsMap.values());
+
+    if (elementsList.length > 0) {
+      const chunks = partitionElementsIntoChunks(elementsMap);
+      const chunkIds = Array.from(chunks.keys());
+
+      const batch = writeBatch(db);
+      chunks.forEach((chunkData, chunkId) => {
+        const chunkRef = doc(db, 'whiteboards', boardId, 'stateChunks', chunkId);
+        batch.set(chunkRef, {
+          chunkId,
+          elements: chunkData,
+          elementCount: Object.keys(chunkData).length,
+          updatedAt: Date.now(),
+        });
+      });
+
+      const boardRef = doc(db, 'whiteboards', boardId);
+      batch.set(
+        boardRef,
+        {
+          schemaVersion: 2,
+          currentRevision: 1,
+          chunkIds,
+          totalElements: elementsList.length,
+          migrationStatus: 'complete',
+          updatedAt: Date.now(),
+        },
+        { merge: true }
+      );
+
+      await batch.commit();
+      trackOperation('write', 'legacy-board-migration', chunks.size + 1);
+    } else {
+      const boardRef = doc(db, 'whiteboards', boardId);
+      await setDoc(
+        boardRef,
+        {
+          schemaVersion: 2,
+          currentRevision: 1,
+          chunkIds: ['chunk_0'],
+          totalElements: 0,
+          migrationStatus: 'complete',
+          updatedAt: Date.now(),
+        },
+        { merge: true }
+      );
+      const chunkRef = doc(db, 'whiteboards', boardId, 'stateChunks', 'chunk_0');
+      await setDoc(chunkRef, {
+        chunkId: 'chunk_0',
+        elements: {},
+        elementCount: 0,
+        updatedAt: Date.now(),
+      });
+    }
+
+    return elementsList;
+  } catch (err) {
+    console.warn('Error loading/migrating legacy board:', err);
+    return [];
+  }
 }
 
 export interface MutationItem {
@@ -224,17 +374,18 @@ export async function loadBoardState(boardId: string): Promise<BoardState> {
   const schemaVersion = boardData.schemaVersion || 1;
   const migrationStatus = boardData.migrationStatus;
 
-  // Modern client NEVER queries legacy /elements collection
+  // Seamlessly auto-migrate legacy/unversioned boards on load
   if (schemaVersion < 2 || migrationStatus === 'pending') {
+    const legacyElements = await loadAndMigrateLegacyBoard(boardId);
     return {
       boardId,
-      schemaVersion,
-      currentRevision: 0,
-      chunkIds: [],
-      totalElements: 0,
-      elements: [],
-      isLegacy: true,
-      migrationRequired: true,
+      schemaVersion: 2,
+      currentRevision: 1,
+      chunkIds: ['chunk_0'],
+      totalElements: legacyElements.length,
+      elements: legacyElements,
+      isLegacy: false,
+      migrationRequired: false,
       updatedAt: boardData.updatedAt || Date.now(),
     };
   }
@@ -261,7 +412,15 @@ export async function loadBoardState(boardId: string): Promise<BoardState> {
     }
   });
 
-  const elements = Array.from(elementsMap.values());
+  let elements = Array.from(elementsMap.values());
+
+  // Fallback: If stateChunks is empty but legacy elements exist
+  if (elements.length === 0) {
+    const legacyElements = await loadAndMigrateLegacyBoard(boardId);
+    if (legacyElements.length > 0) {
+      elements = legacyElements;
+    }
+  }
 
   return {
     boardId,
@@ -278,7 +437,7 @@ export async function loadBoardState(boardId: string): Promise<BoardState> {
 
 /**
  * Subscribes to board state changes.
- * ZERO queries or writes to legacy /elements collection.
+ * Automatically transparently migrates legacy boards if detected.
  */
 export function subscribeToBoardState(
   boardId: string,
@@ -352,16 +511,18 @@ export function subscribeToBoardState(
       control.chunkIdsList = boardMeta.chunkIds;
 
       if (boardMeta.schemaVersion < 2 || boardMeta.migrationStatus === 'pending') {
-        callback({
-          boardId,
-          schemaVersion: boardMeta.schemaVersion,
-          currentRevision: 0,
-          chunkIds: [],
-          totalElements: 0,
-          elements: [],
-          isLegacy: true,
-          migrationRequired: true,
-          updatedAt: boardMeta.updatedAt,
+        loadAndMigrateLegacyBoard(boardId).then((legacyElements) => {
+          callback({
+            boardId,
+            schemaVersion: 2,
+            currentRevision: 1,
+            chunkIds: ['chunk_0'],
+            totalElements: legacyElements.length,
+            elements: legacyElements,
+            isLegacy: false,
+            migrationRequired: false,
+            updatedAt: Date.now(),
+          });
         });
       }
     },
