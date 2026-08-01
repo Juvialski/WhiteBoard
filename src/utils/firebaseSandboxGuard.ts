@@ -40,7 +40,11 @@ export const getSandboxLocalBoards = (): any[] => {
       teacherDailyWrites: {}
     }
   ];
-  localStorage.setItem('lucid_spark_boards', JSON.stringify(defaultBoards));
+  try {
+    localStorage.setItem('lucid_spark_boards', JSON.stringify(defaultBoards));
+  } catch (err) {
+    console.warn('Could not save default sandbox boards to localStorage:', err);
+  }
   return defaultBoards;
 };
 
