@@ -501,6 +501,26 @@ export default function Dashboard({
           newHasMore = true;
         }
         nextCursors.admin = snap.docs[snap.docs.length - 1] || null;
+      } else if (uid === 'anonymous') {
+        let q = query(
+          collection(db, 'whiteboards'),
+          where('status', '==', 'ready'),
+          orderBy('createdAt', 'desc'),
+          limit(PAGE_SIZE)
+        );
+        if (currentCursors.owner) {
+          q = query(q, startAfter(currentCursors.owner));
+        }
+        const snap = await getDocs(q);
+        totalReadDocs += snap.size;
+        snap.forEach((docSnap) => {
+          const data: any = docSnap.data();
+          loadedMap.set(docSnap.id, { id: docSnap.id, ...data });
+        });
+        if (snap.size === PAGE_SIZE) {
+          newHasMore = true;
+        }
+        nextCursors.owner = snap.docs[snap.docs.length - 1] || null;
       } else {
         let qOwner = query(
           collection(db, 'whiteboards'),

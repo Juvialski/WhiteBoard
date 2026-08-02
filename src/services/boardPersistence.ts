@@ -186,7 +186,8 @@ export async function ensureAuthUser() {
     const cred = await signInAnonymously(auth);
     return cred.user;
   } catch (err) {
-    return null;
+    console.debug("Anonymous auth failed or disabled, falling back to mock anonymous user object", err);
+    return { uid: 'anonymous', isAnonymous: true } as any;
   }
 }
 

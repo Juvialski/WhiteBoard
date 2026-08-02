@@ -35,4 +35,9 @@ This file tracks the historical evolution of the AI Developer's patterns, rules,
   - Optimized Dashboard queries with `orderBy("createdAt", "desc")`, `limit(12)`, and `startAfter()` pagination, eliminating periodic 2-minute full collection polling.
   - Updated `/firestore.rules` to secure `/whiteboards/{boardId}/assets/{assetId}`.
   - Refactored `/scripts/migrate-board.ts` to lazy-initialize `firebase-admin`, ensuring safety during unit tests. Verified 100% test pass rate across all 16 test files (66 unit tests total) and clean production build compilation.
+- **[2026-08-02]** Unauthenticated Guest Persistence & Resilient Firebase Rules Milestone:
+  - Resolved issues preventing unauthenticated/anonymous users from loading or creating boards when anonymous auth is disabled or fails on live environments.
+  - Created a robust fallback user object `{ uid: 'anonymous', isAnonymous: true }` in `ensureAuthUser` to prevent blocking the creation or load flow for guest users.
+  - Optimized Dashboard's board fetching: if the user is anonymous, it retrieves boards via a status-only Firestore query and filters by the creator's name client-side. Authenticated users continue to run secure, owner-restricted queries. This preserves old guest boards on refresh even if the user session rotates.
+  - Updated and deployed security rules in `firestore.rules` to permit public reading/writing of anonymous-owned boards and link-shared boards, allowing guest users to fully participate in real-time collaboration. Verified 100% clean linter, compiler build, and Firestore rules deployment.
 

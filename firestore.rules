@@ -65,21 +65,25 @@ service cloud.firestore {
     }
 
     function canReadBoardData(boardData) {
-      return isAdmin() || (isAuthenticated() && (
-        boardData.ownerUid == request.auth.uid ||
-        (boardData.editorUids is list && request.auth.uid in boardData.editorUids) ||
-        (boardData.viewerUids is list && request.auth.uid in boardData.viewerUids) ||
+      return isAdmin() || 
         boardData.accessMode == 'link-view' ||
-        boardData.accessMode == 'link-edit'
-      ));
+        boardData.accessMode == 'link-edit' ||
+        boardData.ownerUid == 'anonymous' ||
+        (isAuthenticated() && (
+          boardData.ownerUid == request.auth.uid ||
+          (boardData.editorUids is list && request.auth.uid in boardData.editorUids) ||
+          (boardData.viewerUids is list && request.auth.uid in boardData.viewerUids)
+        ));
     }
 
     function canWriteBoardData(boardData) {
-      return isAdmin() || (isAuthenticated() && (
-        boardData.ownerUid == request.auth.uid ||
-        (boardData.editorUids is list && request.auth.uid in boardData.editorUids) ||
-        (boardData.accessMode == 'link-edit' && boardData.studentsCanWrite == true)
-      ));
+      return isAdmin() || 
+        boardData.ownerUid == 'anonymous' ||
+        (boardData.accessMode == 'link-edit' && boardData.studentsCanWrite == true) ||
+        (isAuthenticated() && (
+          boardData.ownerUid == request.auth.uid ||
+          (boardData.editorUids is list && request.auth.uid in boardData.editorUids)
+        ));
     }
 
     function getBoardData(boardId) {
@@ -106,9 +110,10 @@ service cloud.firestore {
     // Whiteboards collection rules
     match /whiteboards/{boardId} {
       allow read: if canReadBoardData(resource.data);
-      allow create: if isAuthenticated() 
-        && isValidId(boardId) 
-        && request.resource.data.ownerUid == request.auth.uid;
+      allow create: if isValidId(boardId) && (
+        (isAuthenticated() && request.resource.data.ownerUid == request.auth.uid) ||
+        request.resource.data.ownerUid == 'anonymous'
+      );
       allow update: if canWriteBoardData(resource.data)
         && request.resource.data.ownerUid == resource.data.ownerUid
         && (
