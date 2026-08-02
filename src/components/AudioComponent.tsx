@@ -1,11 +1,13 @@
 import React, { useState, useRef, useEffect } from "react";
 import { AudioElement, UserProfile } from "../types";
 import { Play, Pause, Mic, Trash2, Lock, Volume2, Clock } from "lucide-react";
+import { useBoardAsset } from "../hooks/useBoardAsset";
 
 interface AudioComponentProps {
   element: AudioElement;
   isSelected: boolean;
   isInteractive: boolean;
+  boardId?: string;
   onSelect: (e: React.MouseEvent) => void;
   onUpdate: (updates: Partial<AudioElement>) => void;
   onDelete: () => void;
@@ -16,16 +18,19 @@ export default function AudioComponent({
   element,
   isSelected,
   isInteractive,
+  boardId,
   onSelect,
   onUpdate,
   onDelete,
   currentUser,
 }: AudioComponentProps) {
+  const { data: audioDataUrl } = useBoardAsset(boardId, element.assetId, element.audioUrl);
   const [isPlaying, setIsPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
-    const audio = new Audio(element.audioUrl);
+    if (!audioDataUrl) return;
+    const audio = new Audio(audioDataUrl);
     audioRef.current = audio;
 
     audio.onended = () => setIsPlaying(false);
@@ -35,7 +40,7 @@ export default function AudioComponent({
       audio.pause();
       audioRef.current = null;
     };
-  }, [element.audioUrl]);
+  }, [audioDataUrl]);
 
   const togglePlay = (e: React.MouseEvent) => {
     e.stopPropagation();

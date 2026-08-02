@@ -7,6 +7,7 @@ import Dashboard from './components/Dashboard';
 import WhiteboardCanvas from './components/WhiteboardCanvas';
 import { Sparkles, ArrowRight, ShieldCheck } from 'lucide-react';
 import { isSandboxEnvironment, getSandboxLocalBoards } from './utils/firebaseSandboxGuard';
+import { trackOperation } from './utils/firestoreInstrumentation';
 
 const COLLABORATOR_COLORS = [
   '#ef4444', '#f97316', '#f59e0b', '#10b981', 
@@ -19,7 +20,9 @@ export default function App() {
   const [boardName, setBoardName] = useState<string>('Whiteboard Canvas');
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [authInitialized, setAuthInitialized] = useState(false);
   const [appEnabled, setAppEnabled] = useState<boolean>(true);
+  const [adminClaim, setAdminClaim] = useState(false);
 
   // Quick link join variables
   const [linkBoardId, setLinkBoardId] = useState<string | null>(null);
@@ -32,7 +35,7 @@ export default function App() {
     const urlBoardId = params.get('board');
 
     // Subscribe to Firebase Auth State Changes
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       let activeProfile: UserProfile | null = null;
 
       if (user) {
@@ -54,10 +57,20 @@ export default function App() {
         };
         setProfile(activeProfile);
 
+        // Fetch custom claim
+        try {
+          const idTokenResult = await user.getIdTokenResult();
+          setAdminClaim(!!idTokenResult.claims.admin);
+        } catch (err) {
+          console.error('Error fetching admin claim:', err);
+          setAdminClaim(false);
+        }
+
         if (urlBoardId) {
           joinBoardDirectly(urlBoardId, activeProfile);
         }
       } else {
+        setAdminClaim(false);
         // Not logged in (guest / anonymous mode)
         const savedName = localStorage.getItem('lucid_spark_user_name');
         
@@ -88,6 +101,7 @@ export default function App() {
       }
 
       setIsLoading(false);
+      setAuthInitialized(true);
     });
 
     return () => unsubscribe();
@@ -128,24 +142,21 @@ export default function App() {
   }, [boardId, boardName]);
 
   useEffect(() => {
-    if (!profile) return;
+    if (!authInitialized || !profile) return;
 
     const updatePresence = async (isOnline: boolean, forceWrite: boolean = false) => {
-      if (isSandboxEnvironment()) return; // Permanently ban Firestore presence writes in sandbox mode
+      if (isSandboxEnvironment()) return;
 
       const now = Date.now();
       const prevState = lastPresenceStateRef.current;
       const currentBoardId = boardIdRef.current;
       const currentBoardName = boardNameRef.current;
 
-      // Throttle: Skip write if state hasn't changed and less than 60s has passed
       if (
         !forceWrite &&
         prevState &&
         prevState.isOnline === isOnline &&
-        prevState.boardId === (currentBoardId || null) &&
-        now - lastPresenceUpdateRef.current < 60000 &&
-        isOnline === true
+        prevState.boardId === (currentBoardId || null)
       ) {
         return;
       }
@@ -154,9 +165,12 @@ export default function App() {
       lastPresenceStateRef.current = { isOnline, boardId: currentBoardId || null };
 
       try {
-        const presenceRef = doc(db, 'presence', profile.id);
+        const presenceUid = auth.currentUser?.uid;
+        if (!presenceUid) return;
+        const presenceRef = doc(db, 'presence', presenceUid);
         await setDoc(presenceRef, {
-          id: profile.id,
+          id: presenceUid,
+          profileId: profile.id,
           name: profile.name,
           email: profile.email || 'Guest User',
           lastActive: now,
@@ -165,6 +179,7 @@ export default function App() {
           currentBoardId: currentBoardId || null,
           currentBoardName: currentBoardId ? currentBoardName : null
         }, { merge: true });
+        trackOperation('write', 'presence-write', 1);
       } catch (err) {
         console.error('Error updating user presence:', err);
       }
@@ -173,49 +188,35 @@ export default function App() {
     // Initial checkin
     updatePresence(true);
 
-    // Heartbeat every 2 minutes (120s) ONLY when tab is visible to prevent idle sandbox writes
-    const interval = setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        updatePresence(true);
-      }
-    }, 120000);
-
-    // Tab visibility handler
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        updatePresence(true);
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
     // Cleanup presence on unmount
     return () => {
-      clearInterval(interval);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      // Mark offline only when profile changes or user logs out
       updatePresence(false, true);
     };
-  }, [profile]);
+  }, [profile, authInitialized]);
 
   // Update presence when user switches board
   useEffect(() => {
-    if (!profile || isSandboxEnvironment()) return;
+    if (!authInitialized || !profile || isSandboxEnvironment()) return;
     const now = Date.now();
-    // Throttle board switch presence updates by at least 10 seconds
-    if (now - lastPresenceUpdateRef.current < 10000) return;
+    if (now - lastPresenceUpdateRef.current < 5000) return;
     
-    const presenceRef = doc(db, 'presence', profile.id);
+    const presenceUid = auth.currentUser?.uid;
+    if (!presenceUid) return;
+    const presenceRef = doc(db, 'presence', presenceUid);
     setDoc(presenceRef, {
       currentBoardId: boardId || null,
       currentBoardName: boardId ? boardName : null,
       lastActive: now,
       isOnline: true
-    }, { merge: true }).catch(err => console.error('Error updating board presence:', err));
+    }, { merge: true })
+      .then(() => {
+        trackOperation('write', 'presence-write', 1);
+      })
+      .catch(err => console.error('Error updating board presence:', err));
     
     lastPresenceUpdateRef.current = now;
     lastPresenceStateRef.current = { isOnline: true, boardId: boardId || null };
-  }, [profile, boardId]);
+  }, [profile, boardId, authInitialized]);
 
   const handleSignInGoogle = async () => {
     try {
@@ -412,7 +413,7 @@ export default function App() {
     );
   }
 
-  const isAdminUser = profile?.email === 'al.matubis17@gmail.com' || auth.currentUser?.email === 'al.matubis17@gmail.com';
+  const isAdminUser = adminClaim;
 
   if (!appEnabled && !isAdminUser) {
     return (
@@ -479,6 +480,7 @@ export default function App() {
           boardName={boardName}
           currentUser={profile}
           onBackToDashboard={handleBackToDashboard}
+          adminClaim={adminClaim}
         />
       ) : (
         <Dashboard
@@ -486,6 +488,7 @@ export default function App() {
           currentUserProfile={profile}
           onSignInGoogle={handleSignInGoogle}
           onSignOut={handleSignOut}
+          adminClaim={adminClaim}
         />
       )}
     </div>

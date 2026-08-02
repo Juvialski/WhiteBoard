@@ -7,13 +7,13 @@ import {
   setDoc,
   deleteDoc,
   doc,
-  writeBatch,
   increment,
   updateDoc,
   deleteField,
 } from "firebase/firestore";
-import { db } from "../firebase";
+import { db, auth } from "../firebase";
 import { isSandboxEnvironment, getSandboxLocalElements, saveSandboxLocalElements } from "../utils/firebaseSandboxGuard";
+import { getBoardPermissions } from "../utils/boardPermissions";
 import {
   subscribeToBoardState,
   queueElementMutation,
@@ -301,6 +301,7 @@ interface WhiteboardCanvasProps {
   boardName: string;
   currentUser: UserProfile;
   onBackToDashboard: () => void;
+  adminClaim?: boolean;
 }
 
 const getShardId = (id: string, maxShards: number = 10) => {
@@ -317,6 +318,7 @@ export default function WhiteboardCanvas({
   boardName,
   currentUser,
   onBackToDashboard,
+  adminClaim = false,
 }: WhiteboardCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -362,6 +364,8 @@ export default function WhiteboardCanvas({
   const [clipboardElements, setClipboardElements] = useState<BoardElement[]>([]);
   const [boardData, setBoardData] = useState<Whiteboard | null>(null);
   const [legacyMigrationRequired, setLegacyMigrationRequired] = useState(false);
+  const [isHydrated, setIsHydrated] = useState(false);
+  const isHydratedRef = useRef(false);
   const [isTopBarHidden, setIsTopBarHidden] = useState(false);
   const [isHeaderMenuOpen, setIsHeaderMenuOpen] = useState(false);
 
@@ -969,12 +973,18 @@ export default function WhiteboardCanvas({
     return () => cancelAnimationFrame(animId);
   }, []);
 
-  // Permission states for Teacher/Student lock controls
+  // Permission states using getBoardPermissions
+  const permissions = getBoardPermissions(
+    boardData,
+    auth.currentUser ? { uid: auth.currentUser.uid, admin: adminClaim } : null
+  );
+
   const [showReadOnlyAlert, setShowReadOnlyAlert] = useState(false);
   const alertTimeoutRef = useRef<any>(null);
   const isTeacher = currentUser.role === "teacher";
   const studentsCanWrite = boardData?.studentsCanWrite !== false;
-  const canWrite = isTeacher || studentsCanWrite;
+  const canWrite = isSandboxEnvironment() || (permissions.canWrite && !legacyMigrationRequired);
+  const canManage = isSandboxEnvironment() || permissions.canManage;
 
   const isPdfBoard = boardName.startsWith("PDF: ");
   const [hasCentered, setHasCentered] = useState(false);
@@ -1376,6 +1386,8 @@ export default function WhiteboardCanvas({
     if (isSandboxEnvironment()) {
       const initial = getSandboxLocalElements(boardId);
       setElements(initial);
+      setIsHydrated(true);
+      isHydratedRef.current = true;
 
       const handleLocalElementsUpdate = (e: CustomEvent) => {
         if (e.detail && e.detail.boardId === boardId) {
@@ -1393,6 +1405,14 @@ export default function WhiteboardCanvas({
     const unsubscribe = subscribeToBoardState(boardId, (state) => {
       setLegacyMigrationRequired(Boolean(state.migrationRequired));
       setElements(state.elements);
+      if (state.boardData) {
+        setBoardData({
+          id: boardId,
+          ...state.boardData,
+        } as Whiteboard);
+      }
+      setIsHydrated(true);
+      isHydratedRef.current = true;
     });
 
     return () => {
@@ -1600,6 +1620,11 @@ export default function WhiteboardCanvas({
     isMerge: boolean = false,
     actionType: 'set' | 'delete' = 'set'
   ) => {
+    if (!isHydratedRef.current && !isSandboxEnvironment()) {
+      console.warn("Ignoring save element, board not hydrated yet.");
+      return;
+    }
+
     const currentElements = elementsRef.current;
     let updatedElements: BoardElement[] = [];
 
@@ -1689,33 +1714,77 @@ export default function WhiteboardCanvas({
     const dataUrl = `data:image/svg+xml;utf8,${encodeURIComponent(blankSvg)}`;
 
     const id = `pdf-page-${pdfPages.length}-${Date.now()}`;
-    const newPage: ImageElement = {
-      id,
-      type: "image",
-      x: newX,
-      y: newY,
-      width,
-      height,
-      src: dataUrl,
-      zIndex: -1,
-      locked: true,
-      updatedAt: Date.now(),
-    };
 
-    saveElementLocallyAndSync(id, newPage);
-    showSyncToast("Blank page added to document", "success");
+    if (boardId && !isSandboxEnvironment()) {
+      import('../services/storageService').then(({ saveBoardAsset }) => {
+        saveBoardAsset(boardId, undefined, dataUrl, "image/svg+xml")
+          .then((saved) => {
+            const newPage: ImageElement = {
+              id,
+              type: "image",
+              x: newX,
+              y: newY,
+              width,
+              height,
+              assetId: saved.assetId,
+              mimeType: saved.mimeType,
+              zIndex: 1,
+              locked: true,
+              updatedAt: Date.now(),
+            };
+            saveElementLocallyAndSync(id, newPage);
+            showSyncToast("Blank page added to document", "success");
+          })
+          .catch((err) => {
+            console.error("Error creating blank PDF page asset:", err);
+            showSyncToast("Failed to add blank page", "error");
+          });
+      });
+    } else {
+      const newPage: ImageElement = {
+        id,
+        type: "image",
+        x: newX,
+        y: newY,
+        width,
+        height,
+        src: dataUrl,
+        zIndex: 1,
+        locked: true,
+        updatedAt: Date.now(),
+      };
+      saveElementLocallyAndSync(id, newPage);
+      showSyncToast("Blank page added to document", "success");
+    }
   }, [pdfPages, saveElementLocallyAndSync, showSyncToast]);
 
-  const handleSaveVoiceNote = React.useCallback((audioDataUrl: string, durationSec: number) => {
+  const handleSaveVoiceNote = React.useCallback(async (audioDataUrl: string, durationSec: number) => {
     if (!checkCreationRateLimit(4, 3000)) return;
     const coords = pendingVoiceCoords || { x: -panX + 200, y: -panY + 200 };
     const id = "audio-" + Date.now() + Math.floor(Math.random() * 100);
+
+    let assetId: string | undefined;
+    let mimeType = "audio/webm";
+
+    if (!isSandboxEnvironment()) {
+      try {
+        const { saveBoardAsset } = await import("../services/storageService");
+        const meta = await saveBoardAsset(boardId, undefined, audioDataUrl, "audio/webm");
+        assetId = meta.assetId;
+        mimeType = meta.mimeType;
+      } catch (err) {
+        console.error("Failed to save audio asset:", err);
+        showSyncToast("Failed to save audio asset to cloud", "error");
+        return;
+      }
+    }
+
     const newAudio: BoardElement = {
       id,
       type: "audio",
       x: coords.x - 20,
       y: coords.y - 20,
-      audioUrl: audioDataUrl,
+      ...(assetId ? { assetId, mimeType } : { audioUrl: audioDataUrl }),
       duration: durationSec,
       authorName: currentUser.name,
       zIndex: elements.length + 1,
@@ -1728,17 +1797,30 @@ export default function WhiteboardCanvas({
     setSelectedId(id);
     setIsDragging(false);
     showSyncToast("Voice comment attached!", "success");
-  }, [pendingVoiceCoords, panX, panY, currentUser.name, elements.length, saveElementLocallyAndSync, pushToUndo, showSyncToast, setIsDragging, checkCreationRateLimit]);
+  }, [pendingVoiceCoords, panX, panY, currentUser.name, elements.length, saveElementLocallyAndSync, pushToUndo, showSyncToast, setIsDragging, checkCreationRateLimit, boardId]);
 
-  const handleSaveStamp = React.useCallback((stampType: any, label?: string, signatureUrl?: string, color?: string, stampShape?: any) => {
+  const handleSaveStamp = React.useCallback(async (stampType: any, label?: string, signatureUrl?: string, color?: string, stampShape?: any) => {
     if (!checkCreationRateLimit(6, 3000)) return;
     const coords = pendingStampCoords || { x: -panX + 200, y: -panY + 200 };
     const id = "stamp-" + Date.now() + Math.floor(Math.random() * 100);
     
-    // For non-standard shapes, default to a balanced square size
     const isSquareShape = stampShape && stampShape !== "rounded-rect";
     const width = isSquareShape ? 100 : 140;
     const height = isSquareShape ? 100 : 60;
+
+    let signatureAssetId: string | undefined;
+
+    if (signatureUrl && !isSandboxEnvironment()) {
+      try {
+        const { saveBoardAsset } = await import("../services/storageService");
+        const meta = await saveBoardAsset(boardId, undefined, signatureUrl, "image/png");
+        signatureAssetId = meta.assetId;
+      } catch (err) {
+        console.error("Failed to save signature asset:", err);
+        showSyncToast("Failed to save signature asset to cloud", "error");
+        return;
+      }
+    }
 
     const newStamp: BoardElement = {
       id,
@@ -1749,7 +1831,11 @@ export default function WhiteboardCanvas({
       height,
       stampType,
       ...(label ? { label } : {}),
-      ...(signatureUrl ? { signatureDataUrl: signatureUrl } : {}),
+      ...(signatureAssetId
+        ? { signatureAssetId }
+        : signatureUrl
+        ? { signatureDataUrl: signatureUrl }
+        : {}),
       ...(color ? { color } : {}),
       ...(stampShape ? { stampShape } : {}),
       zIndex: elements.length + 1,
@@ -1762,17 +1848,11 @@ export default function WhiteboardCanvas({
     setSelectedId(id);
     setIsDragging(false);
     showSyncToast("Stamp placed!", "success");
-  }, [pendingStampCoords, panX, panY, elements.length, saveElementLocallyAndSync, pushToUndo, showSyncToast, setIsDragging, checkCreationRateLimit]);
+  }, [pendingStampCoords, panX, panY, elements.length, saveElementLocallyAndSync, pushToUndo, showSyncToast, setIsDragging, checkCreationRateLimit, boardId]);
 
 
-  // Synchronize unsaved changes on tab close or navigation away, and handle instant online/offline syncing
+  // Handle instant online/offline syncing and online recovery
   useEffect(() => {
-    const handleBeforeUnload = () => {
-      if (hasUnsavedChanges.current) {
-        flushPendingChanges();
-      }
-    };
-
     const handleOnline = () => {
       console.log("Device back online. Synchronizing offline progress...");
       showSyncToast("Back Online! Synchronizing offline progress...", "info");
@@ -1787,35 +1867,15 @@ export default function WhiteboardCanvas({
       showSyncToast("You are offline. Progress is saved locally in buffer.", "warning");
     };
 
-    window.addEventListener("beforeunload", handleBeforeUnload);
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
 
     return () => {
-      window.removeEventListener("beforeunload", handleBeforeUnload);
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
-      if (hasUnsavedChanges.current) {
-        flushPendingChanges();
-      }
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
     };
   }, [flushPendingChanges, showSyncToast]);
-
-  useEffect(() => {
-    const boardRef = doc(db, "whiteboards", boardId);
-    const unsubscribe = onSnapshot(boardRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.data();
-        setBoardData({
-          id: snapshot.id,
-          ...data,
-        } as Whiteboard);
-      }
-    });
-
-    return () => unsubscribe();
-  }, [boardId]);
 
   // Clean selection when changing tools
   useEffect(() => {
@@ -1856,7 +1916,7 @@ export default function WhiteboardCanvas({
     lastCursorUpdate.current = now;
     lastSyncedCursorPos.current = { x: canvasX, y: canvasY };
 
-    // High performance: Use WebSocket if connected to bypass Firestore write limits!
+    // High performance: Use WebSocket if connected to send live cursor!
     if (isWsActive) {
       wsRef.current!.send(JSON.stringify({
         type: "cursor",
@@ -1872,28 +1932,7 @@ export default function WhiteboardCanvas({
         zoom,
         lastActive: now
       }));
-      return; // Fully bypass Firestore cursor writes when WebSocket is active!
     }
-
-    // Fallback: Sync cursor to Firestore if WebSocket is offline (maximum once every 30 seconds as presence)
-    const cursorRef = doc(
-      db,
-      "whiteboards",
-      boardId,
-      "cursors",
-      currentUser.id,
-    );
-    setDoc(
-      cursorRef,
-      {
-        name: currentUser.name,
-        color: currentUser.color,
-        x: canvasX,
-        y: canvasY,
-        lastActive: now,
-      },
-      { merge: true },
-    ).catch((err) => console.error("Cursor sync error:", err));
   };
 
 
@@ -2027,6 +2066,22 @@ export default function WhiteboardCanvas({
             h = Math.round(h * ratio);
           }
 
+          let assetId: string | undefined;
+          let mimeType = "image/png";
+
+          if (!isSandboxEnvironment()) {
+            try {
+              const { saveBoardAsset } = await import("../services/storageService");
+              const meta = await saveBoardAsset(boardId, undefined, base64Str, "image/png");
+              assetId = meta.assetId;
+              mimeType = meta.mimeType;
+            } catch (storageErr) {
+              console.error("Failed to save pasted image asset:", storageErr);
+              showSyncToast("Failed to save image asset to cloud", "error");
+              return;
+            }
+          }
+
           const newImageElement: ImageElement = {
             id,
             type: "image",
@@ -2034,8 +2089,9 @@ export default function WhiteboardCanvas({
             y: Math.round(y - h / 2),
             width: w,
             height: h,
-            src: base64Str,
+            ...(assetId ? { assetId, mimeType } : { src: base64Str }),
             zIndex: elementsRef.current.length + 1,
+            updatedAt: Date.now(),
           };
 
           // Save using centralized queue manager instead of raw setDoc stray documents!
@@ -3106,9 +3162,6 @@ export default function WhiteboardCanvas({
       const currentList = [...elementsRef.current];
       const updatedList = [...currentList];
 
-      const batch = writeBatch(db);
-      const blobUpdates: Record<string, any> = {};
-
       for (let i = 0; i < itemsToPaste.length; i++) {
         const el = itemsToPaste[i];
         const newId = `copy-${Math.random().toString(36).substring(2, 11)}`;
@@ -3442,9 +3495,9 @@ export default function WhiteboardCanvas({
     }
   };
 
-  // Toggle student writing permission on the board (Teacher Only)
+  // Toggle student writing permission on the board (Teacher/CanManage Only)
   const handleToggleStudentsCanWrite = async () => {
-    if (!isTeacher) return;
+    if (!canManage) return;
     try {
       await setDoc(
         doc(db, "whiteboards", boardId),
@@ -3549,6 +3602,15 @@ export default function WhiteboardCanvas({
       className="flex-1 h-screen relative flex flex-col bg-[#F3F4F6] overflow-hidden"
       id="whiteboard-workspace"
     >
+      {!isHydrated && !isSandboxEnvironment() && (
+        <div className="fixed inset-0 bg-slate-50/80 backdrop-blur-xs flex items-center justify-center z-50">
+          <div className="flex flex-col items-center space-y-3">
+            <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
+            <p className="text-xs text-slate-500 font-medium">Hydrating whiteboard canvas...</p>
+          </div>
+        </div>
+      )}
+
       {/* Floating Island Header Controls */}
       <WhiteboardHeader
         isZenMode={isZenMode}
@@ -3575,6 +3637,7 @@ export default function WhiteboardCanvas({
         setIsPresenterMode={setIsPresenterMode}
         wsRef={wsRef}
         isTeacher={isTeacher}
+        canManage={canManage}
         studentsCanWrite={studentsCanWrite}
         handleToggleStudentsCanWrite={handleToggleStudentsCanWrite}
         isPdfBoard={isPdfBoard}
@@ -3766,6 +3829,7 @@ export default function WhiteboardCanvas({
                   selectedIdsLength={selectedIds.length}
                   activeTool={activeTool}
                   canWrite={canWrite}
+                  boardId={boardId}
                   onSelectElement={handleSelectElement}
                   onUpdateElement={handleUpdateElement}
                   onDeleteElement={handleDeleteElement}

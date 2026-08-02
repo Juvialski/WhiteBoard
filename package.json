@@ -9,7 +9,11 @@
     "start": "node server.ts",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "if command -v java >/dev/null 2>&1; then npx --yes firebase-tools@15.24.0 emulators:exec \"vitest run\"; else echo 'Java not found, running non-emulator tests only' && vitest run --exclude '**/emulator/**' --exclude '**/rules/**'; fi",
+    "test:rules": "npx --yes firebase-tools@15.24.0 emulators:exec --only firestore \"vitest run src/rules\"",
+    "test:persistence": "npx --yes firebase-tools@15.24.0 emulators:exec --only firestore,auth \"vitest run src/services/emulator\"",
+    "admin:grant": "tsx scripts/set-admin-claim.ts grant",
+    "admin:revoke": "tsx scripts/set-admin-claim.ts revoke"
   },
   "dependencies": {
     "@google/genai": "^2.15.0",

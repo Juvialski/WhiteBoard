@@ -1,38 +1,46 @@
-# Firestore Security Specification (TDD SPEC)
+# Collaborative Whiteboard — Firestore Security Rules Specification
 
-## 1. Data Invariants
-
-1. **Global Maintenance Lock**: When the application is suspended (`appEnabled == false` in `/admin_settings/global`), no read or write operations can be performed by any standard user. Only the system administrator (`al.matubis17@gmail.com`) is allowed access.
-2. **Strict Presence Ownership**: A user's presence document (`/presence/{userId}`) can only be created or updated by that specific authenticated user (`request.auth.uid == userId`).
-3. **Strict Cursor Ownership**: A user's transient cursor document (`/whiteboards/{boardId}/cursors/{cursorId}`) can only be created, updated, or deleted by that specific authenticated user (`request.auth.uid == cursorId`).
-4. **Whiteboard Authorization & Access Control**:
-   - Standard students can only create or edit elements on a whiteboard if `studentsCanWrite` is enabled (`true`) on the parent whiteboard document.
-   - Teachers and administrators can always create, edit, or delete board elements.
-   - Deleting a whiteboard is restricted strictly to teachers or administrators.
+This document defines the data-driven security model and access-control matrix for the Collaborative Whiteboard application, satisfying production-grade security, anti-leakage policies, and tenant isolation constraints.
 
 ---
 
-## 2. The "Dirty Dozen" Threat Payloads
+## 1. Access Control Matrix
 
-Here are twelve highly targeted attack payloads that the secure ruleset mathematically blocks:
-
-| Payload ID | Description / Attack Vector | Target Path | Attempted Action | Result |
-|---|---|---|---|---|
-| **T01** | Bypassing global suspension lock while app is disabled. | `/whiteboards/board_1` | `get` / `create` | `PERMISSION_DENIED` |
-| **T02** | Identity Spoofing: Overwriting another user's presence document. | `/presence/victim_user_123` | `create` / `update` | `PERMISSION_DENIED` |
-| **T03** | Cursor Hijacking: Writing coordinates on behalf of another student. | `/whiteboards/b1/cursors/victim_uid` | `create` / `update` | `PERMISSION_DENIED` |
-| **T04** | Unauthorized Board Deletion: A standard student deleting a teacher's board. | `/whiteboards/board_1` | `delete` | `PERMISSION_DENIED` |
-| **T05** | Locked Canvas Override: Modifying elements when `studentsCanWrite` is false. | `/whiteboards/locked_b1/elements/el_1` | `update` | `PERMISSION_DENIED` |
-| **T06** | Orphaned Element Creation: Creating an element under a non-existent board. | `/whiteboards/invalid_board_id/elements/el_1` | `create` | `PERMISSION_DENIED` |
-| **T07** | ID Poisoning: Creating a whiteboard with an invalid non-alphanumeric ID. | `/whiteboards/$$$bad_id$$$` | `create` | `PERMISSION_DENIED` |
-| **T08** | Privilege Escalation: Self-assigning "teacher" role in presence profiles. | `/presence/my_user_id` | `update` with `role: "teacher"` (if not verified) | `PERMISSION_DENIED` |
-| **T09** | Volume Exhaustion: Writing a massive 1MB string name or description. | `/whiteboards/board_1` | `create` | `PERMISSION_DENIED` |
-| **T10** | Unsigned Presence Creation: Registering presence anonymously without auth. | `/presence/guest_user` | `create` | `PERMISSION_DENIED` |
-| **T11** | Rogue Element Erasure: A student deleting elements on a locked teacher board. | `/whiteboards/locked_b1/elements/el_1` | `delete` | `PERMISSION_DENIED` |
-| **T12** | Unauthorized Admin Setting Write: Writing custom rules to the global settings. | `/admin_settings/global` | `write` | `PERMISSION_DENIED` |
+| Role | Board Metadata Read | Board Metadata Write | Shards Read | Shards Write | Legacy Elements Read/Write |
+|---|---|---|---|---|---|
+| **Board Owner / Creator** | ✅ Yes | ✅ Yes (Full) | ✅ Yes | ✅ Yes (Full) | ❌ Denied |
+| **Assigned Student (Member)** | ✅ Yes | ✅ If `studentsCanWrite` | ✅ Yes | ✅ If `studentsCanWrite` | ❌ Denied |
+| **Guest / Anonymous User** | ✅ If `studentsCanWrite` | ❌ No | ✅ If `studentsCanWrite` | ❌ No | ❌ Denied |
+| **Admin User** | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes (Admin Only) |
 
 ---
 
-## 3. Test Runner Design
+## 2. Document Fields Validation
 
-These assertions are mapped into the unit test assertions of `firestore.rules.test.ts` ensuring zero-regression security coverage.
+### Whiteboards Collection (`/whiteboards/{boardId}`)
+- `name`: string
+- `createdBy`: string (Owner name or ID)
+- `studentId`: string (Lowercased assigned student identifier)
+- `studentsCanWrite`: boolean
+- `schemaVersion`: integer (Must be 2)
+- `currentRevision`: integer
+
+### StateShards Subcollection (`/whiteboards/{boardId}/stateShards/{shardId}`)
+- `shardId`: string (shard_0 to shard_19)
+- `elements`: Map of elementId to Element
+- `updatedAt`: timestamp or integer
+
+---
+
+## 3. Test Plan
+
+1. **Owner Access**:
+   - Verify that the user matching `createdBy` (or the owner's credential) can create, read, update, and delete the board and its sub-collection shards.
+2. **Student Member Access**:
+   - Verify that an assigned student whose ID matches the board's `studentId` can read the board and shards.
+   - Verify that the assigned student can write to shards and board metadata ONLY when `studentsCanWrite` is `true`.
+3. **Guest Access**:
+   - Verify that anonymous users can read the board metadata and shards ONLY when `studentsCanWrite` is `true`.
+   - Verify that anonymous users can NEVER write to board metadata or shards.
+4. **Legacy Elements Protection**:
+   - Verify that ordinary clients are strictly blocked from reading or writing the `/elements` sub-collection, reserving access strictly to administrators.

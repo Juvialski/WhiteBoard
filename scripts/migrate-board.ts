@@ -1,17 +1,33 @@
-import {
-  collection,
-  doc,
-  getDocs,
-  writeBatch,
-  query,
-} from 'firebase/firestore';
-import { db } from '../src/firebase';
+import admin from 'firebase-admin';
+import fs from 'fs';
+import path from 'path';
 import { BoardElement } from '../src/types';
-import {
-  partitionElementsIntoChunks,
-  sanitizeForFirestore,
-  simplifyPoints,
-} from '../src/services/boardPersistence';
+
+const adminAny = admin as any;
+
+let dbAdminInstance: any = null;
+
+function getAdminDb() {
+  if (dbAdminInstance) return dbAdminInstance;
+  const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
+  if (!fs.existsSync(configPath)) {
+    throw new Error(`firebase-applet-config.json not found at ${configPath}`);
+  }
+  const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+
+  if (!adminAny.apps || !adminAny.apps.length) {
+    adminAny.initializeApp({
+      projectId: firebaseConfig.projectId,
+    });
+  }
+
+  dbAdminInstance = adminAny.firestore(firebaseConfig.firestoreDatabaseId || '(default)');
+  return dbAdminInstance;
+}
+
+export function setAdminDbInstanceForTesting(mockDb: any) {
+  dbAdminInstance = mockDb;
+}
 
 export interface MigrationOptions {
   boardId?: string;
@@ -22,21 +38,54 @@ export interface MigrationOptions {
 export interface MigrationResult {
   boardId: string;
   sourceElementCount: number;
-  migratedChunkCount: number;
+  migratedShardCount: number;
   verifiedElementCount: number;
   deletedLegacyDocsCount: number;
   success: boolean;
   error?: string;
 }
 
-/**
- * Robustly parses and normalizes any legacy element representation.
- * Supports all 13 legacy formats, field coercions, stroke/points mapping, and point simplification.
- */
+function stableHash(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = (hash << 5) - hash + char;
+    hash |= 0;
+  }
+  return Math.abs(hash);
+}
+
+function simplifyPoints(points: { x: number; y: number }[], tolerance: number = 1.2): { x: number; y: number }[] {
+  if (!points || points.length <= 2) return points || [];
+  const result = [points[0]];
+  let lastPoint = points[0];
+  for (let i = 1; i < points.length - 1; i++) {
+    const p = points[i];
+    const dx = p.x - lastPoint.x;
+    const dy = p.y - lastPoint.y;
+    if (Math.sqrt(dx * dx + dy * dy) > tolerance) {
+      result.push(p);
+      lastPoint = p;
+    }
+  }
+  result.push(points[points.length - 1]);
+  return result;
+}
+
+function sanitizeForFirestore(el: any): any {
+  const clean = { ...el };
+  // strip potential undefined or large binary fields
+  Object.keys(clean).forEach((k) => {
+    if (clean[k] === undefined) {
+      delete clean[k];
+    }
+  });
+  return clean;
+}
+
 export function parseLegacyElement(rawEl: any, fallbackId: string): BoardElement | null {
   if (!rawEl || typeof rawEl !== 'object') return null;
 
-  // Handle stroke vs points vs path array/JSON string
   let points = rawEl.points || rawEl.stroke || rawEl.path;
   if (typeof points === 'string') {
     try {
@@ -80,226 +129,355 @@ export function parseLegacyElement(rawEl: any, fallbackId: string): BoardElement
   return sanitizeForFirestore(clean) as BoardElement;
 }
 
-/**
- * Migration Function
- * Reads all legacy formats, normalizes elements, writes size-aware replacement chunks,
- * verifies count and element ID equality, and ONLY then deletes legacy source docs.
- */
 export async function migrateBoard(
   boardId: string,
   options: { dryRun?: boolean } = {}
 ): Promise<MigrationResult> {
   const isDryRun = !!options.dryRun;
-  console.log(`\n==================================================`);
-  console.log(`Starting migration for Board ID: ${boardId} ${isDryRun ? '(DRY-RUN MODE)' : ''}`);
-  console.log(`==================================================`);
+  const dbAdmin = getAdminDb();
+  const boardRef = dbAdmin.collection('whiteboards').doc(boardId);
+  const lockRef = dbAdmin.collection('whiteboard_migration_locks').doc(boardId);
+  const legacyColl = boardRef.collection('elements');
+  const shardsColl = boardRef.collection('stateShards');
+  const shardsV3Coll = boardRef.collection('stateShardsV3');
+  const MAX_MIGRATION_SHARD_DOCUMENT_BYTES = 700_000;
+  const TARGET_SHARD_COUNT = 160;
+
+  let hasLock = false;
+  let originalManifestData: any = null;
+  let manifestSwitched = false;
+
+  const fetchSources = async () => {
+    const [boardSnap, legacySnap, shardsSnap, shardsV3Snap] = await Promise.all([
+      boardRef.get(),
+      legacyColl.get(),
+      shardsColl.get(),
+      shardsV3Coll.get(),
+    ]);
+    return { boardSnap, legacySnap, shardsSnap, shardsV3Snap };
+  };
+
+  const commitInBatches = async (
+    operations: Array<{ type: 'set' | 'delete'; ref: any; data?: any }>,
+    batchSize = 400
+  ) => {
+    for (let i = 0; i < operations.length; i += batchSize) {
+      const batch = dbAdmin.batch();
+      for (const op of operations.slice(i, i + batchSize)) {
+        if (op.type === 'set') batch.set(op.ref, op.data);
+        else batch.delete(op.ref);
+      }
+      await batch.commit();
+    }
+  };
+
+  const getVersion = (value: any) => ({
+    updatedAt: Number(value?.updatedAt || 0),
+    updatedByClientId: String(value?.updatedByClientId || ''),
+  });
 
   try {
-    // Step 1: Read all documents from legacy /whiteboards/{boardId}/elements
-    const legacyColl = collection(db, 'whiteboards', boardId, 'elements');
-    const legacySnap = await getDocs(query(legacyColl));
-
-    if (legacySnap.empty) {
-      console.log(`[Info] No legacy elements found for board ${boardId}. Checking stateChunks...`);
-      const chunksColl = collection(db, 'whiteboards', boardId, 'stateChunks');
-      const chunksSnap = await getDocs(query(chunksColl));
-      return {
-        boardId,
-        sourceElementCount: 0,
-        migratedChunkCount: chunksSnap.size,
-        verifiedElementCount: 0,
-        deletedLegacyDocsCount: 0,
-        success: true,
-      };
+    let sources = await fetchSources();
+    if (!sources.boardSnap.exists) {
+      throw new Error(`Board ${boardId} does not exist.`);
     }
 
-    console.log(`[Step 1] Found ${legacySnap.size} legacy documents in /whiteboards/${boardId}/elements`);
+    originalManifestData = sources.boardSnap.data() || {};
 
-    // Step 2: Extract and parse all legacy elements
-    const elementsMap = new Map<string, BoardElement>();
-
-    legacySnap.forEach((docSnap) => {
-      const data = docSnap.data();
-      const docId = docSnap.id;
-
-      if (!data) return;
-
-      // Extract containers: elements, drawings, data, or arrays
-      const containers: any[] = [
-        data.elements,
-        data.drawings,
-        data.data,
-        data.items,
-      ].filter(Boolean);
-
-      if (containers.length > 0) {
-        containers.forEach((container) => {
-          if (Array.isArray(container)) {
-            container.forEach((item, idx) => {
-              const parsed = parseLegacyElement(item, `${docId}_arr_${idx}`);
-              if (parsed) elementsMap.set(parsed.id, parsed);
-            });
-          } else if (typeof container === 'object') {
-            Object.entries(container).forEach(([key, value]) => {
-              const parsed = parseLegacyElement(value, key);
-              if (parsed) elementsMap.set(parsed.id, parsed);
-            });
-          }
-        });
-      } else {
-        // Individual stray element doc
-        const parsed = parseLegacyElement(data, docId);
-        if (parsed) elementsMap.set(parsed.id, parsed);
+    const v3LayoutIsClean = (() => {
+      if (
+        Number(originalManifestData.schemaVersion) !== 3 ||
+        Number(originalManifestData.shardLayoutVersion) !== 2 ||
+        Number(originalManifestData.shardCount) !== TARGET_SHARD_COUNT ||
+        originalManifestData.migrationStatus !== 'complete'
+      ) {
+        return false;
       }
-    });
 
-    const totalSourceElements = elementsMap.size;
-    console.log(`[Step 2] Assembled and normalized ${totalSourceElements} unique elements from legacy documents.`);
+      let clean = true;
+      sources.shardsV3Snap.forEach((docSnap: any) => {
+        const data = docSnap.data() || {};
+        const elementIds = Object.keys(data.elements || {});
+        const tombstoneIds = Object.keys(data.tombstones || {});
+        if (elementIds.length === 0 && tombstoneIds.length === 0) clean = false;
+        for (const id of [...elementIds, ...tombstoneIds]) {
+          if (docSnap.id !== `shard_${stableHash(id) % TARGET_SHARD_COUNT}`) {
+            clean = false;
+          }
+        }
+      });
+      return clean;
+    })();
 
-    // Step 3: Size-aware chunking into stateChunks
-    const chunks = partitionElementsIntoChunks(elementsMap);
-    const chunkIds = Array.from(chunks.keys());
-    console.log(`[Step 3] Partitioned elements into ${chunks.size} replacement stateChunks: [${chunkIds.join(', ')}]`);
-
-    if (isDryRun) {
-      console.log(`[Dry-Run] Skipped writing replacement chunks and legacy deletion.`);
+    if (sources.legacySnap.empty && sources.shardsSnap.empty && v3LayoutIsClean) {
       return {
         boardId,
-        sourceElementCount: totalSourceElements,
-        migratedChunkCount: chunks.size,
-        verifiedElementCount: totalSourceElements,
+        sourceElementCount: Number(originalManifestData.totalElements || 0),
+        migratedShardCount: sources.shardsV3Snap.size,
+        verifiedElementCount: Number(originalManifestData.totalElements || 0),
         deletedLegacyDocsCount: 0,
         success: true,
       };
     }
 
-    // Step 4: Write ALL replacement stateChunks and update board manifest
-    console.log(`[Step 4] Writing replacement stateChunks to /whiteboards/${boardId}/stateChunks...`);
-    const batch = writeBatch(db);
+    if (sources.legacySnap.empty && sources.shardsSnap.empty && sources.shardsV3Snap.empty) {
+      throw new Error(`Board ${boardId} has no elements or shards to migrate.`);
+    }
 
-    chunks.forEach((chunkData, chunkId) => {
-      const chunkRef = doc(db, 'whiteboards', boardId, 'stateChunks', chunkId);
-      batch.set(chunkRef, {
-        chunkId,
-        elements: chunkData,
-        elementCount: Object.keys(chunkData).length,
-        updatedAt: Date.now(),
+    if (!isDryRun) {
+      const lockSnap = await lockRef.get();
+      if (lockSnap.exists && lockSnap.data()?.locked) {
+        throw new Error(`Board ${boardId} is currently locked for migration.`);
+      }
+      await lockRef.set({
+        locked: true,
+        lockedAt: adminAny?.firestore?.FieldValue
+          ? adminAny.firestore.FieldValue.serverTimestamp()
+          : new Date(),
+      });
+      hasLock = true;
+
+      // Re-read after acquiring the lock so migration operates on a stable source snapshot.
+      sources = await fetchSources();
+      if (!sources.boardSnap.exists) throw new Error(`Board ${boardId} was deleted during migration startup.`);
+      originalManifestData = sources.boardSnap.data() || {};
+      await boardRef.update({ migrationStatus: 'in-progress', updatedAt: Date.now() });
+    }
+
+    const mergedItems = new Map<string, {
+      isTombstone: boolean;
+      updatedAt: number;
+      updatedByClientId: string;
+      data: any;
+    }>();
+
+    const mergeItem = (
+      id: string,
+      isTombstone: boolean,
+      updatedAt: number,
+      updatedByClientId: string,
+      data: any
+    ) => {
+      const existing = mergedItems.get(id);
+      if (!existing) {
+        mergedItems.set(id, { isTombstone, updatedAt, updatedByClientId, data });
+        return;
+      }
+      const incomingWins =
+        updatedAt > existing.updatedAt ||
+        (updatedAt === existing.updatedAt && updatedByClientId > existing.updatedByClientId) ||
+        (updatedAt === existing.updatedAt && updatedByClientId === existing.updatedByClientId && isTombstone && !existing.isTombstone);
+      if (incomingWins) mergedItems.set(id, { isTombstone, updatedAt, updatedByClientId, data });
+    };
+
+    sources.legacySnap.forEach((docSnap: any) => {
+      const data = docSnap.data();
+      if (!data) return;
+      const containers = [data.elements, data.drawings, data.data, data.items].filter(Boolean);
+      if (containers.length === 0) {
+        const parsed = parseLegacyElement(data, docSnap.id);
+        if (parsed) {
+          const version = getVersion(parsed);
+          mergeItem(parsed.id, false, version.updatedAt || Date.now(), version.updatedByClientId, parsed);
+        }
+        return;
+      }
+      containers.forEach((container: any) => {
+        if (Array.isArray(container)) {
+          container.forEach((item, index) => {
+            const parsed = parseLegacyElement(item, `${docSnap.id}_arr_${index}`);
+            if (parsed) {
+              const version = getVersion(parsed);
+              mergeItem(parsed.id, false, version.updatedAt || Date.now(), version.updatedByClientId, parsed);
+            }
+          });
+        } else if (container && typeof container === 'object') {
+          Object.entries(container).forEach(([id, value]) => {
+            const parsed = parseLegacyElement(value, id);
+            if (parsed) {
+              const version = getVersion(parsed);
+              mergeItem(parsed.id, false, version.updatedAt || Date.now(), version.updatedByClientId, parsed);
+            }
+          });
+        }
       });
     });
 
-    const boardRef = doc(db, 'whiteboards', boardId);
-    batch.set(
-      boardRef,
-      {
-        schemaVersion: 2,
-        currentRevision: 1,
-        chunkIds,
-        totalElements: totalSourceElements,
-        migrationStatus: 'complete',
-        updatedAt: Date.now(),
-        migratedAt: Date.now(),
-      },
-      { merge: true }
-    );
-
-    await batch.commit();
-    console.log(`[Step 4] Replacement chunks and board manifest successfully committed to Firestore.`);
-
-    // Step 5: Verification - read back replacement chunks and verify counts & IDs
-    console.log(`[Step 5] Verifying written stateChunks...`);
-    const chunksColl = collection(db, 'whiteboards', boardId, 'stateChunks');
-    const readBackSnap = await getDocs(query(chunksColl));
-
-    const verifiedElementsMap = new Map<string, BoardElement>();
-    readBackSnap.forEach((d) => {
-      const cData = d.data();
-      if (cData && cData.elements) {
-        Object.entries(cData.elements).forEach(([elId, rawEl]: [string, any]) => {
-          verifiedElementsMap.set(elId, rawEl as BoardElement);
+    const ingestShardSnapshot = (snapshot: any) => {
+      snapshot.forEach((shardDoc: any) => {
+        const data = shardDoc.data() || {};
+        Object.entries(data.elements || {}).forEach(([id, raw]: [string, any]) => {
+          if (!raw || typeof raw !== 'object') return;
+          const version = getVersion(raw);
+          mergeItem(id, Boolean(raw.isDeleted), version.updatedAt, version.updatedByClientId, raw);
         });
+        Object.entries(data.tombstones || {}).forEach(([id, raw]: [string, any]) => {
+          const version = getVersion(raw);
+          mergeItem(id, true, version.updatedAt, version.updatedByClientId, raw);
+        });
+      });
+    };
+
+    ingestShardSnapshot(sources.shardsSnap);
+    ingestShardSnapshot(sources.shardsV3Snap);
+
+    const finalShards = new Map<string, { elements: Record<string, any>; tombstones: Record<string, any> }>();
+    let activeElementCount = 0;
+    let tombstoneCount = 0;
+
+    mergedItems.forEach((item, elementId) => {
+      const shardId = `shard_${stableHash(elementId) % TARGET_SHARD_COUNT}`;
+      if (!finalShards.has(shardId)) finalShards.set(shardId, { elements: {}, tombstones: {} });
+      const shard = finalShards.get(shardId)!;
+      if (item.isTombstone) {
+        tombstoneCount++;
+        shard.tombstones[elementId] = {
+          ...(item.data && typeof item.data === 'object' ? item.data : {}),
+          updatedAt: item.updatedAt,
+          updatedByClientId: item.updatedByClientId,
+        };
+      } else {
+        activeElementCount++;
+        shard.elements[elementId] = sanitizeForFirestore(item.data);
       }
     });
 
-    const verifiedCount = verifiedElementsMap.size;
-    console.log(`[Step 5] Verification result: Read back ${verifiedCount}/${totalSourceElements} elements.`);
+    const currentRevision = Number(originalManifestData.currentRevision ?? 0);
+    const nextRevision = currentRevision + 1;
+    const preparedShardDocs = new Map<string, any>();
 
-    if (verifiedCount !== totalSourceElements) {
-      const msg = `Verification failed! Source count (${totalSourceElements}) does not match verified count (${verifiedCount}). Aborting legacy document deletion.`;
-      console.error(`[Error] ${msg}`);
+    finalShards.forEach((shard, shardId) => {
+      const shardDocument = {
+        shardId,
+        revision: nextRevision,
+        elements: shard.elements,
+        tombstones: shard.tombstones,
+        updatedAt: Date.now(),
+      };
+      const bytes = new TextEncoder().encode(JSON.stringify(shardDocument)).byteLength;
+      if (bytes > MAX_MIGRATION_SHARD_DOCUMENT_BYTES) {
+        throw new Error(
+          `Migration shard ${shardId} is ${bytes} bytes, above the ${MAX_MIGRATION_SHARD_DOCUMENT_BYTES}-byte safe limit.`
+        );
+      }
+      preparedShardDocs.set(shardId, shardDocument);
+    });
+
+    if (isDryRun) {
       return {
         boardId,
-        sourceElementCount: totalSourceElements,
-        migratedChunkCount: chunks.size,
-        verifiedElementCount: verifiedCount,
+        sourceElementCount: activeElementCount,
+        migratedShardCount: preparedShardDocs.size,
+        verifiedElementCount: activeElementCount,
         deletedLegacyDocsCount: 0,
-        success: false,
-        error: msg,
+        success: true,
       };
     }
 
-    // Verify each source ID exists in verified elements
-    for (const sourceId of elementsMap.keys()) {
-      if (!verifiedElementsMap.has(sourceId)) {
-        const msg = `Verification failed! Missing element ID ${sourceId} in verified set. Aborting legacy document deletion.`;
-        console.error(`[Error] ${msg}`);
-        return {
-          boardId,
-          sourceElementCount: totalSourceElements,
-          migratedChunkCount: chunks.size,
-          verifiedElementCount: verifiedCount,
-          deletedLegacyDocsCount: 0,
-          success: false,
-          error: msg,
-        };
+    await commitInBatches(
+      Array.from(preparedShardDocs, ([shardId, data]) => ({
+        type: 'set' as const,
+        ref: shardsV3Coll.doc(shardId),
+        data,
+      }))
+    );
+
+    // Remove destination documents that are not part of the deterministic final layout.
+    let readBack = await shardsV3Coll.get();
+    const expectedShardIds = new Set(preparedShardDocs.keys());
+    const staleV3Docs = readBack.docs.filter((docSnap: any) => !expectedShardIds.has(docSnap.id));
+    await commitInBatches(staleV3Docs.map((docSnap: any) => ({ type: 'delete' as const, ref: docSnap.ref })));
+
+    // Read back again and verify exact placement, uniqueness, revision, and size.
+    readBack = await shardsV3Coll.get();
+    const seenActive = new Map<string, string>();
+    const seenTombstones = new Map<string, string>();
+
+    readBack.forEach((docSnap: any) => {
+      if (!expectedShardIds.has(docSnap.id)) {
+        throw new Error(`Unexpected destination shard ${docSnap.id} remained after cleanup.`);
       }
+      const data = docSnap.data() || {};
+      if (Number(data.revision) !== nextRevision) {
+        throw new Error(`Shard ${docSnap.id} has revision ${data.revision}; expected ${nextRevision}.`);
+      }
+      const bytes = new TextEncoder().encode(JSON.stringify(data)).byteLength;
+      if (bytes > MAX_MIGRATION_SHARD_DOCUMENT_BYTES) {
+        throw new Error(`Verified shard ${docSnap.id} exceeds the safe size limit.`);
+      }
+      Object.keys(data.elements || {}).forEach((id) => {
+        const expected = `shard_${stableHash(id) % TARGET_SHARD_COUNT}`;
+        if (docSnap.id !== expected) throw new Error(`Element ${id} is in ${docSnap.id}; expected ${expected}.`);
+        if (seenActive.has(id) || seenTombstones.has(id)) throw new Error(`Duplicate migrated ID ${id}.`);
+        seenActive.set(id, docSnap.id);
+      });
+      Object.keys(data.tombstones || {}).forEach((id) => {
+        const expected = `shard_${stableHash(id) % TARGET_SHARD_COUNT}`;
+        if (docSnap.id !== expected) throw new Error(`Tombstone ${id} is in ${docSnap.id}; expected ${expected}.`);
+        if (seenActive.has(id) || seenTombstones.has(id)) throw new Error(`Duplicate migrated ID ${id}.`);
+        seenTombstones.set(id, docSnap.id);
+      });
+    });
+
+    for (const [id, item] of mergedItems) {
+      if (item.isTombstone && !seenTombstones.has(id)) throw new Error(`Missing migrated tombstone ${id}.`);
+      if (!item.isTombstone && !seenActive.has(id)) throw new Error(`Missing migrated element ${id}.`);
+    }
+    if (seenActive.size !== activeElementCount || seenTombstones.size !== tombstoneCount) {
+      throw new Error('Migration verification count mismatch.');
     }
 
-    console.log(`[Step 5] Verification PASSED! All ${verifiedCount} elements match source exactly.`);
+    const finalShardIds = Array.from(expectedShardIds).sort();
+    const deletedShardIds = staleV3Docs.map((docSnap: any) => docSnap.id).sort();
 
-    // Step 6: Delete legacy documents ONLY AFTER verification passes
-    console.log(`[Step 6] Safely deleting legacy documents in /whiteboards/${boardId}/elements...`);
-    let deletedCount = 0;
-    const legacyDocs = legacySnap.docs;
+    await boardRef.set({
+      schemaVersion: 3,
+      shardLayoutVersion: 2,
+      shardCount: TARGET_SHARD_COUNT,
+      currentRevision: nextRevision,
+      changedShardIds: finalShardIds,
+      deletedShardIds,
+      totalElements: activeElementCount,
+      migrationStatus: 'complete',
+      updatedAt: Date.now(),
+      migratedAt: Date.now(),
+    }, { merge: true });
+    manifestSwitched = true;
 
-    for (let i = 0; i < legacyDocs.length; i += 400) {
-      const slice = legacyDocs.slice(i, i + 400);
-      const delBatch = writeBatch(db);
-      slice.forEach((d) => delBatch.delete(d.ref));
-      await delBatch.commit();
-      deletedCount += slice.length;
-      console.log(`  - Deleted ${deletedCount}/${legacyDocs.length} legacy documents...`);
-    }
-
-    console.log(`[Step 6] Completed legacy deletion of ${deletedCount} documents.`);
-    console.log(`==================================================`);
-    console.log(`MIGRATION COMPLETED SUCCESSFULLY FOR BOARD ${boardId}`);
-    console.log(`==================================================\n`);
+    const legacyDeleteOps = sources.legacySnap.docs.map((docSnap: any) => ({ type: 'delete' as const, ref: docSnap.ref }));
+    const schema2DeleteOps = sources.shardsSnap.docs.map((docSnap: any) => ({ type: 'delete' as const, ref: docSnap.ref }));
+    await commitInBatches([...legacyDeleteOps, ...schema2DeleteOps]);
 
     return {
       boardId,
-      sourceElementCount: totalSourceElements,
-      migratedChunkCount: chunks.size,
-      verifiedElementCount: verifiedCount,
-      deletedLegacyDocsCount: deletedCount,
+      sourceElementCount: activeElementCount,
+      migratedShardCount: preparedShardDocs.size,
+      verifiedElementCount: seenActive.size,
+      deletedLegacyDocsCount: legacyDeleteOps.length + schema2DeleteOps.length + staleV3Docs.length,
       success: true,
     };
   } catch (err: any) {
-    console.error(`[Error] Migration failed for board ${boardId}:`, err);
+    if (hasLock && originalManifestData && !manifestSwitched) {
+      try {
+        await boardRef.set(originalManifestData);
+      } catch (rollbackError) {
+        console.error(`Failed to restore board ${boardId} manifest after migration error:`, rollbackError);
+      }
+    }
     return {
       boardId,
       sourceElementCount: 0,
-      migratedChunkCount: 0,
+      migratedShardCount: 0,
       verifiedElementCount: 0,
       deletedLegacyDocsCount: 0,
       success: false,
       error: err instanceof Error ? err.message : String(err),
     };
+  } finally {
+    if (hasLock) await lockRef.delete().catch(() => {});
   }
 }
 
-/**
- * CLI Runner for script
- */
 async function runCli() {
   const args = process.argv.slice(2);
   const isDryRun = args.includes('--dry-run');
@@ -309,6 +487,7 @@ async function runCli() {
 
   if (!boardId && !isAll) {
     console.log(`
+Administrative Whiteboard Migration CLI Tool
 Usage:
   npx tsx scripts/migrate-board.ts --boardId <id> [--dry-run]
   npx tsx scripts/migrate-board.ts --all [--dry-run]
@@ -320,7 +499,7 @@ Usage:
     await migrateBoard(boardId, { dryRun: isDryRun });
   } else if (isAll) {
     console.log('Fetching all boards for migration...');
-    const boardsSnap = await getDocs(query(collection(db, 'whiteboards')));
+    const boardsSnap = await getAdminDb().collection('whiteboards').get();
     console.log(`Found ${boardsSnap.size} boards to check/migrate.`);
 
     for (const d of boardsSnap.docs) {
@@ -329,6 +508,6 @@ Usage:
   }
 }
 
-if (import.meta.url && import.meta.url.endsWith('migrate-board.ts') && process.argv[1]?.includes('migrate-board')) {
+if (process.argv[1]?.includes('migrate-board')) {
   runCli().catch(console.error);
 }

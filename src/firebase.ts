@@ -1,7 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { initializeFirestore, persistentLocalCache, memoryLocalCache } from "firebase/firestore";
 import { getAuth, GoogleAuthProvider, signInAnonymously, onAuthStateChanged } from "firebase/auth";
-import { getStorage } from "firebase/storage";
 import { isSandboxEnvironment } from "./utils/firebaseSandboxGuard";
 
 const firebaseConfig = {
@@ -36,9 +35,6 @@ try {
 const auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
 
-// Initialize Storage
-const storage = getStorage(app);
-
 // Auto sign-in anonymously for guest users to satisfy security rules (request.auth != null) when not in sandbox
 onAuthStateChanged(auth, (user) => {
   if (!user && !isSandboxEnvironment()) {
@@ -51,6 +47,6 @@ onAuthStateChanged(auth, (user) => {
   }
 });
 
-export { app, db, auth, googleProvider, storage };
+export { app, db, auth, googleProvider };
 
 

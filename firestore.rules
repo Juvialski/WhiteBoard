@@ -11,9 +11,91 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return request.auth != null 
-        && request.auth.token.email == 'al.matubis17@gmail.com' 
-        && request.auth.token.email_verified == true;
+      return request.auth != null && request.auth.token.admin == true;
+    }
+
+    function isBoardOwner(boardData) {
+      return isAuthenticated() && boardData.ownerUid == request.auth.uid;
+    }
+
+    function aclFields() {
+      return [
+        "ownerUid",
+        "editorUids",
+        "viewerUids",
+        "accessMode",
+        "studentsCanWrite"
+      ];
+    }
+
+    function storageLayoutFields() {
+      return [
+        "schemaVersion",
+        "shardLayoutVersion",
+        "shardCount",
+        "migrationStatus",
+        "status"
+      ];
+    }
+
+    function protectedManagementFields() {
+      return [
+        "ownerUid",
+        "editorUids",
+        "viewerUids",
+        "accessMode",
+        "studentsCanWrite",
+        "schemaVersion",
+        "shardLayoutVersion",
+        "shardCount",
+        "migrationStatus",
+        "status"
+      ];
+    }
+
+    function changesProtectedManagementFields() {
+      return request.resource.data
+        .diff(resource.data)
+        .affectedKeys()
+        .hasAny(protectedManagementFields());
+    }
+
+    function isBoardManager(boardData) {
+      return isAdmin() || isBoardOwner(boardData);
+    }
+
+    function canReadBoardData(boardData) {
+      return isAdmin() || (isAuthenticated() && (
+        boardData.ownerUid == request.auth.uid ||
+        (boardData.editorUids is list && request.auth.uid in boardData.editorUids) ||
+        (boardData.viewerUids is list && request.auth.uid in boardData.viewerUids) ||
+        boardData.accessMode == 'link-view' ||
+        boardData.accessMode == 'link-edit'
+      ));
+    }
+
+    function canWriteBoardData(boardData) {
+      return isAdmin() || (isAuthenticated() && (
+        boardData.ownerUid == request.auth.uid ||
+        (boardData.editorUids is list && request.auth.uid in boardData.editorUids) ||
+        (boardData.accessMode == 'link-edit' && boardData.studentsCanWrite == true)
+      ));
+    }
+
+    function getBoardData(boardId) {
+      return get(/databases/$(database)/documents/whiteboards/$(boardId)).data;
+    }
+
+    function canReadBoard(boardId) {
+      return canReadBoardData(getBoardData(boardId));
+    }
+
+    function canWriteBoard(boardId) {
+      return canWriteBoardData(getBoardData(boardId));
+    }
+
+    function canDeleteBoard(boardId) {
+      return isAdmin() || isBoardOwner(getBoardData(boardId));
     }
 
     // Default deny catch-all
@@ -23,33 +105,76 @@ service cloud.firestore {
 
     // Whiteboards collection rules
     match /whiteboards/{boardId} {
-      allow read: if true;
-      allow create, update: if isAuthenticated() && isValidId(boardId);
-      allow delete: if isAuthenticated() && isValidId(boardId);
+      allow read: if canReadBoardData(resource.data);
+      allow create: if isAuthenticated() 
+        && isValidId(boardId) 
+        && request.resource.data.ownerUid == request.auth.uid;
+      allow update: if canWriteBoardData(resource.data)
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && (
+          !changesProtectedManagementFields()
+          || isBoardManager(resource.data)
+        );
+      allow delete: if canDeleteBoard(boardId);
 
-      // Subcollection: stateChunks (modern chunked board state)
-      match /stateChunks/{chunkId} {
-        allow read: if true;
-        allow write: if isAuthenticated() && isValidId(boardId) && isValidId(chunkId);
+      // Subcollection: stateShards (modern sharded board state)
+      match /stateShards/{shardId} {
+        allow read: if canReadBoard(boardId);
+        allow write: if canWriteBoard(boardId);
       }
 
-      // Legacy subcollection: elements (READ ONLY for client migration)
+      // Subcollection: stateShardsV3 (schema version 3 sharded board state)
+      match /stateShardsV3/{shardId} {
+        allow read: if canReadBoard(boardId);
+        allow write: if canWriteBoard(boardId);
+      }
+
+      // Subcollection: assets (base64 binary assets stored in Firestore)
+      match /assets/{assetId} {
+        allow read: if canReadBoard(boardId);
+        allow create: if canWriteBoard(boardId)
+          && request.resource.data.assetId == assetId
+          && request.resource.data.encoding == "base64"
+          && request.resource.data.data is string
+          && request.resource.data.data.size() <= 750000
+          && request.resource.data.encodedByteSize is int
+          && request.resource.data.encodedByteSize <= 750000
+          && request.resource.data.mimeType is string
+          && request.resource.data.contentHash is string;
+
+        allow update: if canWriteBoard(boardId)
+          && request.resource.data.assetId == assetId
+          && request.resource.data.data is string
+          && request.resource.data.data.size() <= 750000;
+
+        allow delete: if canWriteBoard(boardId);
+      }
+
+      // Subcollection: presence
+      match /presence/{userId} {
+        allow read: if canReadBoard(boardId);
+        allow write: if isAuthenticated() && request.auth.uid == userId && canReadBoard(boardId);
+      }
+
+      // Legacy subcollection: elements (Strictly administrative / admin only)
       match /elements/{elementId} {
-        allow read: if true;
-        allow write: if false; // Strictly block all client writes to legacy elements
+        allow read, write: if isAdmin();
       }
 
-      // Subcollection: live collaborator cursors
+      // Subcollection: live collaborator cursors (Deprecated)
       match /cursors/{cursorId} {
-        allow read: if true;
-        allow write: if isAuthenticated() && isValidId(cursorId);
+        allow read: if canReadBoard(boardId);
+        allow write: if isAuthenticated() && isValidId(cursorId) && canWriteBoard(boardId);
       }
     }
 
-    // Global User Presence rules
+    // Global User Presence rules: strict user isolation with admin visibility and delete
     match /presence/{userId} {
-      allow read: if true;
-      allow write: if isAuthenticated() && isValidId(userId);
+      allow read: if isAdmin();
+      allow create, update: if isAuthenticated()
+        && request.auth.uid == userId
+        && request.resource.data.id == request.auth.uid;
+      allow delete: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
     }
 
     // Admin Settings rules

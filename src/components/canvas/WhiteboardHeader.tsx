@@ -42,6 +42,7 @@ interface WhiteboardHeaderProps {
   setIsPresenterMode: (val: boolean) => void;
   wsRef: React.MutableRefObject<WebSocket | null>;
   isTeacher: boolean;
+  canManage?: boolean;
   studentsCanWrite: boolean;
   handleToggleStudentsCanWrite: () => void;
   isPdfBoard: boolean;
@@ -79,6 +80,7 @@ export const WhiteboardHeader: React.FC<WhiteboardHeaderProps> = ({
   setIsPresenterMode,
   wsRef,
   isTeacher,
+  canManage = false,
   studentsCanWrite,
   handleToggleStudentsCanWrite,
   isPdfBoard,
@@ -303,7 +305,7 @@ export const WhiteboardHeader: React.FC<WhiteboardHeaderProps> = ({
         </button>
 
         {/* Teacher control to allow/disallow student writing */}
-        {isTeacher ? (
+        {canManage ? (
           <button
             onClick={handleToggleStudentsCanWrite}
             className={`hidden md:flex p-1.5 md:px-2.5 md:py-1 rounded-xl items-center space-x-1.5 font-bold text-xs transition-all cursor-pointer border shrink-0 ${
@@ -480,7 +482,7 @@ export const WhiteboardHeader: React.FC<WhiteboardHeaderProps> = ({
               </button>
 
               {/* Teacher lock/unlock or student status */}
-              {isTeacher ? (
+              {canManage ? (
                 <button
                   onClick={() => {
                     handleToggleStudentsCanWrite();

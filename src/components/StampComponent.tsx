@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { StampElement, UserProfile } from "../types";
 import { CheckCircle2, Star, Award, AlertCircle, CheckSquare, FileCheck, Trash2, Shapes, Palette } from "lucide-react";
+import { useBoardAsset } from "../hooks/useBoardAsset";
 
 const STAMP_SHAPES: { type: NonNullable<StampElement["stampShape"]>; label: string }[] = [
   { type: "rounded-rect", label: "Rectangle" },
@@ -31,6 +32,7 @@ interface StampComponentProps {
   element: StampElement;
   isSelected: boolean;
   isInteractive: boolean;
+  boardId?: string;
   onSelect: (e: React.MouseEvent) => void;
   onUpdate: (updates: Partial<StampElement>) => void;
   onDelete: () => void;
@@ -42,11 +44,17 @@ export default function StampComponent({
   element,
   isSelected,
   isInteractive,
+  boardId,
   onSelect,
   onUpdate,
   onDelete,
   canWrite = true,
 }: StampComponentProps) {
+  const { data: signatureUrl } = useBoardAsset(
+    boardId,
+    element.signatureAssetId || element.assetId,
+    element.signatureDataUrl
+  );
   const [showShapeMenu, setShowShapeMenu] = useState(false);
   const shape = element.stampShape || "rounded-rect";
   
@@ -133,8 +141,8 @@ export default function StampComponent({
       case "signature":
         return (
           <div className="bg-white/95 border-2 border-indigo-200 p-1.5 rounded-xl shadow-md flex flex-col items-center justify-center w-full h-full select-none">
-            {element.signatureDataUrl ? (
-              <img src={element.signatureDataUrl} alt="Signature" className="h-full max-h-[32px] object-contain select-none flex-shrink-0" />
+            {signatureUrl ? (
+              <img src={signatureUrl} alt="Signature" className="h-full max-h-[32px] object-contain select-none flex-shrink-0" />
             ) : (
               <span className="font-serif italic text-indigo-900 font-bold text-sm truncate max-w-full">
                 {element.label || "Verified Signature"}

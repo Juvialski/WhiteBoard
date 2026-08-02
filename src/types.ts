@@ -23,14 +23,17 @@ export interface Point {
 export interface ImageElement {
   id: string;
   type: "image";
+  assetId?: string; // Reference to whiteboards/{boardId}/assets/{assetId}
+  mimeType?: string;
   x: number;
   y: number;
   width: number;
   height: number;
-  src: string; // Base64 data URL
+  src?: string; // Legacy fallback Base64 data URL
   reactions?: Record<string, string[]>; // emoji -> array of userNames
   zIndex: number;
   updatedAt?: number;
+  updatedByClientId?: string;
   locked?: boolean;
 }
 
@@ -175,12 +178,15 @@ export interface AudioElement {
   type: "audio";
   x: number;
   y: number;
-  audioUrl: string; // Base64 audio blob data URL
+  assetId?: string; // Reference to whiteboards/{boardId}/assets/{assetId}
+  mimeType?: string;
+  audioUrl?: string; // Legacy fallback Base64 audio blob data URL
   duration?: number; // Duration in seconds
   authorName?: string;
   color?: string;
   zIndex: number;
   updatedAt?: number;
+  updatedByClientId?: string;
   locked?: boolean;
 }
 
@@ -193,11 +199,14 @@ export interface StampElement {
   height: number;
   stampType: "checked" | "star" | "great_job" | "needs_revision" | "grade_a" | "approved" | "signature" | "custom";
   label?: string;
-  signatureDataUrl?: string; // base64 if custom drawn signature
+  signatureAssetId?: string; // Reference to whiteboards/{boardId}/assets/{assetId}
+  signatureDataUrl?: string; // Legacy fallback base64
+  assetId?: string;
   color?: string;
   stampShape?: "rounded-rect" | "circle" | "star" | "badge" | "diamond" | "banner" | "hexagon" | "ribbon" | "heart" | "shield" | "crest";
   zIndex: number;
   updatedAt?: number;
+  updatedByClientId?: string;
   locked?: boolean;
 }
 
@@ -256,6 +265,11 @@ export interface Whiteboard {
   description?: string;
   createdAt: number;
   createdBy: string;
+  ownerUid?: string;
+  accessMode?: "private" | "public" | "shared";
+  editorUids?: string[];
+  viewerUids?: string[];
+  status?: "initializing" | "ready";
   studentId?: string; // If assigned to a specific student
   studentName?: string;
   studentsCanWrite?: boolean;

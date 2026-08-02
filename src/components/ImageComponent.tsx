@@ -1,12 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { ImageElement, UserProfile } from '../types';
-import { Smile, Trash2, Maximize2, X, Crop, Check, Lock, Unlock } from 'lucide-react';
+import { Smile, Trash2, Maximize2, X, Crop, Check, Lock, Unlock, Loader2, AlertCircle } from 'lucide-react';
+import { useBoardAsset } from '../hooks/useBoardAsset';
+import { saveBoardAsset } from '../services/storageService';
+import { isSandboxEnvironment } from '../utils/firebaseSandboxGuard';
 
 interface ImageComponentProps {
   element: ImageElement;
   isSelected: boolean;
   currentUser: UserProfile;
   zoom: number;
+  boardId?: string;
   onSelect: (e: React.MouseEvent) => void;
   onUpdate: (updates: Partial<ImageElement>) => void;
   onDelete: () => void;
@@ -22,6 +26,7 @@ export default function ImageComponent({
   isSelected,
   currentUser,
   zoom,
+  boardId,
   onSelect,
   onUpdate,
   onDelete,
@@ -29,6 +34,12 @@ export default function ImageComponent({
   activeTool = 'select',
   canWrite = true
 }: ImageComponentProps) {
+  const { data: imageSrc, loading: isAssetLoading, error: assetError, retry: retryAsset } = useBoardAsset(
+    boardId,
+    element.assetId,
+    element.src
+  );
+
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isCropping, setIsCropping] = useState(false);
@@ -96,41 +107,79 @@ export default function ImageComponent({
       window.addEventListener('pointerup', onPointerUp);
   };
 
-  const handleConfirmCrop = (e: React.MouseEvent) => {
-     e.stopPropagation();
-     const img = new Image();
-     img.onload = () => {
-         const scaleX = img.naturalWidth / element.width;
-         const scaleY = img.naturalHeight / element.height;
+  const [isSavingCrop, setIsSavingCrop] = useState(false);
+  const [cropError, setCropError] = useState<string | null>(null);
 
-         const cropW = element.width - crop.left - crop.right;
-         const cropH = element.height - crop.top - crop.bottom;
+  const handleConfirmCrop = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setCropError(null);
+    if (!imageSrc) return;
 
-         const sourceX = crop.left * scaleX;
-         const sourceY = crop.top * scaleY;
-         const sourceW = cropW * scaleX;
-         const sourceH = cropH * scaleY;
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = async () => {
+      try {
+        const scaleX = img.naturalWidth / element.width;
+        const scaleY = img.naturalHeight / element.height;
 
-         const sX = Math.max(0, Math.floor(sourceX));
-         const sY = Math.max(0, Math.floor(sourceY));
-         const sW = Math.max(1, Math.floor(sourceW));
-         const sH = Math.max(1, Math.floor(sourceH));
+        const cropW = Math.round(element.width - crop.left - crop.right);
+        const cropH = Math.round(element.height - crop.top - crop.bottom);
 
-         const canvas = document.createElement("canvas");
-         canvas.width = sW;
-         canvas.height = sH;
-         
-         const ctx = canvas.getContext("2d");
-         if (ctx) {
-             ctx.drawImage(img, sX, sY, sW, sH, 0, 0, sW, sH);
-             const newSrc = canvas.toDataURL("image/jpeg", 0.9);
-             // Shift x/y by crop left/top to maintain position visually!
-             onUpdate({ src: newSrc, width: cropW, height: cropH, x: element.x + crop.left, y: element.y + crop.top });
-         }
-         setIsCropping(false);
-         setCrop({ top: 0, left: 0, right: 0, bottom: 0 });
-     };
-     img.src = element.src;
+        const sourceX = crop.left * scaleX;
+        const sourceY = crop.top * scaleY;
+        const sourceW = cropW * scaleX;
+        const sourceH = cropH * scaleY;
+
+        const sX = Math.max(0, Math.floor(sourceX));
+        const sY = Math.max(0, Math.floor(sourceY));
+        const sW = Math.max(1, Math.floor(sourceW));
+        const sH = Math.max(1, Math.floor(sourceH));
+
+        const canvas = document.createElement("canvas");
+        canvas.width = sW;
+        canvas.height = sH;
+
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+        ctx.drawImage(img, sX, sY, sW, sH, 0, 0, sW, sH);
+        const croppedData = canvas.toDataURL("image/jpeg", 0.9);
+        const newX = element.x + crop.left;
+        const newY = element.y + crop.top;
+
+        if (boardId && !isSandboxEnvironment()) {
+          setIsSavingCrop(true);
+          const saved = await saveBoardAsset(boardId, undefined, croppedData, "image/jpeg");
+          onUpdate({
+            assetId: saved.assetId,
+            mimeType: saved.mimeType,
+            src: undefined,
+            width: cropW,
+            height: cropH,
+            x: newX,
+            y: newY,
+          });
+        } else {
+          onUpdate({
+            src: croppedData,
+            width: cropW,
+            height: cropH,
+            x: newX,
+            y: newY,
+          });
+        }
+        setIsCropping(false);
+        setCrop({ top: 0, left: 0, right: 0, bottom: 0 });
+      } catch (err: any) {
+        console.error("Failed to save cropped image asset:", err);
+        setCropError("Failed to save cropped image asset. Please try again.");
+      } finally {
+        setIsSavingCrop(false);
+      }
+    };
+    img.onerror = () => {
+      setCropError("Image loading failed during crop.");
+    };
+    img.src = imageSrc;
   };
 
   const cursorClass = element.locked 
@@ -161,12 +210,29 @@ export default function ImageComponent({
       >
         {/* Image Content Frame */}
         <div className="w-full h-full relative rounded-xs overflow-hidden flex items-center justify-center group/img">
-          <img
-            src={element.src}
-            alt="Pasted canvas content"
-            className="w-full h-full object-cover select-none pointer-events-none"
-            referrerPolicy="no-referrer"
-          />
+          {isAssetLoading ? (
+            <div className="w-full h-full bg-slate-100 animate-pulse flex items-center justify-center text-slate-400 text-xs gap-1.5 p-2">
+              <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
+              <span>Loading asset...</span>
+            </div>
+          ) : assetError && !imageSrc ? (
+            <div className="w-full h-full bg-rose-50 border border-rose-200 flex flex-col items-center justify-center p-2 text-rose-600 text-xs gap-1 text-center">
+              <span>Asset load failed</span>
+              <button
+                onClick={retryAsset}
+                className="px-2 py-0.5 bg-rose-100 hover:bg-rose-200 rounded font-semibold text-[10px] cursor-pointer"
+              >
+                Retry
+              </button>
+            </div>
+          ) : (
+            <img
+              src={imageSrc || ''}
+              alt="Pasted canvas content"
+              className="w-full h-full object-cover select-none pointer-events-none"
+              referrerPolicy="no-referrer"
+            />
+          )}
           
           {isCropping && (
             <div className="absolute inset-0 pointer-events-none">

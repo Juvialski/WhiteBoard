@@ -1,15 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { collection, query, getDocs, onSnapshot, addDoc, deleteDoc, doc, writeBatch, setDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { collection, query, getDocs, onSnapshot, addDoc, deleteDoc, doc, writeBatch, setDoc, orderBy, limit, startAfter } from 'firebase/firestore';
+import { db, auth } from '../firebase';
 import { Whiteboard, UserProfile } from '../types';
 import { Plus, Trash2, ArrowRight, User, BookOpen, GraduationCap, Users, Sparkles, Copy, Check, FileUp, Loader2, ChevronDown, ChevronUp, Calendar, BarChart2, List, RefreshCw, ShieldCheck } from 'lucide-react';
 import { isSandboxEnvironment, getSandboxLocalBoards, saveSandboxLocalBoards, saveSandboxLocalElements } from '../utils/firebaseSandboxGuard';
+import { trackOperation } from '../utils/firestoreInstrumentation';
+import { getBoardPermissions } from '../utils/boardPermissions';
 
 interface DashboardProps {
   onSelectBoard: (boardId: string, profile: UserProfile) => void;
   currentUserProfile: UserProfile | null;
   onSignInGoogle: () => void;
   onSignOut: () => void;
+  adminClaim?: boolean;
 }
 
 const COLLABORATOR_COLORS = [
@@ -22,9 +25,21 @@ export default function Dashboard({
   onSelectBoard, 
   currentUserProfile, 
   onSignInGoogle, 
-  onSignOut 
+  onSignOut,
+  adminClaim = false
 }: DashboardProps) {
   const [boards, setBoards] = useState<Whiteboard[]>([]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const PAGE_SIZE = 12;
+  const pageDocsRef = useRef<any[]>([]);
+  const cursorsHistoryRef = useRef<Array<{
+    owner: any;
+    editor: any;
+    viewer: any;
+    admin: any;
+  }>>([{ owner: null, editor: null, viewer: null, admin: null }]);
+
   const [userName, setUserName] = useState('');
   const [userColor, setUserColor] = useState(COLLABORATOR_COLORS[Math.floor(Math.random() * COLLABORATOR_COLORS.length)]);
   const [role, setRole] = useState<'student' | 'teacher'>('student');
@@ -47,11 +62,15 @@ export default function Dashboard({
   } | null>(null);
 
   const [isUploadingPdf, setIsUploadingPdf] = useState(false);
+  const [pdfStatusText, setPdfStatusText] = useState('');
 
   // Admin Panel states
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
   const [adminAppEnabled, setAdminAppEnabled] = useState(true);
   const [presenceList, setPresenceList] = useState<any[]>([]);
+  const [lastVisiblePresence, setLastVisiblePresence] = useState<any>(null);
+  const [hasMorePresence, setHasMorePresence] = useState<boolean>(true);
+  const [isLoadingMorePresence, setIsLoadingMorePresence] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState('');
 
   // Historical stats states
@@ -66,7 +85,7 @@ export default function Dashboard({
   // Load presence and settings for admin
   useEffect(() => {
     if (isSandboxEnvironment()) return;
-    const isAdmin = currentUserProfile?.email === 'al.matubis17@gmail.com';
+    const isAdmin = adminClaim;
     if (!isAdmin) return;
 
     // Listen to admin settings
@@ -82,11 +101,13 @@ export default function Dashboard({
       console.error('Settings snapshot error:', err);
     });
 
-    // Fetch users presence
-    const fetchPresence = async () => {
+    // Fetch users presence with pagination
+    const fetchPresenceInitial = async () => {
       try {
+        const { limit } = await import('firebase/firestore');
         const presenceRef = collection(db, 'presence');
-        const snapshot = await import('firebase/firestore').then(m => m.getDocs(query(presenceRef)));
+        const q = query(presenceRef, orderBy('lastActive', 'desc'), limit(50));
+        const snapshot = await getDocs(q);
         const list: any[] = [];
         snapshot.forEach((docSnap) => {
           list.push({
@@ -101,17 +122,62 @@ export default function Dashboard({
           return (b.lastActive || 0) - (a.lastActive || 0);
         });
         setPresenceList(list);
+        setLastVisiblePresence(snapshot.docs[snapshot.docs.length - 1] || null);
+        setHasMorePresence(snapshot.docs.length === 50);
       } catch (err) {
         console.error('Presence fetch error:', err);
       }
     };
     
-    fetchPresence();
+    fetchPresenceInitial();
 
     return () => {
       unsubscribeSettings();
     };
   }, [currentUserProfile, refreshTrigger]);
+
+  const handleLoadMorePresence = async () => {
+    if (isLoadingMorePresence || !lastVisiblePresence || !hasMorePresence) return;
+    setIsLoadingMorePresence(true);
+    try {
+      const { startAfter, limit } = await import('firebase/firestore');
+      const presenceRef = collection(db, 'presence');
+      const q = query(presenceRef, orderBy('lastActive', 'desc'), startAfter(lastVisiblePresence), limit(50));
+      const snapshot = await getDocs(q);
+      const list: any[] = [];
+      snapshot.forEach((docSnap) => {
+        list.push({
+          uid: docSnap.id,
+          ...docSnap.data()
+        });
+      });
+      if (list.length > 0) {
+        setPresenceList((prev) => {
+          const merged = [...prev, ...list];
+          const seen = new Set();
+          const unique = merged.filter((item) => {
+            if (seen.has(item.uid)) return false;
+            seen.add(item.uid);
+            return true;
+          });
+          unique.sort((a, b) => {
+            if (a.isOnline && !b.isOnline) return -1;
+            if (!a.isOnline && b.isOnline) return 1;
+            return (b.lastActive || 0) - (a.lastActive || 0);
+          });
+          return unique;
+        });
+        setLastVisiblePresence(snapshot.docs[snapshot.docs.length - 1] || null);
+        setHasMorePresence(snapshot.docs.length === 50);
+      } else {
+        setHasMorePresence(false);
+      }
+    } catch (err) {
+      console.error('Error loading more presence:', err);
+    } finally {
+      setIsLoadingMorePresence(false);
+    }
+  };
 
   const handleToggleAppEnabled = async () => {
     try {
@@ -152,6 +218,13 @@ export default function Dashboard({
     const file = e.target.files?.[0];
     if (!file) return;
 
+    // Validate absolute size limit of 50MB to prevent memory crash
+    if (file.size > 50 * 1024 * 1024) {
+      alert("This PDF file exceeds the maximum 50MB size limit.");
+      if (pdfInputRef.current) pdfInputRef.current.value = '';
+      return;
+    }
+
     setIsUploadingPdf(true);
     try {
       const { pdfToImages } = await import('../utils/pdf');
@@ -174,49 +247,85 @@ export default function Dashboard({
   const submitPdfBoard = async () => {
     if (!pdfUploadState) return;
     setIsUploadingPdf(true);
+    setPdfStatusText("Preparing PDF pages...");
+    const createdAssetIds: string[] = [];
+    let docId = `pdf-${Date.now()}`;
+    let ownerUid = 'anonymous';
+
     try {
       const finalUserName = userName.trim() || 'Anonymous User';
-      let docId = `pdf-${Date.now()}`;
-      
+
       if (!isSandboxEnvironment()) {
-        const docRef = await addDoc(collection(db, 'whiteboards'), {
+        const { ensureAuthUser } = await import('../services/boardPersistence');
+        const user = await ensureAuthUser();
+        if (!user || !user.uid) {
+          alert("Authentication failed. Cannot produce a valid user ID. Please sign in to upload a PDF.");
+          return;
+        }
+        ownerUid = user.uid;
+
+        const { doc, setDoc, collection } = await import('firebase/firestore');
+        const newDocRef = doc(collection(db, 'whiteboards'));
+        docId = newDocRef.id;
+
+        const { trackOperation } = await import('../utils/firestoreInstrumentation');
+        trackOperation('write', 'board-pdf-initializing', 1);
+
+        await setDoc(newDocRef, {
+          id: docId,
           name: `PDF: ${pdfUploadState.file.name.replace('.pdf', '')}`,
-          description: 'PDF Workspace',
-          createdAt: Date.now(),
           createdBy: finalUserName,
-          studentId: assignedStudent ? assignedStudent.toLowerCase().replace(/\s+/g, '-') : '',
-          studentName: assignedStudent.trim() || 'All Collaborative',
-          studentsCanWrite: true,
-          schemaVersion: 2,
-          currentRevision: 1,
-          chunkIds: ['chunk_0'],
-          totalElements: 0,
-          migrationStatus: 'complete',
-          dailyWrites: {},
-          dailyReads: {},
-          teacherDailyWrites: {},
+          ownerUid,
+          accessMode: 'private',
+          editorUids: [],
+          viewerUids: [],
+          status: 'initializing',
+          schemaVersion: 3,
+          shardLayoutVersion: 2,
+          shardCount: 160,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
         });
-        docId = docRef.id;
       }
 
       let currentX = 0;
       let currentY = 0;
       const gap = 40;
       const pdfBlobMap: Record<string, any> = {};
-      
-      for (let i = 0; i < pdfUploadState.images.length; i++) {
-        if (!pdfUploadState.selectedPages[i]) continue;
+
+      const selectedIndices = pdfUploadState.images
+        .map((_, idx) => idx)
+        .filter((idx) => pdfUploadState.selectedPages[idx]);
+
+      const totalSelected = selectedIndices.length;
+
+      for (let sIdx = 0; sIdx < totalSelected; sIdx++) {
+        const i = selectedIndices[sIdx];
         const img = pdfUploadState.images[i];
         const elementId = `pdf-page-${i}-${Date.now()}`;
         
+        setPdfStatusText(`Saving page ${sIdx + 1} of ${totalSelected}...`);
+
+        let assetId: string | undefined;
+        let mimeType = "image/jpeg";
+
+        if (!isSandboxEnvironment()) {
+          const { saveBoardAsset } = await import('../services/storageService');
+          const meta = await saveBoardAsset(docId, undefined, img.src, "image/jpeg");
+          assetId = meta.assetId;
+          mimeType = meta.mimeType;
+          createdAssetIds.push(meta.assetId);
+        }
+
         pdfBlobMap[elementId] = {
+          id: elementId,
           type: "image",
           x: currentX,
           y: currentY,
           width: img.width,
           height: img.height,
-          src: img.src,
-          zIndex: -1, // background
+          ...(assetId ? { assetId, mimeType } : { src: img.src }),
+          zIndex: -1,
           locked: true,
           updatedAt: Date.now()
         };
@@ -228,37 +337,39 @@ export default function Dashboard({
         }
       }
 
+      setPdfStatusText("Initializing board...");
+
       const totalPdfElements = Object.keys(pdfBlobMap).length;
       
+      const boardData = {
+        id: docId,
+        name: `PDF: ${pdfUploadState.file.name.replace('.pdf', '')}`,
+        description: 'PDF Workspace',
+        createdAt: Date.now(),
+        createdBy: finalUserName,
+        ownerUid,
+        accessMode: 'private' as const,
+        editorUids: [],
+        viewerUids: [],
+        status: 'ready' as const,
+        studentId: assignedStudent ? assignedStudent.toLowerCase().replace(/\s+/g, '-') : '',
+        studentName: assignedStudent.trim() || 'All Collaborative',
+        studentsCanWrite: true,
+        schemaVersion: 3,
+        shardLayoutVersion: 2,
+        shardCount: 160,
+        currentRevision: 1,
+        totalElements: totalPdfElements,
+        migrationStatus: 'complete' as const,
+      };
+
       if (isSandboxEnvironment()) {
         const currentBoards = getSandboxLocalBoards();
-        const newBoard = {
-          id: docId,
-          name: `PDF: ${pdfUploadState.file.name.replace('.pdf', '')}`,
-          description: 'PDF Workspace',
-          createdAt: Date.now(),
-          createdBy: finalUserName,
-          studentId: assignedStudent ? assignedStudent.toLowerCase().replace(/\s+/g, '-') : '',
-          studentName: assignedStudent.trim() || 'All Collaborative',
-          studentsCanWrite: true,
-          schemaVersion: 2,
-          currentRevision: 1,
-          chunkIds: ['chunk_0'],
-          totalElements: totalPdfElements,
-          migrationStatus: 'complete',
-        };
-        saveSandboxLocalBoards([newBoard, ...currentBoards]);
+        saveSandboxLocalBoards([boardData as any, ...currentBoards]);
         saveSandboxLocalElements(docId, Object.values(pdfBlobMap));
       } else {
-        await setDoc(doc(db, 'whiteboards', docId, 'stateChunks', 'chunk_0'), {
-          chunkId: 'chunk_0',
-          elements: pdfBlobMap,
-          elementCount: totalPdfElements,
-          updatedAt: Date.now(),
-        });
-        await setDoc(doc(db, 'whiteboards', docId), {
-          totalElements: totalPdfElements,
-        }, { merge: true });
+        const { initializeBoardWithElements } = await import('../services/boardPersistence');
+        await initializeBoardWithElements(docId, Object.values(pdfBlobMap), boardData);
       }
 
       const finalName = userName.trim() || (role === 'teacher' ? 'Teacher' : 'Student-' + Math.floor(Math.random() * 1000));
@@ -278,13 +389,34 @@ export default function Dashboard({
         localStorage.setItem('lucid_spark_user_id', profile.id);
       }
       
+      setBoards((prev) => [boardData as any, ...prev.filter((b) => b.id !== docId)]);
       onSelectBoard(docId, profile);
       setPdfUploadState(null);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error creating PDF board:', err);
-      alert('Failed to process PDF.');
+      if (!isSandboxEnvironment()) {
+        try {
+          const { doc, deleteDoc } = await import('firebase/firestore');
+          for (const createdId of createdAssetIds) {
+            try {
+              await deleteDoc(doc(db, "whiteboards", docId, "assets", createdId));
+            } catch (e) {
+              console.error("Error cleaning up orphan asset:", e);
+            }
+          }
+          try {
+            await deleteDoc(doc(db, "whiteboards", docId));
+          } catch (e) {
+            console.error("Error cleaning up initializing board manifest:", e);
+          }
+        } catch (cleanupErr) {
+          console.error("Error loading firestore modules for PDF cleanup:", cleanupErr);
+        }
+      }
+      alert(err.message || 'Failed to process PDF.');
     } finally {
       setIsUploadingPdf(false);
+      setPdfStatusText('');
     }
   };
 
@@ -319,142 +451,400 @@ export default function Dashboard({
   }, []);
 
   // Fetch whiteboards with getDocs (quota-optimized to prevent multi-user read cascades)
-  const fetchBoards = React.useCallback(async () => {
+  const fetchBoards = React.useCallback(async (page: number = 1) => {
     if (isSandboxEnvironment()) {
       const loadedBoards = getSandboxLocalBoards();
-      setBoards(loadedBoards);
+      loadedBoards.sort((a, b) => b.createdAt - a.createdAt);
+      const start = (page - 1) * PAGE_SIZE;
+      const paginated = loadedBoards.slice(start, start + PAGE_SIZE);
+      setBoards(paginated);
+      setHasMore(loadedBoards.length > start + PAGE_SIZE);
+      setCurrentPage(page);
       return;
     }
     try {
-      const q = query(collection(db, 'whiteboards'));
-      const snapshot = await getDocs(q);
-      const loadedBoards: Whiteboard[] = [];
-      snapshot.forEach((docSnap) => {
-        const data = docSnap.data();
-        loadedBoards.push({
-          id: docSnap.id,
-          name: data.name || 'Untitled Board',
-          description: data.description || '',
-          createdAt: data.createdAt || Date.now(),
-          createdBy: data.createdBy || 'Unknown',
-          studentId: data.studentId || '',
-          studentName: data.studentName || '',
-          teacherDailyWrites: data.teacherDailyWrites || {},
-          dailyWrites: data.dailyWrites || {},
-          dailyReads: data.dailyReads || {},
+      const { ensureAuthUser } = await import('../services/boardPersistence');
+      const user = await ensureAuthUser();
+      if (!user) {
+        setBoards([]);
+        return;
+      }
+
+      const uid = user.uid;
+      const { where } = await import('firebase/firestore');
+      const isAdmin = adminClaim;
+
+      const loadedMap = new Map<string, Whiteboard>();
+      let totalReadDocs = 0;
+      let newHasMore = false;
+
+      const currentCursors = cursorsHistoryRef.current[page - 1] || { owner: null, editor: null, viewer: null, admin: null };
+      let nextCursors = { owner: null, editor: null, viewer: null, admin: null };
+
+      if (isAdmin) {
+        let q = query(
+          collection(db, 'whiteboards'),
+          where('status', '==', 'ready'),
+          orderBy('createdAt', 'desc'),
+          limit(PAGE_SIZE)
+        );
+        if (currentCursors.admin) {
+          q = query(q, startAfter(currentCursors.admin));
+        }
+        const snap = await getDocs(q);
+        totalReadDocs += snap.size;
+        snap.forEach((docSnap) => {
+          const data: any = docSnap.data();
+          loadedMap.set(docSnap.id, { id: docSnap.id, ...data });
         });
-      });
-      // Sort by newest
+        if (snap.size === PAGE_SIZE) {
+          newHasMore = true;
+        }
+        nextCursors.admin = snap.docs[snap.docs.length - 1] || null;
+      } else {
+        let qOwner = query(
+          collection(db, 'whiteboards'),
+          where('ownerUid', '==', uid),
+          where('status', '==', 'ready'),
+          orderBy('createdAt', 'desc'),
+          limit(PAGE_SIZE)
+        );
+        if (currentCursors.owner) {
+          qOwner = query(qOwner, startAfter(currentCursors.owner));
+        }
+
+        let qEditors = query(
+          collection(db, 'whiteboards'),
+          where('editorUids', 'array-contains', uid),
+          where('status', '==', 'ready'),
+          orderBy('createdAt', 'desc'),
+          limit(PAGE_SIZE)
+        );
+        if (currentCursors.editor) {
+          qEditors = query(qEditors, startAfter(currentCursors.editor));
+        }
+
+        let qViewers = query(
+          collection(db, 'whiteboards'),
+          where('viewerUids', 'array-contains', uid),
+          where('status', '==', 'ready'),
+          orderBy('createdAt', 'desc'),
+          limit(PAGE_SIZE)
+        );
+        if (currentCursors.viewer) {
+          qViewers = query(qViewers, startAfter(currentCursors.viewer));
+        }
+
+        const [snapOwner, snapEditors, snapViewers] = await Promise.all([
+          getDocs(qOwner),
+          getDocs(qEditors),
+          getDocs(qViewers)
+        ]);
+
+        totalReadDocs = snapOwner.size + snapEditors.size + snapViewers.size;
+
+        if (snapOwner.size === PAGE_SIZE || snapEditors.size === PAGE_SIZE || snapViewers.size === PAGE_SIZE) {
+          newHasMore = true;
+        }
+
+        const parseDoc = (docSnap: any) => {
+          const data: any = docSnap.data();
+          loadedMap.set(docSnap.id, { id: docSnap.id, ...data });
+        };
+
+        snapOwner.forEach(parseDoc);
+        snapEditors.forEach(parseDoc);
+        snapViewers.forEach(parseDoc);
+
+        nextCursors.owner = snapOwner.docs[snapOwner.docs.length - 1] || null;
+        nextCursors.editor = snapEditors.docs[snapEditors.docs.length - 1] || null;
+        nextCursors.viewer = snapViewers.docs[snapViewers.docs.length - 1] || null;
+      }
+
+      trackOperation('read', 'dashboard-boards-load', totalReadDocs);
+
+      const loadedBoards = Array.from(loadedMap.values());
       loadedBoards.sort((a, b) => b.createdAt - a.createdAt);
+
       setBoards(loadedBoards);
+      setCurrentPage(page);
+      setHasMore(newHasMore);
+
+      cursorsHistoryRef.current[page] = nextCursors;
     } catch (err) {
       console.error("Error fetching whiteboards:", err);
     }
-  }, []);
+  }, [currentUserProfile, adminClaim]);
 
   useEffect(() => {
-    fetchBoards();
+    cursorsHistoryRef.current = [{ owner: null, editor: null, viewer: null, admin: null }];
+    fetchBoards(1);
 
     // Listen to local board updates in sandbox mode
     const handleLocalUpdate = () => {
       if (isSandboxEnvironment()) {
-        fetchBoards();
+        fetchBoards(1);
       }
     };
     window.addEventListener('lucid_spark_boards_updated', handleLocalUpdate);
 
-    // Periodic poll every 2 minutes (120s) when window is active to save reads
-    const interval = setInterval(() => {
-      if (document.visibilityState === 'visible' && !isSandboxEnvironment()) {
-        fetchBoards();
-      }
-    }, 120000);
-
     return () => {
       window.removeEventListener('lucid_spark_boards_updated', handleLocalUpdate);
-      clearInterval(interval);
     };
-  }, [fetchBoards, refreshTrigger]);
+  }, [fetchBoards, refreshTrigger, currentUserProfile]);
 
   const handleCreateBoard = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newBoardName.trim()) return;
 
     const finalUserName = userName.trim() || 'Anonymous User';
+    let ownerUid = 'anonymous';
+
+    if (!isSandboxEnvironment()) {
+      const { ensureAuthUser } = await import('../services/boardPersistence');
+      const user = await ensureAuthUser();
+      if (!user || !user.uid) {
+        alert("Authentication failed. Cannot produce a valid user ID. Please sign in to create a board.");
+        return;
+      }
+      ownerUid = user.uid;
+    }
+
+    const newBoardData = {
+      name: newBoardName.trim(),
+      description: newBoardDesc.trim(),
+      createdAt: Date.now(),
+      createdBy: finalUserName,
+      ownerUid,
+      accessMode: 'private' as const,
+      editorUids: [],
+      viewerUids: [],
+      status: 'ready' as const,
+      studentId: assignedStudent ? assignedStudent.toLowerCase().replace(/\s+/g, '-') : '',
+      studentName: assignedStudent.trim() || 'All Collaborative',
+      studentsCanWrite: true,
+      schemaVersion: 3,
+      shardLayoutVersion: 2,
+      shardCount: 160,
+      currentRevision: 0,
+      changedShardIds: [],
+      deletedShardIds: [],
+      totalElements: 0,
+      migrationStatus: 'complete' as const,
+      dailyWrites: {},
+      dailyReads: {},
+      teacherDailyWrites: {},
+    };
 
     if (isSandboxEnvironment()) {
       const current = getSandboxLocalBoards();
       const newBoard = {
         id: 'sandbox-board-' + Date.now(),
-        name: newBoardName.trim(),
-        description: newBoardDesc.trim(),
-        createdAt: Date.now(),
-        createdBy: finalUserName,
-        studentId: assignedStudent ? assignedStudent.toLowerCase().replace(/\s+/g, '-') : '',
-        studentName: assignedStudent.trim() || 'All Collaborative',
-        studentsCanWrite: true,
-        dailyWrites: {},
-        dailyReads: {},
-        teacherDailyWrites: {},
+        ...newBoardData
       };
       saveSandboxLocalBoards([newBoard, ...current]);
+      setBoards((prev) => [newBoard as any, ...prev]);
       setNewBoardName('');
       setNewBoardDesc('');
       setAssignedStudent('');
-      fetchBoards();
       return;
     }
 
     try {
-      await addDoc(collection(db, 'whiteboards'), {
-        name: newBoardName.trim(),
-        description: newBoardDesc.trim(),
-        createdAt: Date.now(),
-        createdBy: finalUserName,
-        studentId: assignedStudent ? assignedStudent.toLowerCase().replace(/\s+/g, '-') : '',
-        studentName: assignedStudent.trim() || 'All Collaborative',
-        studentsCanWrite: true,
-        schemaVersion: 2,
-        currentRevision: 0,
-        chunkIds: [],
-        totalElements: 0,
-        migrationStatus: 'complete',
-        dailyWrites: {},
-        dailyReads: {},
-        teacherDailyWrites: {},
-      });
+      const { trackOperation } = await import('../utils/firestoreInstrumentation');
+      const docRef = await addDoc(collection(db, 'whiteboards'), newBoardData);
+      trackOperation('write', 'dashboard-create-board', 1);
 
+      const createdBoardObj = { id: docRef.id, ...newBoardData };
+      setBoards((prev) => [createdBoardObj as any, ...prev]);
       setNewBoardName('');
       setNewBoardDesc('');
       setAssignedStudent('');
-      await fetchBoards();
     } catch (err) {
       console.error('Error creating whiteboard:', err);
+      alert('Failed to create board: ' + (err instanceof Error ? err.message : String(err)));
+    }
+  };
+
+  const handleStudentQuickCreate = async () => {
+    const name = prompt("Enter a name for your new whiteboard:", "My Practice Whiteboard");
+    if (!name || !name.trim()) return;
+
+    if (isSandboxEnvironment()) {
+      const localBoards = getSandboxLocalBoards();
+      const newBoard = {
+        id: 'sandbox-board-' + Date.now(),
+        name: name.trim(),
+        description: 'Student created workspace',
+        createdAt: Date.now(),
+        createdBy: userName || 'Student',
+        studentId: userName ? userName.toLowerCase().replace(/\s+/g, '-') : '',
+        studentName: userName || 'Student Practice',
+        studentsCanWrite: true,
+        schemaVersion: 3,
+        shardLayoutVersion: 2,
+        shardCount: 160,
+        currentRevision: 0,
+        changedShardIds: [],
+        deletedShardIds: [],
+        totalElements: 0,
+        migrationStatus: 'complete' as const,
+        dailyWrites: {},
+        dailyReads: {},
+        teacherDailyWrites: {},
+      };
+      saveSandboxLocalBoards([newBoard, ...localBoards]);
+      setBoards((prev) => [newBoard as any, ...prev]);
+      return;
+    }
+
+    try {
+      const { ensureAuthUser } = await import('../services/boardPersistence');
+      const user = await ensureAuthUser();
+      if (!user || !user.uid) {
+        alert("Authentication failed. Cannot produce a valid user ID. Please sign in.");
+        return;
+      }
+
+      const newBoardData = {
+        name: name.trim(),
+        description: 'Student created practice workspace',
+        createdAt: Date.now(),
+        createdBy: userName || 'Student',
+        ownerUid: user.uid,
+        accessMode: 'private' as const,
+        editorUids: [],
+        viewerUids: [],
+        status: 'ready' as const,
+        studentId: userName ? userName.toLowerCase().replace(/\s+/g, '-') : '',
+        studentName: userName || 'Student Practice',
+        studentsCanWrite: true,
+        schemaVersion: 3,
+        shardLayoutVersion: 2,
+        shardCount: 160,
+        currentRevision: 0,
+        changedShardIds: [],
+        deletedShardIds: [],
+        totalElements: 0,
+        migrationStatus: 'complete' as const,
+        dailyWrites: {},
+        dailyReads: {},
+        teacherDailyWrites: {},
+      };
+
+      const { trackOperation } = await import('../utils/firestoreInstrumentation');
+      const docRef = await addDoc(collection(db, 'whiteboards'), newBoardData);
+      
+      trackOperation('write', 'dashboard-create-board-student', 1);
+
+      const createdBoardObj = { id: docRef.id, ...newBoardData };
+      setBoards((prev) => [createdBoardObj as any, ...prev]);
+    } catch (err) {
+      console.error('Error creating student whiteboard:', err);
+      alert('Failed to create practice board: ' + (err instanceof Error ? err.message : String(err)));
     }
   };
 
   const handleDeleteBoard = (boardId: string, e: React.MouseEvent) => {
-    e.stopPropagation(); // Avoid triggering board selection
+    e.stopPropagation();
     setBoardToDelete(boardId);
   };
 
   const confirmDeleteBoard = async () => {
     if (!boardToDelete) return;
+    const targetId = boardToDelete;
+    setBoardToDelete(null);
+
+    // Retain target board object and original index in local state before removing
+    let originalIndex = -1;
+    let originalBoardObj: Whiteboard | null = null;
+    setBoards((prev) => {
+      originalIndex = prev.findIndex((b) => b.id === targetId);
+      if (originalIndex !== -1) {
+        originalBoardObj = prev[originalIndex];
+      }
+      return prev.filter((b) => b.id !== targetId);
+    });
+
     if (isSandboxEnvironment()) {
       const current = getSandboxLocalBoards();
-      saveSandboxLocalBoards(current.filter(b => b.id !== boardToDelete));
-      setBoardToDelete(null);
-      fetchBoards();
+      saveSandboxLocalBoards(current.filter((b) => b.id !== targetId));
+      localStorage.removeItem(`lucid_spark_board_elements_${targetId}`);
       return;
     }
+
     try {
-      await deleteDoc(doc(db, 'whiteboards', boardToDelete));
-      setBoardToDelete(null);
-      await fetchBoards();
+      const { collection, getDocs, deleteDoc, doc, writeBatch } = await import("firebase/firestore");
+      const { trackOperation } = await import('../utils/firestoreInstrumentation');
+      
+      // Delete stateShards in bounded batches
+      const shardsSnap = await getDocs(collection(db, "whiteboards", targetId, "stateShards"));
+      trackOperation('read', 'board-delete-shards', shardsSnap.size);
+      const shardDocs = [...shardsSnap.docs];
+      let shardDeleteCount = 0;
+      while (shardDocs.length > 0) {
+        const batch = writeBatch(db);
+        const chunk = shardDocs.splice(0, 500);
+        chunk.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+        shardDeleteCount += chunk.length;
+      }
+      if (shardDeleteCount > 0) {
+        trackOperation('delete', 'shard-delete', shardDeleteCount);
+      }
+
+      // Delete stateShardsV3 in bounded batches
+      const shardsV3Snap = await getDocs(collection(db, "whiteboards", targetId, "stateShardsV3"));
+      trackOperation('read', 'board-delete-shards-v3', shardsV3Snap.size);
+      const shardV3Docs = [...shardsV3Snap.docs];
+      let shardV3DeleteCount = 0;
+      while (shardV3Docs.length > 0) {
+        const batch = writeBatch(db);
+        const chunk = shardV3Docs.splice(0, 500);
+        chunk.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+        shardV3DeleteCount += chunk.length;
+      }
+      if (shardV3DeleteCount > 0) {
+        trackOperation('delete', 'shard-delete-v3', shardV3DeleteCount);
+      }
+
+      // Delete assets in bounded batches
+      const assetsSnap = await getDocs(collection(db, "whiteboards", targetId, "assets"));
+      trackOperation('read', 'board-delete-assets', assetsSnap.size);
+      const assetDocs = [...assetsSnap.docs];
+      let assetDeleteCount = 0;
+      while (assetDocs.length > 0) {
+        const batch = writeBatch(db);
+        const chunk = assetDocs.splice(0, 500);
+        chunk.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+        assetDeleteCount += chunk.length;
+      }
+      if (assetDeleteCount > 0) {
+        trackOperation('delete', 'asset-delete', assetDeleteCount);
+      }
+
+      // Delete board manifest
+      await deleteDoc(doc(db, "whiteboards", targetId));
+      trackOperation('delete', 'board-manifest-delete', 1);
     } catch (err) {
-      console.error('Error deleting board:', err);
-      alert('Failed to delete board.');
-      setBoardToDelete(null);
+      console.error("Error deleting board and subcollections:", err);
+      // On failure: restore board object to original position in state and notify user
+      if (originalBoardObj) {
+        const restoredObj = originalBoardObj;
+        setBoards((prev) => {
+          if (prev.some((b) => b.id === targetId)) return prev;
+          const restored = [...prev];
+          if (originalIndex >= 0 && originalIndex <= restored.length) {
+            restored.splice(originalIndex, 0, restoredObj);
+          } else {
+            restored.push(restoredObj);
+          }
+          return restored;
+        });
+      }
+      alert(`Failed to delete board: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
@@ -950,28 +1340,7 @@ export default function Dashboard({
             {/* Quick Create option for Students */}
             {role === 'student' && (
               <button
-                onClick={() => {
-                  const name = prompt("Enter a name for your new whiteboard:", "My Practice Whiteboard");
-                  if (name) {
-                    addDoc(collection(db, 'whiteboards'), {
-                      name: name,
-                      description: 'Student created workspace',
-                      createdAt: Date.now(),
-                      createdBy: userName || 'Student',
-                      studentId: userName ? userName.toLowerCase().replace(/\s+/g, '-') : '',
-                      studentName: userName || 'Student Practice',
-                      studentsCanWrite: true,
-                      schemaVersion: 2,
-                      currentRevision: 0,
-                      chunkIds: [],
-                      totalElements: 0,
-                      migrationStatus: 'complete',
-                      dailyWrites: {},
-                      dailyReads: {},
-                      teacherDailyWrites: {},
-                    });
-                  }
-                }}
+                onClick={handleStudentQuickCreate}
                 className="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-2 rounded-lg font-bold text-xs shadow-sm transition-all flex items-center space-x-1 cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
@@ -998,6 +1367,8 @@ export default function Dashboard({
             ) : (
               visibleBoards.map((board) => {
                 const isAssigned = !!board.studentId;
+                const permissions = getBoardPermissions(board, auth.currentUser ? { uid: auth.currentUser.uid, admin: adminClaim } : null);
+                const canDelete = permissions.canDelete;
                 return (
                   <div
                     key={board.id}
@@ -1023,13 +1394,15 @@ export default function Dashboard({
                             {copiedId === board.id ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}
                           </button>
                           
-                          <button
-                            onClick={(e) => handleDeleteBoard(board.id, e)}
-                            className="p-1.5 hover:bg-rose-50 rounded text-slate-400 hover:text-rose-600 transition-colors"
-                            title="Delete Board"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          {canDelete && (
+                            <button
+                              onClick={(e) => handleDeleteBoard(board.id, e)}
+                              className="p-1.5 hover:bg-rose-50 rounded text-slate-400 hover:text-rose-600 transition-colors"
+                              title="Delete Board"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                         </div>
                       </div>
 
@@ -1054,6 +1427,29 @@ export default function Dashboard({
               })
             )}
           </div>
+
+          {/* Pagination Controls */}
+          {(currentPage > 1 || hasMore) && (
+            <div className="mt-8 flex items-center justify-center space-x-3 pb-8">
+              <button
+                disabled={currentPage === 1}
+                onClick={() => fetchBoards(currentPage - 1)}
+                className="inline-flex items-center px-4 py-2 text-sm font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 hover:text-slate-900 disabled:opacity-50 disabled:pointer-events-none shadow-sm transition-colors cursor-pointer"
+              >
+                Previous
+              </button>
+              <span className="text-xs font-semibold text-slate-500 bg-slate-100 border border-slate-200/60 px-3 py-1.5 rounded-md">
+                Page {currentPage}
+              </span>
+              <button
+                disabled={!hasMore}
+                onClick={() => fetchBoards(currentPage + 1)}
+                className="inline-flex items-center px-4 py-2 text-sm font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 hover:text-slate-900 disabled:opacity-50 disabled:pointer-events-none shadow-sm transition-colors cursor-pointer"
+              >
+                Next
+              </button>
+            </div>
+          )}
         </div>
       </main>
     
@@ -1177,7 +1573,7 @@ export default function Dashboard({
                 className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-xl shadow-sm transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isUploadingPdf ? (
-                  <><Loader2 className="w-4 h-4 animate-spin" /> Creating Board...</>
+                  <><Loader2 className="w-4 h-4 animate-spin" /> {pdfStatusText || "Creating Board..."}</>
                 ) : (
                   <>Create Board <ArrowRight className="w-4 h-4" /></>
                 )}
@@ -2086,6 +2482,18 @@ export default function Dashboard({
                       </tbody>
                     </table>
                   </div>
+                  {hasMorePresence && (
+                    <div className="p-4 bg-slate-50/50 border-t border-slate-100 flex justify-center">
+                      <button
+                        id="btn-load-more-presence"
+                        onClick={handleLoadMorePresence}
+                        disabled={isLoadingMorePresence}
+                        className="px-4 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500/10 disabled:opacity-50 transition-all cursor-pointer shadow-xs"
+                      >
+                        {isLoadingMorePresence ? 'Loading...' : 'Load More Collaborators'}
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

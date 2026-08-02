@@ -36,7 +36,10 @@ vi.mock('firebase/firestore', () => ({
 }));
 
 vi.mock('../firebase', () => ({
-  db: {}
+  db: {},
+  auth: {
+    currentUser: { uid: 'user_test' }
+  }
 }));
 
 // Mock pdf util

@@ -1,24 +1,39 @@
 /**
  * Development-only Firestore Instrumentation Wrapper
- * Tracks application-level logical reads, writes, and deletes by call-site label.
+ * Tracks application-level estimated reads, writes, deletes, and transactions.
  *
- * NOTE: This is for application-level operation tracking and debugging.
- * It is completely disabled/tree-shaken in production and never writes telemetry to Firestore.
+ * NOTE: These are estimated application-level logical counters for development and debugging.
  */
 
 export interface OperationStats {
   reads: number;
   writes: number;
   deletes: number;
-  byLabel: Record<string, { reads: number; writes: number; deletes: number }>;
+  transactionAttempts: number;
+  transactionCommits: number;
+  byLabel: Record<
+    string,
+    {
+      reads: number;
+      writes: number;
+      deletes: number;
+      transactionAttempts?: number;
+      transactionCommits?: number;
+    }
+  >;
 }
 
-let isEnabled = typeof process !== 'undefined' && process.env ? process.env.NODE_ENV !== 'production' : true;
+let isEnabled =
+  typeof import.meta !== 'undefined' && (import.meta as any).env
+    ? Boolean((import.meta as any).env.DEV)
+    : true;
 
 const stats: OperationStats = {
   reads: 0,
   writes: 0,
   deletes: 0,
+  transactionAttempts: 0,
+  transactionCommits: 0,
   byLabel: {},
 };
 
@@ -30,49 +45,57 @@ export function resetInstrumentationStats(): void {
   stats.reads = 0;
   stats.writes = 0;
   stats.deletes = 0;
+  stats.transactionAttempts = 0;
+  stats.transactionCommits = 0;
   stats.byLabel = {};
 }
 
 export function getInstrumentationStats(): OperationStats {
-  return {
-    reads: stats.reads,
-    writes: stats.writes,
-    deletes: stats.deletes,
-    byLabel: JSON.parse(JSON.stringify(stats.byLabel)),
-  };
+  return JSON.parse(JSON.stringify(stats));
 }
 
 export function trackOperation(
-  type: 'read' | 'write' | 'delete',
+  type: 'read' | 'write' | 'delete' | 'tx_attempt' | 'tx_commit',
   label: string,
   count: number = 1
 ): void {
-  if (!isEnabled || count <= 0) return;
-
-  if (type === 'read') stats.reads += count;
-  else if (type === 'write') stats.writes += count;
-  else if (type === 'delete') stats.deletes += count;
+  if (!isEnabled || count < 0) return;
 
   if (!stats.byLabel[label]) {
-    stats.byLabel[label] = { reads: 0, writes: 0, deletes: 0 };
+    stats.byLabel[label] = { reads: 0, writes: 0, deletes: 0, transactionAttempts: 0, transactionCommits: 0 };
   }
 
-  if (type === 'read') stats.byLabel[label].reads += count;
-  else if (type === 'write') stats.byLabel[label].writes += count;
-  else if (type === 'delete') stats.byLabel[label].deletes += count;
+  if (type === 'read') {
+    stats.reads += count;
+    stats.byLabel[label].reads += count;
+  } else if (type === 'write') {
+    stats.writes += count;
+    stats.byLabel[label].writes += count;
+  } else if (type === 'delete') {
+    stats.deletes += count;
+    stats.byLabel[label].deletes += count;
+  } else if (type === 'tx_attempt') {
+    stats.transactionAttempts += count;
+    stats.byLabel[label].transactionAttempts = (stats.byLabel[label].transactionAttempts || 0) + count;
+  } else if (type === 'tx_commit') {
+    stats.transactionCommits += count;
+    stats.byLabel[label].transactionCommits = (stats.byLabel[label].transactionCommits || 0) + count;
+  }
 }
 
 export function printInstrumentationSummary(): void {
   if (!isEnabled) return;
-  console.log('================ [FIRESTORE INSTRUMENTATION SUMMARY] ================');
-  console.log(`Total Logical Reads:   ${stats.reads}`);
-  console.log(`Total Logical Writes:  ${stats.writes}`);
-  console.log(`Total Logical Deletes: ${stats.deletes}`);
+  console.log('================ [FIRESTORE INSTRUMENTATION ESTIMATED COUNTS] ================');
+  console.log(`Estimated Reads:                ${stats.reads}`);
+  console.log(`Estimated Writes:               ${stats.writes}`);
+  console.log(`Estimated Deletes:              ${stats.deletes}`);
+  console.log(`Transaction Attempts:          ${stats.transactionAttempts}`);
+  console.log(`Transaction Commits:           ${stats.transactionCommits}`);
   console.log('Breakdown by Call-Site Label:');
   Object.entries(stats.byLabel).forEach(([label, counts]) => {
     console.log(
-      `  - ${label.padEnd(25)} | Reads: ${counts.reads} | Writes: ${counts.writes} | Deletes: ${counts.deletes}`
+      `  - ${label.padEnd(28)} | R: ${counts.reads} | W: ${counts.writes} | D: ${counts.deletes} | TxTry: ${counts.transactionAttempts || 0} | TxOk: ${counts.transactionCommits || 0}`
     );
   });
-  console.log('=====================================================================');
+  console.log('================================================================================');
 }
