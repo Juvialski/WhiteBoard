@@ -2,6 +2,7 @@ import { initializeApp } from "firebase/app";
 import { initializeFirestore, persistentLocalCache, memoryLocalCache } from "firebase/firestore";
 import { getAuth, GoogleAuthProvider, signInAnonymously, onAuthStateChanged } from "firebase/auth";
 import { getStorage } from "firebase/storage";
+import { isSandboxEnvironment } from "./utils/firebaseSandboxGuard";
 
 const firebaseConfig = {
   projectId: "whiteboard-ee02a",
@@ -38,11 +39,14 @@ const googleProvider = new GoogleAuthProvider();
 // Initialize Storage
 const storage = getStorage(app);
 
-// Auto sign-in anonymously for guest users to satisfy security rules (request.auth != null)
+// Auto sign-in anonymously for guest users to satisfy security rules (request.auth != null) when not in sandbox
 onAuthStateChanged(auth, (user) => {
-  if (!user) {
+  if (!user && !isSandboxEnvironment()) {
     signInAnonymously(auth).catch((err) => {
-      console.warn("Anonymous auth failed (sandbox/offline mode active):", err);
+      // Silently handle auth/admin-restricted-operation when anonymous auth is disabled in Firebase Console
+      if (err?.code !== "auth/admin-restricted-operation") {
+        console.debug("Anonymous auth notice:", err);
+      }
     });
   }
 });

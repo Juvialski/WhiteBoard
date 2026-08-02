@@ -34,6 +34,7 @@ import {
   ConnectorElement,
   MathElement,
   StampElement,
+  TableElement,
 } from "../types";
 
 import Toolbar, { Tool } from "./Toolbar";
@@ -750,6 +751,8 @@ export default function WhiteboardCanvas({
   const [activeTool, setActiveTool] = useState<Tool>("select");
   const [activeColor, setActiveColor] = useState("#000000"); // default black color
   const [activeShape, setActiveShape] = useState<ShapeType>("rect");
+  const [tableRows, setTableRows] = useState(3);
+  const [tableCols, setTableCols] = useState(3);
   const [strokeWidth, setStrokeWidth] = useState(4);
   const [gridMode, setGridMode] = useState<"dots" | "math" | "none">("dots");
   const [isZenMode, setIsZenMode] = useState(false);
@@ -1285,6 +1288,33 @@ export default function WhiteboardCanvas({
               <text x="${el.x + el.width/2}" y="${el.y + el.height/2}" dominant-baseline="middle" text-anchor="middle" fill="${el.color || '#0f172a'}" font-size="${el.fontSize || 14}" class="svg-text">${escapeXml(el.text || '')}</text>
             </g>
           `;
+        } else if (el.type === 'table') {
+          const tbl = el as TableElement;
+          const rows = tbl.rows || 3;
+          const cols = tbl.cols || 3;
+          const cellWidth = tbl.width / cols;
+          const cellHeight = tbl.height / rows;
+          const data = tbl.data || [];
+          const headerBg = tbl.headerBgColor || "#f1f5f9";
+          const cellBg = tbl.cellBgColor || "#ffffff";
+          const borderCol = tbl.borderColor || "#cbd5e1";
+          const textCol = tbl.textColor || "#0f172a";
+
+          svgContent += `<g id="el-${el.id}">`;
+          for (let r = 0; r < rows; r++) {
+            const isH = tbl.hasHeaderRow && r === 0;
+            const bg = isH ? headerBg : cellBg;
+            for (let c = 0; c < cols; c++) {
+              const cx = tbl.x + c * cellWidth;
+              const cy = tbl.y + r * cellHeight;
+              const cellText = data[r]?.[c] || "";
+              svgContent += `
+                <rect x="${cx}" y="${cy}" width="${cellWidth}" height="${cellHeight}" fill="${bg}" stroke="${borderCol}" stroke-width="1" />
+                <text x="${cx + 8}" y="${cy + cellHeight/2}" dominant-baseline="middle" fill="${textCol}" font-size="${tbl.fontSize || 14}" font-weight="${isH ? 'bold' : 'normal'}" class="svg-text">${escapeXml(cellText)}</text>
+              `;
+            }
+          }
+          svgContent += `</g>`;
         }
       });
 
@@ -2228,6 +2258,42 @@ export default function WhiteboardCanvas({
       pushToUndo({ type: "add", elementId: id, afterData: newText });
       setActiveTool("select");
       setSelectedId(id);
+      return;
+    }
+
+    if (activeTool === "table") {
+      if (!checkCreationRateLimit(6, 3000)) return;
+      const id = "table-" + Date.now() + Math.floor(Math.random() * 100);
+      const r = tableRows;
+      const c = tableCols;
+      const initialData = Array.from({ length: r }, () => Array(c).fill(""));
+      const calculatedWidth = Math.max(260, c * 110);
+      const calculatedHeight = Math.max(120, r * 44);
+
+      const newTable: TableElement = {
+        id,
+        type: "table",
+        x: Math.round(coords.x - calculatedWidth / 2),
+        y: Math.round(coords.y - calculatedHeight / 2),
+        width: calculatedWidth,
+        height: calculatedHeight,
+        rows: r,
+        cols: c,
+        data: initialData,
+        hasHeaderRow: true,
+        headerBgColor: "#f1f5f9",
+        cellBgColor: "#ffffff",
+        borderColor: "#cbd5e1",
+        textColor: "#0f172a",
+        fontSize: 14,
+        zIndex: elements.length + 1,
+        reactions: {},
+      };
+      saveElementLocallyAndSync(id, newTable);
+      pushToUndo({ type: "add", elementId: id, afterData: newTable });
+      setActiveTool("select");
+      setSelectedId(id);
+      setSelectedIds([id]);
       return;
     }
 
@@ -3573,6 +3639,12 @@ export default function WhiteboardCanvas({
             onChangeColor={handleColorChange}
             activeShape={activeShape}
             onChangeShape={setActiveShape}
+            tableRows={tableRows}
+            tableCols={tableCols}
+            onChangeTableDimensions={(r, c) => {
+              setTableRows(r);
+              setTableCols(c);
+            }}
             onClearBoard={() => {
               if (!canWrite) {
                 triggerReadOnlyAlert();

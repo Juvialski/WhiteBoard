@@ -59,6 +59,7 @@ All elements rendered on the whiteboard canvas must implement one of the specifi
 - `audio`: audioUrl (Base64), duration, authorName -> Audio-recorded voice comments attached to physical coordinates.
 - `stamp`: stampType (checked, star, great_job, signature, custom), label, color -> Interactive teacher stamp comments, AI-generated motivational stamps, or drawing signatures.
 - `connector`: fromId, toId, fromSocket, toSocket, endPoint -> Connecting anchor lines linking shapes together dynamically.
+- `table`: rows, cols, data (string[][]), hasHeaderRow, headerBgColor, cellBgColor, borderColor, textColor, fontSize -> Interactive grid table with editable cells, theme styles, and row/column management.
 
 ---
 

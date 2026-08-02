@@ -37,6 +37,7 @@ import {
   HelpCircle,
   MoreHorizontal,
   LayoutGrid,
+  Table as TableIcon,
 } from "lucide-react";
 import { ShapeType } from "../types";
 
@@ -56,7 +57,8 @@ export type Tool =
   | "laser"
   | "audio"
   | "stamp"
-  | "math";
+  | "math"
+  | "table";
 
 interface ToolbarProps {
   activeTool: Tool;
@@ -87,6 +89,9 @@ interface ToolbarProps {
   onOpenClearModal?: () => void;
   onToggleTimer?: () => void;
   isTimerOpen?: boolean;
+  tableRows?: number;
+  tableCols?: number;
+  onChangeTableDimensions?: (rows: number, cols: number) => void;
 }
 
 const STICKY_COLORS = [
@@ -270,6 +275,9 @@ export default function Toolbar({
   onOpenClearModal,
   onToggleTimer,
   isTimerOpen = false,
+  tableRows = 3,
+  tableCols = 3,
+  onChangeTableDimensions,
 }: ToolbarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [showSettingsPanel, setShowSettingsPanel] = useState(true);
@@ -307,6 +315,7 @@ export default function Toolbar({
       items: [
         { id: "text", icon: <Type className="w-5 h-5" />, label: "Text Box", shortcut: "T" },
         { id: "sticky", icon: <StickyNote className="w-5 h-5" />, label: "Sticky Note", shortcut: "N" },
+        { id: "table", icon: <TableIcon className="w-5 h-5 text-blue-600" />, label: "Table", shortcut: "B" },
         { id: "math", icon: <Calculator className="w-5 h-5 text-indigo-500" />, label: "Math Equation", shortcut: "M" },
         { id: "shape", icon: <Square className="w-5 h-5" />, label: "Shapes Picker", shortcut: "S" },
         { id: "graph_menu", icon: <TrendingUp className="w-5 h-5" />, label: "Grid Graphs", shortcut: "G" },
@@ -330,12 +339,15 @@ export default function Toolbar({
     "shape",
     "sticky",
     "text",
+    "table",
     "math",
     "connector",
     "cartesian",
     "numberline",
     "advanced-cartesian",
   ].includes(activeTool) || (activeTool === "select" && (hasColorableSelection || hasStampSelection));
+
+  const [hoverGrid, setHoverGrid] = useState<{ r: number; c: number } | null>(null);
 
   const autoHideTimeoutRef = React.useRef<any>(null);
 
@@ -385,6 +397,7 @@ export default function Toolbar({
     if (activeTool === "shape") return "Shape Settings";
     if (activeTool === "sticky") return "Sticky Note Settings";
     if (activeTool === "text") return "Text Settings";
+    if (activeTool === "table") return "Table Dimensions";
     if (activeTool === "math") return "Math Formula Settings";
     if (activeTool === "connector") return "Connector Settings";
     if (isGraphTool) return "Graph Settings";
@@ -399,6 +412,7 @@ export default function Toolbar({
     if (activeTool === "shape") return <Square className="w-4 h-4 text-blue-600" />;
     if (activeTool === "sticky") return <StickyNote className="w-4 h-4 text-blue-600" />;
     if (activeTool === "text") return <Type className="w-4 h-4 text-blue-600" />;
+    if (activeTool === "table") return <TableIcon className="w-4 h-4 text-blue-600" />;
     if (activeTool === "math") return <Calculator className="w-4 h-4 text-indigo-600" />;
     if (activeTool === "connector") return <CornerDownRight className="w-4 h-4 text-blue-600" />;
     if (isGraphTool) return <TrendingUp className="w-4 h-4 text-blue-600" />;
@@ -412,6 +426,7 @@ export default function Toolbar({
     if (activeTool === "shape") return "Place shapes onto the canvas. Links perfectly with connection arrows.";
     if (activeTool === "sticky") return "Standard sticky notes. Double-click after creation to write messages.";
     if (activeTool === "text") return "Annotate specific zones with precise styled text blocks.";
+    if (activeTool === "table") return "Choose number of rows and columns, then click canvas to insert table.";
     if (activeTool === "math") return "Renders advanced KaTeX mathematical equations on the board.";
     if (activeTool === "connector") return "Links shapes together using top, bottom, left or right socket anchors.";
     if (isGraphTool) return "Draw a standard cartesian graph or number line coordinates automatically.";
@@ -834,7 +849,79 @@ export default function Toolbar({
               </button>
             </div>
 
-            {/* Shape-specific Selection Grid */}
+            {/* Table Dimension Selector */}
+            {activeTool === "table" && (
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between text-[11px] font-bold text-slate-700">
+                  <span>Size:</span>
+                  <span className="bg-blue-50 text-blue-600 px-2 py-0.5 rounded-md font-mono">
+                    {hoverGrid ? `${hoverGrid.r} × ${hoverGrid.c}` : `${tableRows || 3} × ${tableCols || 3}`} Table
+                  </span>
+                </div>
+
+                {/* Interactive Grid Selection (up to 6x6) */}
+                <div className="flex flex-col items-center bg-slate-50 p-2 rounded-xl border border-slate-100">
+                  {Array.from({ length: 6 }).map((_, r) => (
+                    <div key={r} className="flex space-x-1 mb-1 last:mb-0">
+                      {Array.from({ length: 6 }).map((_, c) => {
+                        const curR = r + 1;
+                        const curC = c + 1;
+                        const targetR = hoverGrid ? hoverGrid.r : (tableRows || 3);
+                        const targetC = hoverGrid ? hoverGrid.c : (tableCols || 3);
+                        const isHighlighted = curR <= targetR && curC <= targetC;
+
+                        return (
+                          <button
+                            key={c}
+                            onMouseEnter={() => setHoverGrid({ r: curR, c: curC })}
+                            onMouseLeave={() => setHoverGrid(null)}
+                            onClick={() => {
+                              if (onChangeTableDimensions) {
+                                onChangeTableDimensions(curR, curC);
+                              }
+                            }}
+                            className={`w-6 h-6 rounded border transition-all cursor-pointer ${
+                              isHighlighted
+                                ? "bg-blue-500 border-blue-600 shadow-xs"
+                                : "bg-white border-slate-200 hover:border-blue-300"
+                            }`}
+                          />
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Quick Presets */}
+                <div className="grid grid-cols-4 gap-1">
+                  {[
+                    { r: 2, c: 2 },
+                    { r: 3, c: 3 },
+                    { r: 4, c: 4 },
+                    { r: 5, c: 5 },
+                  ].map((preset) => {
+                    const isSelected = (tableRows || 3) === preset.r && (tableCols || 3) === preset.c;
+                    return (
+                      <button
+                        key={`${preset.r}x${preset.c}`}
+                        onClick={() => {
+                          if (onChangeTableDimensions) {
+                            onChangeTableDimensions(preset.r, preset.c);
+                          }
+                        }}
+                        className={`py-1 text-[10px] font-bold rounded-lg border transition-all cursor-pointer text-center ${
+                          isSelected
+                            ? "bg-blue-600 text-white border-blue-600"
+                            : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                        }`}
+                      >
+                        {preset.r}×{preset.c}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             {activeTool === "shape" && (
               <div className="space-y-1.5">
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">

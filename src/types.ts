@@ -1,4 +1,4 @@
-export type ElementType = "sticky" | "shape" | "text" | "drawing" | "image" | "connector" | "audio" | "stamp" | "math";
+export type ElementType = "sticky" | "shape" | "text" | "drawing" | "image" | "connector" | "audio" | "stamp" | "math" | "table";
 
 export type ShapeType =
   | "rect"
@@ -201,6 +201,30 @@ export interface StampElement {
   locked?: boolean;
 }
 
+export interface TableElement {
+  id: string;
+  type: "table";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rows: number;
+  cols: number;
+  data: string[][]; // 2D array [row][col] of strings
+  color?: string; // theme color
+  headerBgColor?: string;
+  cellBgColor?: string;
+  borderColor?: string;
+  textColor?: string;
+  fontSize?: number;
+  hasHeaderRow?: boolean;
+  colWidths?: number[];
+  reactions?: Record<string, string[]>;
+  zIndex: number;
+  updatedAt?: number;
+  locked?: boolean;
+}
+
 export type BoardElement =
   | StickyElement
   | ShapeElement
@@ -210,7 +234,8 @@ export type BoardElement =
   | ConnectorElement
   | AudioElement
   | StampElement
-  | MathElement;
+  | MathElement
+  | TableElement;
 
 export interface Collaborator {
   id: string;

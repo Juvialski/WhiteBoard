@@ -7,6 +7,7 @@ import MathComponent from "../MathComponent";
 import ImageComponent from "../ImageComponent";
 import AudioComponent from "../AudioComponent";
 import StampComponent from "../StampComponent";
+import { TableComponent } from "../TableComponent";
 import { getSvgPathFromPoints } from "../../utils/canvasUtils";
 
 // Memoized individual drawing component for high performance during zoom/pan re-renders
@@ -274,6 +275,21 @@ export const ElementWrapper = React.memo(({
           onDelete={onDelete}
           currentUser={currentUser}
           canWrite={canWrite}
+        />
+      </div>
+    );
+  }
+
+  if (el.type === "table") {
+    return (
+      <div className={isInteractive ? "pointer-events-auto" : "pointer-events-none"}>
+        <TableComponent
+          element={el as any}
+          isSelected={isSelected}
+          isReadOnly={!canWrite}
+          onSelect={(id, e) => onSelectElement(id, e as any)}
+          onUpdate={onUpdate}
+          onDelete={onDelete}
         />
       </div>
     );

@@ -11,7 +11,8 @@ import {
   deleteField,
 } from 'firebase/firestore';
 import { get as idbGet, set as idbSet, del as idbDel } from 'idb-keyval';
-import { db } from '../firebase';
+import { signInAnonymously } from 'firebase/auth';
+import { db, auth } from '../firebase';
 import { BoardElement } from '../types';
 import { isSandboxEnvironment, getSandboxLocalElements, saveSandboxLocalElements } from '../utils/firebaseSandboxGuard';
 import { trackOperation } from '../utils/firestoreInstrumentation';
@@ -116,6 +117,7 @@ export async function loadAndMigrateLegacyBoard(boardId: string): Promise<BoardE
     const elementsList = Array.from(elementsMap.values());
 
     if (elementsList.length > 0) {
+      await ensureAuthUser();
       const chunks = partitionElementsIntoChunks(elementsMap);
       const chunkIds = Array.from(chunks.keys());
 
@@ -147,6 +149,7 @@ export async function loadAndMigrateLegacyBoard(boardId: string): Promise<BoardE
       await batch.commit();
       trackOperation('write', 'legacy-board-migration', chunks.size + 1);
     } else {
+      await ensureAuthUser();
       const boardRef = doc(db, 'whiteboards', boardId);
       await setDoc(
         boardRef,
@@ -171,8 +174,26 @@ export async function loadAndMigrateLegacyBoard(boardId: string): Promise<BoardE
 
     return elementsList;
   } catch (err) {
-    console.warn('Error loading/migrating legacy board:', err);
+    // Graceful silent fallback for unauthenticated / sandbox read
     return [];
+  }
+}
+
+/**
+  * Helper to ensure Firebase Auth user is ready prior to Firestore write operations
+  */
+export async function ensureAuthUser() {
+  if (auth.currentUser) return auth.currentUser;
+  if (isSandboxEnvironment()) return null;
+  try {
+    if (typeof (auth as any).authStateReady === 'function') {
+      await auth.authStateReady();
+    }
+    if (auth.currentUser) return auth.currentUser;
+    const cred = await signInAnonymously(auth);
+    return cred.user;
+  } catch (err) {
+    return null;
   }
 }
 
@@ -526,7 +547,11 @@ export function subscribeToBoardState(
         });
       }
     },
-    (err) => console.error('Error in board manifest snapshot:', err)
+    (err: any) => {
+      if (err?.code !== 'permission-denied') {
+        console.error('Error in board manifest snapshot:', err);
+      }
+    }
   );
 
   // 2. Listen to stateChunks subcollection
@@ -632,7 +657,11 @@ export function subscribeToBoardState(
         });
       }
     },
-    (err) => console.error('Error in stateChunks snapshot:', err)
+    (err: any) => {
+      if (err?.code !== 'permission-denied') {
+        console.error('Error in stateChunks snapshot:', err);
+      }
+    }
   );
 
   const cleanup = () => {
@@ -773,6 +802,7 @@ export async function flushBoardCheckpoint(boardId: string, reason: string = 'ma
 
   const executeFlush = async () => {
     try {
+      await ensureAuthUser();
       const currentElements = new Map(control.currentElementsMap);
 
       // Incremental stable chunk partitioning
