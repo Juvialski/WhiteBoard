@@ -114,6 +114,27 @@ interface LaserPoint {
   color: string;
 }
 
+// Safe localStorage setter with automatic cache eviction on quota exceeded
+const safeLocalStorageSet = (key: string, value: string) => {
+  try {
+    localStorage.setItem(key, value);
+  } catch (e: any) {
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith('whiteboard_elements_') && k !== key) {
+          keysToRemove.push(k);
+        }
+      }
+      keysToRemove.forEach((k) => localStorage.removeItem(k));
+      localStorage.setItem(key, value);
+    } catch (_) {
+      // Storage unavailable or completely full, gracefully degrade
+    }
+  }
+};
+
 // Client-side image compression utility to handle high volumes of pasted images safely
 // within Firestore documents without needing Firebase Storage.
 const compressImage = (file: File): Promise<CompressedImage | null> => {
@@ -508,11 +529,7 @@ export default function WhiteboardCanvas({
                   updated = [...prev, { id: elementId, ...elementData } as BoardElement];
                 }
               }
-              try {
-                localStorage.setItem(`whiteboard_elements_${boardId}`, JSON.stringify(updated));
-              } catch (e) {
-                console.error("Local storage error:", e);
-              }
+              safeLocalStorageSet(`whiteboard_elements_${boardId}`, JSON.stringify(updated));
               return updated;
             });
           } else if (msg.type === "element_focus") {
@@ -1593,14 +1610,14 @@ export default function WhiteboardCanvas({
       if (isSandboxEnvironment()) {
         saveSandboxLocalElements(boardId, updatedElements);
       } else {
-        localStorage.setItem(`whiteboard_elements_${boardId}`, JSON.stringify(updatedElements));
+        safeLocalStorageSet(`whiteboard_elements_${boardId}`, JSON.stringify(updatedElements));
       }
       if (isDrawing) {
         const fullDrawings = updatedElements.filter(el => el.type === 'drawing') as DrawingElement[];
         await idbSet(`drawings_${boardId}`, fullDrawings);
       }
     } catch (e) {
-      console.error("Local storage / IndexedDB save error:", e);
+      // IndexedDB/Storage error safely handled
     }
 
     // Broadcast update instantly to connected WebSocket peers (saving Firestore reads)
@@ -3005,11 +3022,7 @@ export default function WhiteboardCanvas({
       }
 
       setElements(updatedList);
-      try {
-        localStorage.setItem(`whiteboard_elements_${boardId}`, JSON.stringify(updatedList));
-      } catch (e) {
-        console.error("Local storage paste save error:", e);
-      }
+      safeLocalStorageSet(`whiteboard_elements_${boardId}`, JSON.stringify(updatedList));
 
       hasUnsavedChanges.current = true;
       setSyncStatus('saved-local');

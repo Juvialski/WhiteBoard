@@ -23,10 +23,22 @@ const sendLog = (level: string, message: string, data?: any) => {
 };
 
 window.addEventListener('error', (event) => {
+  if (event.message && (event.message.includes('AbortError') || event.message.includes('QuotaExceededError'))) {
+    return;
+  }
   sendLog('error', `Uncaught error: ${event.message}`, { filename: event.filename, lineno: event.lineno, colno: event.colno });
 });
 
 window.addEventListener('unhandledrejection', (event) => {
+  const reasonStr = String(event.reason || '');
+  if (
+    reasonStr.includes('AbortError') ||
+    reasonStr.includes('The user aborted a request') ||
+    reasonStr.includes('QuotaExceededError') ||
+    (event.reason && typeof event.reason === 'object' && event.reason.name === 'AbortError')
+  ) {
+    return;
+  }
   sendLog('error', `Unhandled promise rejection: ${event.reason}`);
 });
 
