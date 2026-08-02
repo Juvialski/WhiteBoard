@@ -54,6 +54,11 @@ export const MAX_STATE_SHARD_DOCUMENT_BYTES = 700_000;
 export const TARGET_CHUNK_SIZE_BYTES = 250000;
 export const MAX_SINGLE_ELEMENT_BYTES = 250000;
 
+// Prevent loadBoardState() and the manifest listener from migrating the same
+// legacy board at the same time. Without this guard, one board open can start
+// multiple full shard/asset rewrites.
+const legacyMigrationInFlight = new Map<string, Promise<BoardElement[]>>();
+
 export function getShardCountForBoard(boardData: any): number {
   if (!boardData) return 20;
   if (boardData.shardCount !== undefined) {
@@ -331,7 +336,7 @@ async function externalizeLegacyInlineAssets(
  * stateChunks, 20-shard stateShards, and V3 shards, then safely copies the board
  * into the current V3 layout without deleting the original data.
  */
-export async function loadAndMigrateLegacyBoard(boardId: string): Promise<BoardElement[]> {
+async function performLegacyBoardMigration(boardId: string): Promise<BoardElement[]> {
   const boardRef = doc(db, 'whiteboards', boardId);
   let boardData: any = {};
   try {
@@ -357,6 +362,9 @@ export async function loadAndMigrateLegacyBoard(boardId: string): Promise<BoardE
       studentsCanWrite: boardData.studentsCanWrite !== false,
       status: 'ready',
       migrationStatus: 'complete',
+      // A non-empty legacy chunkIds field used to retrigger migration on every
+      // manifest snapshot. Clear it as part of the one-time conversion.
+      chunkIds: [],
       recoveredFromLegacy: true,
       recoveredAt: Date.now(),
     };
@@ -367,6 +375,26 @@ export async function loadAndMigrateLegacyBoard(boardId: string): Promise<BoardE
     // write. The board remains visible so it can be exported or recovered later.
     console.error('Compatibility migration failed; showing recovered board read-only:', error);
     return elements;
+  }
+}
+
+/**
+ * Runs at most one compatibility migration per board at a time. Both the initial
+ * loader and the realtime manifest listener can discover the same legacy board;
+ * they must share one migration promise instead of duplicating every write.
+ */
+export async function loadAndMigrateLegacyBoard(boardId: string): Promise<BoardElement[]> {
+  const existing = legacyMigrationInFlight.get(boardId);
+  if (existing) return existing;
+
+  const migrationPromise = performLegacyBoardMigration(boardId);
+  legacyMigrationInFlight.set(boardId, migrationPromise);
+  try {
+    return await migrationPromise;
+  } finally {
+    if (legacyMigrationInFlight.get(boardId) === migrationPromise) {
+      legacyMigrationInFlight.delete(boardId);
+    }
   }
 }
 
@@ -677,7 +705,7 @@ export async function loadBoardState(boardId: string): Promise<BoardState> {
   const schemaVersion = boardData.schemaVersion || 1;
   const migrationStatus = boardData.migrationStatus;
 
-  const usesHistoricalStateChunks = Array.isArray(boardData.chunkIds) && boardData.chunkIds.length > 0;
+  const usesHistoricalStateChunks = schemaVersion < 3 && Array.isArray(boardData.chunkIds) && boardData.chunkIds.length > 0;
   if (schemaVersion < 2 || migrationStatus === 'pending' || migrationStatus === 'in-progress' || usesHistoricalStateChunks) {
     const recoveredElements = await loadAndMigrateLegacyBoard(boardId);
     const refreshedSnap = await getDoc(boardRef).catch(() => null as any);
@@ -1010,7 +1038,7 @@ export function subscribeToBoardState(
         const schemaVersion = boardData.schemaVersion || 1;
         const migrationStatus = boardData.migrationStatus;
 
-        const usesHistoricalStateChunks = Array.isArray(boardData.chunkIds) && boardData.chunkIds.length > 0;
+        const usesHistoricalStateChunks = schemaVersion < 3 && Array.isArray(boardData.chunkIds) && boardData.chunkIds.length > 0;
         if (schemaVersion < 2 || migrationStatus === 'pending' || migrationStatus === 'in-progress' || usesHistoricalStateChunks) {
           control.loadState = 'loading-shards';
           try {
@@ -1691,6 +1719,7 @@ export async function initializeBoardWithElements(
       changedShardIds,
       totalElements: elementsList.length,
       migrationStatus: 'complete',
+      chunkIds: [],
       updatedAt: Date.now(),
     }, { merge: true });
   });
