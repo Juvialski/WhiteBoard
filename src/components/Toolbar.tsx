@@ -737,6 +737,7 @@ export default function Toolbar({
               const secondaryTools = [
                 "highlighter",
                 "laser",
+                "table",
                 "sticky",
                 "math",
                 "connector",
@@ -751,6 +752,7 @@ export default function Toolbar({
               const getSecondaryActiveIcon = () => {
                 if (activeTool === "highlighter") return <Highlighter className="w-5 h-5" />;
                 if (activeTool === "laser") return <Flame className="w-5 h-5 text-rose-500" />;
+                if (activeTool === "table") return <TableIcon className="w-5 h-5 text-blue-600" />;
                 if (activeTool === "sticky") return <StickyNote className="w-5 h-5" />;
                 if (activeTool === "math") return <Calculator className="w-5 h-5 text-indigo-500" />;
                 if (isGraphTool) return <TrendingUp className="w-5 h-5" />;
@@ -792,6 +794,7 @@ export default function Toolbar({
         {isMobileMoreOpen && (
           <div className="md:hidden bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-2xl p-3 grid grid-cols-4 gap-2 absolute bottom-16 left-1/2 -translate-x-1/2 w-[94vw] max-w-[320px] animate-fade-in z-40 touch-manipulation">
             {[
+              { id: "table", icon: <TableIcon className="w-5 h-5 text-blue-600" />, label: "Table" },
               { id: "highlighter", icon: <Highlighter className="w-5 h-5 text-slate-600" />, label: "Highlight" },
               { id: "laser", icon: <Flame className="w-5 h-5 text-rose-500" />, label: "Laser" },
               { id: "sticky", icon: <StickyNote className="w-5 h-5 text-slate-600" />, label: "Sticky" },
@@ -919,6 +922,44 @@ export default function Toolbar({
                       </button>
                     );
                   })}
+                </div>
+
+                {/* Specific Custom Numeric Input for Rows & Columns */}
+                <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+                  <div className="flex-1 flex flex-col gap-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase">Rows</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={tableRows || 3}
+                      onChange={(e) => {
+                        const val = Math.max(1, Math.min(100, parseInt(e.target.value) || 1));
+                        if (onChangeTableDimensions) {
+                          onChangeTableDimensions(val, tableCols || 3);
+                        }
+                      }}
+                      className="w-full px-2 py-1 text-xs font-mono font-bold bg-slate-50 border border-slate-200 rounded-lg text-slate-800 outline-none focus:border-blue-500 focus:bg-white transition-colors"
+                      placeholder="Rows"
+                    />
+                  </div>
+                  <div className="flex-1 flex flex-col gap-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase">Cols</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={tableCols || 3}
+                      onChange={(e) => {
+                        const val = Math.max(1, Math.min(100, parseInt(e.target.value) || 1));
+                        if (onChangeTableDimensions) {
+                          onChangeTableDimensions(tableRows || 3, val);
+                        }
+                      }}
+                      className="w-full px-2 py-1 text-xs font-mono font-bold bg-slate-50 border border-slate-200 rounded-lg text-slate-800 outline-none focus:border-blue-500 focus:bg-white transition-colors"
+                      placeholder="Cols"
+                    />
+                  </div>
                 </div>
               </div>
             )}

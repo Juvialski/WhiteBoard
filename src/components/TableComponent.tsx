@@ -12,6 +12,7 @@ import {
   Type as TypeIcon,
   Layout,
   Grid,
+  GripHorizontal,
 } from "lucide-react";
 
 interface TableComponentProps {
@@ -82,14 +83,12 @@ export const TableComponent: React.FC<TableComponentProps> = ({
     if (e.key === "Tab") {
       e.preventDefault();
       if (e.shiftKey) {
-        // Prev cell
         if (c > 0) {
           setEditingCell({ r, c: c - 1 });
         } else if (r > 0) {
           setEditingCell({ r: r - 1, c: cols - 1 });
         }
       } else {
-        // Next cell
         if (c < cols - 1) {
           setEditingCell({ r, c: c + 1 });
         } else if (r < rows - 1) {
@@ -108,49 +107,61 @@ export const TableComponent: React.FC<TableComponentProps> = ({
     }
   };
 
-  const addRow = () => {
-    if (isReadOnly) return;
-    const newRow = Array(cols).fill("");
-    const newData = [...data, newRow];
+  const setRowsDirectly = (targetRows: number) => {
+    if (isReadOnly || targetRows < 1) return;
+    let newData = [...data];
+    if (targetRows > rows) {
+      for (let r = rows; r < targetRows; r++) {
+        newData.push(Array(cols).fill(""));
+      }
+    } else if (targetRows < rows) {
+      newData = newData.slice(0, targetRows);
+    }
+    const heightChange = (targetRows - rows) * 40;
     onUpdate({
-      rows: rows + 1,
+      rows: targetRows,
       data: newData,
-      height: element.height + 40,
+      height: Math.max(80, element.height + heightChange),
       updatedAt: Date.now(),
     });
+  };
+
+  const setColsDirectly = (targetCols: number) => {
+    if (isReadOnly || targetCols < 1) return;
+    let newData = data.map((rowArr) => {
+      let newRow = [...rowArr];
+      if (targetCols > cols) {
+        for (let c = cols; c < targetCols; c++) {
+          newRow.push("");
+        }
+      } else if (targetCols < cols) {
+        newRow = newRow.slice(0, targetCols);
+      }
+      return newRow;
+    });
+    const widthChange = (targetCols - cols) * 100;
+    onUpdate({
+      cols: targetCols,
+      data: newData,
+      width: Math.max(120, element.width + widthChange),
+      updatedAt: Date.now(),
+    });
+  };
+
+  const addRow = () => {
+    setRowsDirectly(rows + 1);
   };
 
   const removeRow = () => {
-    if (isReadOnly || rows <= 1) return;
-    const newData = data.slice(0, rows - 1);
-    onUpdate({
-      rows: rows - 1,
-      data: newData,
-      height: Math.max(80, element.height - 40),
-      updatedAt: Date.now(),
-    });
+    if (rows > 1) setRowsDirectly(rows - 1);
   };
 
   const addColumn = () => {
-    if (isReadOnly) return;
-    const newData = data.map((rowArr) => [...rowArr, ""]);
-    onUpdate({
-      cols: cols + 1,
-      data: newData,
-      width: element.width + 100,
-      updatedAt: Date.now(),
-    });
+    setColsDirectly(cols + 1);
   };
 
   const removeColumn = () => {
-    if (isReadOnly || cols <= 1) return;
-    const newData = data.map((rowArr) => rowArr.slice(0, cols - 1));
-    onUpdate({
-      cols: cols - 1,
-      data: newData,
-      width: Math.max(120, element.width - 100),
-      updatedAt: Date.now(),
-    });
+    if (cols > 1) setColsDirectly(cols - 1);
   };
 
   const toggleHeaderRow = () => {
@@ -195,8 +206,6 @@ export const TableComponent: React.FC<TableComponentProps> = ({
     window.dispatchEvent(event);
   };
 
-  const reactions = element.reactions || {};
-
   return (
     <div
       id={`table-element-${element.id}`}
@@ -222,15 +231,51 @@ export const TableComponent: React.FC<TableComponentProps> = ({
           backgroundColor: currentTheme.cellBg,
         }}
       >
+        {/* Top Drag Handle Bar for Easy Mobile & Desktop Moving */}
+        <div
+          className="w-full bg-slate-100/90 hover:bg-slate-200/90 border-b border-slate-200/80 px-2 py-1 flex items-center justify-between cursor-move touch-none select-none shrink-0"
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            if (onSelect) onSelect(element.id, e);
+          }}
+          title="Drag to move table"
+        >
+          <div className="flex items-center gap-1.5 text-slate-500">
+            <GripHorizontal className="w-3.5 h-3.5 text-slate-400" />
+            <span className="font-bold text-[10px] tracking-wider uppercase text-slate-600">
+              Table ({rows}×{cols})
+            </span>
+          </div>
+          {isSelected && (
+            <span className="text-[9px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-bold uppercase">
+              Selected
+            </span>
+          )}
+        </div>
+
         {/* Floating Action Bar when Selected */}
         {isSelected && !isReadOnly && (
           <div
             className="absolute -top-12 left-0 z-50 flex items-center gap-1.5 bg-white/95 backdrop-blur-md px-2 py-1 rounded-xl border border-slate-200 shadow-xl text-xs font-sans text-slate-700 pointer-events-auto select-none transition-all animate-fade-in"
             onPointerDown={(e) => e.stopPropagation()}
           >
-            {/* Rows Control */}
+            {/* Rows Control with Direct Numeric Input */}
             <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-0.5">
-              <span className="text-[10px] font-bold text-slate-500 px-1 uppercase">Rows: {rows}</span>
+              <span className="text-[10px] font-bold text-slate-500 px-0.5 uppercase">R:</span>
+              <input
+                type="number"
+                min={1}
+                max={100}
+                value={rows}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value);
+                  if (!isNaN(val) && val >= 1) {
+                    setRowsDirectly(val);
+                  }
+                }}
+                className="w-9 px-1 py-0.5 text-xs font-mono font-bold bg-white border border-slate-200 rounded text-slate-800 outline-none focus:border-blue-500 text-center"
+                title="Exact Row Count"
+              />
               <button
                 onClick={addRow}
                 className="p-1 hover:bg-white rounded text-slate-700 hover:text-blue-600 transition-colors cursor-pointer"
@@ -250,9 +295,23 @@ export const TableComponent: React.FC<TableComponentProps> = ({
 
             <div className="w-px h-4 bg-slate-200" />
 
-            {/* Cols Control */}
+            {/* Cols Control with Direct Numeric Input */}
             <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-0.5">
-              <span className="text-[10px] font-bold text-slate-500 px-1 uppercase">Cols: {cols}</span>
+              <span className="text-[10px] font-bold text-slate-500 px-0.5 uppercase">C:</span>
+              <input
+                type="number"
+                min={1}
+                max={100}
+                value={cols}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value);
+                  if (!isNaN(val) && val >= 1) {
+                    setColsDirectly(val);
+                  }
+                }}
+                className="w-9 px-1 py-0.5 text-xs font-mono font-bold bg-white border border-slate-200 rounded text-slate-800 outline-none focus:border-blue-500 text-center"
+                title="Exact Column Count"
+              />
               <button
                 onClick={addColumn}
                 className="p-1 hover:bg-white rounded text-slate-700 hover:text-blue-600 transition-colors cursor-pointer"
@@ -452,3 +511,4 @@ export const TableComponent: React.FC<TableComponentProps> = ({
     handlePointerDown(e);
   }
 };
+

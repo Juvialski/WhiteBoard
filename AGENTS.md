@@ -137,7 +137,13 @@ ALL Gemini API calls MUST be made on the server side (`/server.ts`).
    - Always use utility classes of Tailwind CSS directly.
    - Align nested container corner radiuses mathematically: Inner Radius = Outer Radius - Padding.
    - Ensure a minimum target touch footprint of 44px on interactive control bars for tablet/mobile accessibility.
-5. Prereq Validation:
+5. Mobile View Parity (MANDATORY):
+   - Whenever a new tool, element type, toolbar action, or canvas feature is added to desktop navigation or toolbars, you MUST synchronously update the mobile view layout in `src/components/Toolbar.tsx`:
+     a. Include the tool in the mobile secondary tools list (`secondaryTools`).
+     b. Add the tool icon renderer to `getSecondaryActiveIcon()`.
+     c. Add the tool entry to the mobile "More Tools" popover grid (`isMobileMoreOpen`).
+     d. Ensure touch targets are at least 44px with `touch-manipulation`.
+6. Prereq Validation:
    - Before completing any workspace edits, run `lint_applet` followed by `compile_applet` to confirm zero compilation warnings or type conflicts.
 
 ---
@@ -161,7 +167,8 @@ ALL Gemini API calls MUST be made on the server side (`/server.ts`).
 1. LaTeX & Math Rules: Use \dfrac for fractions. Wrap canvas math strictly in standard LaTeX syntax. Never enclose monetary values or standard numbers inside math dollar-sign blocks.
 2. Quota Safety: Intercept any unthrottled state sync during drag/draw operations and route through `saveElementLocallyAndSync`.
 3. AI Security: Keep all `@google/genai` logic restricted to `/server.ts`. Always validate schema shapes against `src/types.ts`.
-4. Self-Evolution Mandate: Upon completing major feature additions or architectural fixes, append an entry to `AGENT_EVOLUTION_LOG.md` and update this playbook accordingly.
+4. Mobile View Parity: Never add desktop tools or canvas capabilities without synchronously updating `secondaryTools`, `getSecondaryActiveIcon()`, and `isMobileMoreOpen` in `src/components/Toolbar.tsx`.
+5. Self-Evolution Mandate: Upon completing major feature additions or architectural fixes, append an entry to `AGENT_EVOLUTION_LOG.md` and update this playbook accordingly.
 
 ---
 
