@@ -39,17 +39,24 @@ export default function App() {
       let activeProfile: UserProfile | null = null;
 
       if (user) {
-        // Logged in with Google
-        const googleName = user.displayName || user.email?.split('@')[0] || 'Google User';
+        // Preserve the chosen guest name for anonymous users. Treating every
+        // anonymous Firebase session as "Google User" made legacy boards vanish
+        // from name-based recovery queries after a reload.
+        const savedName = localStorage.getItem('lucid_spark_user_name');
+        const resolvedName = user.isAnonymous
+          ? (savedName || 'Guest User')
+          : (user.displayName || user.email?.split('@')[0] || savedName || 'Google User');
         const savedColor = localStorage.getItem('lucid_spark_user_color') || colorInput;
         const savedRole = (localStorage.getItem('lucid_spark_user_role') || 'student') as 'student' | 'teacher';
 
         localStorage.setItem('lucid_spark_user_id', user.uid);
-        localStorage.setItem('lucid_spark_user_name', googleName);
+        if (!savedName || !user.isAnonymous) {
+          localStorage.setItem('lucid_spark_user_name', resolvedName);
+        }
 
         activeProfile = {
           id: user.uid,
-          name: googleName,
+          name: resolvedName,
           color: savedColor,
           role: savedRole,
           photoURL: user.photoURL || undefined,

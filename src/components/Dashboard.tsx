@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { collection, query, getDocs, onSnapshot, addDoc, deleteDoc, doc, writeBatch, setDoc, orderBy, limit, startAfter } from 'firebase/firestore';
+import { collection, query, getDocs, getDoc, onSnapshot, addDoc, deleteDoc, doc, writeBatch, setDoc, orderBy, limit, startAfter } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { Whiteboard, UserProfile } from '../types';
 import { Plus, Trash2, ArrowRight, User, BookOpen, GraduationCap, Users, Sparkles, Copy, Check, FileUp, Loader2, ChevronDown, ChevronUp, Calendar, BarChart2, List, RefreshCw, ShieldCheck } from 'lucide-react';
@@ -29,6 +29,7 @@ export default function Dashboard({
   adminClaim = false
 }: DashboardProps) {
   const [boards, setBoards] = useState<Whiteboard[]>([]);
+  const [authError, setAuthError] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const PAGE_SIZE = 12;
@@ -81,6 +82,25 @@ export default function Dashboard({
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  const rememberedBoardIdsKey = 'lucid_spark_owned_board_ids';
+  const getRememberedBoardIds = (): string[] => {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(rememberedBoardIdsKey) || '[]');
+      return Array.isArray(parsed) ? parsed.filter((id) => typeof id === 'string') : [];
+    } catch {
+      return [];
+    }
+  };
+  const rememberBoardId = (boardId: string) => {
+    const ids = getRememberedBoardIds();
+    if (!ids.includes(boardId)) {
+      localStorage.setItem(rememberedBoardIdsKey, JSON.stringify([boardId, ...ids].slice(0, 200)));
+    }
+  };
+  const forgetBoardId = (boardId: string) => {
+    localStorage.setItem(rememberedBoardIdsKey, JSON.stringify(getRememberedBoardIds().filter((id) => id !== boardId)));
+  };
 
   // Load presence and settings for admin
   useEffect(() => {
@@ -370,6 +390,7 @@ export default function Dashboard({
       } else {
         const { initializeBoardWithElements } = await import('../services/boardPersistence');
         await initializeBoardWithElements(docId, Object.values(pdfBlobMap), boardData);
+        rememberBoardId(docId);
       }
 
       const finalName = userName.trim() || (role === 'teacher' ? 'Teacher' : 'Student-' + Math.floor(Math.random() * 1000));
@@ -450,149 +471,138 @@ export default function Dashboard({
     }
   }, []);
 
-  // Fetch whiteboards with getDocs (quota-optimized to prevent multi-user read cascades)
+  // Load boards without requiring compound indexes. Modern ACL queries and
+  // compatibility queries are executed separately, then merged and sorted in
+  // memory. This prevents newly created boards from "disappearing" after reload
+  // when Firestore indexes have not yet been deployed to the named database.
   const fetchBoards = React.useCallback(async (page: number = 1) => {
     if (isSandboxEnvironment()) {
-      const loadedBoards = getSandboxLocalBoards();
-      loadedBoards.sort((a, b) => b.createdAt - a.createdAt);
-      const start = (page - 1) * PAGE_SIZE;
-      const paginated = loadedBoards.slice(start, start + PAGE_SIZE);
-      setBoards(paginated);
-      setHasMore(loadedBoards.length > start + PAGE_SIZE);
+      const loadedBoards = getSandboxLocalBoards().sort((a, b) => b.createdAt - a.createdAt);
+      const startIndex = (page - 1) * PAGE_SIZE;
+      setBoards(loadedBoards.slice(startIndex, startIndex + PAGE_SIZE));
+      setHasMore(loadedBoards.length > startIndex + PAGE_SIZE);
       setCurrentPage(page);
       return;
     }
+
     try {
       const { ensureAuthUser } = await import('../services/boardPersistence');
       const user = await ensureAuthUser();
       if (!user) {
+        setAuthError(true);
         setBoards([]);
         return;
       }
+      setAuthError(false);
 
-      const uid = user.uid;
       const { where } = await import('firebase/firestore');
-      const isAdmin = adminClaim;
-
       const loadedMap = new Map<string, Whiteboard>();
       let totalReadDocs = 0;
-      let newHasMore = false;
 
-      const currentCursors = cursorsHistoryRef.current[page - 1] || { owner: null, editor: null, viewer: null, admin: null };
-      let nextCursors = { owner: null, editor: null, viewer: null, admin: null };
+      const addSnapshot = (snapshot: any) => {
+        totalReadDocs += snapshot.size;
+        snapshot.forEach((docSnap: any) => {
+          const data: any = docSnap.data() || {};
+          if (data.status === 'initializing') return;
+          loadedMap.set(docSnap.id, {
+            id: docSnap.id,
+            name: data.name || 'Untitled Board',
+            description: data.description || '',
+            createdAt: Number(data.createdAt || data.updatedAt || 0),
+            createdBy: data.createdBy || 'Unknown',
+            ...data,
+          } as Whiteboard);
+        });
+      };
 
-      if (isAdmin) {
-        let q = query(
-          collection(db, 'whiteboards'),
-          where('status', '==', 'ready'),
-          orderBy('createdAt', 'desc'),
-          limit(PAGE_SIZE)
-        );
-        if (currentCursors.admin) {
-          q = query(q, startAfter(currentCursors.admin));
+      const safeQuery = async (q: any, label: string) => {
+        try {
+          const snapshot = await getDocs(q);
+          addSnapshot(snapshot);
+        } catch (error) {
+          console.warn(`Board query skipped (${label}):`, error);
         }
-        const snap = await getDocs(q);
-        totalReadDocs += snap.size;
-        snap.forEach((docSnap) => {
-          const data: any = docSnap.data();
-          loadedMap.set(docSnap.id, { id: docSnap.id, ...data });
-        });
-        if (snap.size === PAGE_SIZE) {
-          newHasMore = true;
-        }
-        nextCursors.admin = snap.docs[snap.docs.length - 1] || null;
-      } else if (uid === 'anonymous') {
-        let q = query(
-          collection(db, 'whiteboards'),
-          where('status', '==', 'ready'),
-          orderBy('createdAt', 'desc'),
-          limit(PAGE_SIZE)
-        );
-        if (currentCursors.owner) {
-          q = query(q, startAfter(currentCursors.owner));
-        }
-        const snap = await getDocs(q);
-        totalReadDocs += snap.size;
-        snap.forEach((docSnap) => {
-          const data: any = docSnap.data();
-          loadedMap.set(docSnap.id, { id: docSnap.id, ...data });
-        });
-        if (snap.size === PAGE_SIZE) {
-          newHasMore = true;
-        }
-        nextCursors.owner = snap.docs[snap.docs.length - 1] || null;
+      };
+
+      if (adminClaim) {
+        await safeQuery(query(collection(db, 'whiteboards'), orderBy('createdAt', 'desc'), limit(200)), 'admin');
       } else {
-        let qOwner = query(
-          collection(db, 'whiteboards'),
-          where('ownerUid', '==', uid),
-          where('status', '==', 'ready'),
-          orderBy('createdAt', 'desc'),
-          limit(PAGE_SIZE)
-        );
-        if (currentCursors.owner) {
-          qOwner = query(qOwner, startAfter(currentCursors.owner));
-        }
-
-        let qEditors = query(
-          collection(db, 'whiteboards'),
-          where('editorUids', 'array-contains', uid),
-          where('status', '==', 'ready'),
-          orderBy('createdAt', 'desc'),
-          limit(PAGE_SIZE)
-        );
-        if (currentCursors.editor) {
-          qEditors = query(qEditors, startAfter(currentCursors.editor));
-        }
-
-        let qViewers = query(
-          collection(db, 'whiteboards'),
-          where('viewerUids', 'array-contains', uid),
-          where('status', '==', 'ready'),
-          orderBy('createdAt', 'desc'),
-          limit(PAGE_SIZE)
-        );
-        if (currentCursors.viewer) {
-          qViewers = query(qViewers, startAfter(currentCursors.viewer));
-        }
-
-        const [snapOwner, snapEditors, snapViewers] = await Promise.all([
-          getDocs(qOwner),
-          getDocs(qEditors),
-          getDocs(qViewers)
+        // Single-field queries do not require the new composite indexes.
+        await Promise.all([
+          safeQuery(query(collection(db, 'whiteboards'), where('ownerUid', '==', user.uid), limit(200)), 'owner'),
+          safeQuery(query(collection(db, 'whiteboards'), where('editorUids', 'array-contains', user.uid), limit(200)), 'editor'),
+          safeQuery(query(collection(db, 'whiteboards'), where('viewerUids', 'array-contains', user.uid), limit(200)), 'viewer'),
         ]);
 
-        totalReadDocs = snapOwner.size + snapEditors.size + snapViewers.size;
+        // Recover historical boards that predate ownerUid/ACL fields. The chosen
+        // profile name is preserved for anonymous users across reloads.
+        const candidateNames = Array.from(new Set([
+          currentUserProfile?.name,
+          localStorage.getItem('lucid_spark_user_name'),
+        ].filter((value): value is string => Boolean(value && value.trim()))));
 
-        if (snapOwner.size === PAGE_SIZE || snapEditors.size === PAGE_SIZE || snapViewers.size === PAGE_SIZE) {
-          newHasMore = true;
+        const compatibilityQueries: Promise<void>[] = [];
+        candidateNames.forEach((name) => {
+          compatibilityQueries.push(
+            safeQuery(query(collection(db, 'whiteboards'), where('createdBy', '==', name), limit(200)), `legacy-createdBy-${name}`),
+            safeQuery(query(collection(db, 'whiteboards'), where('studentName', '==', name), limit(200)), `legacy-studentName-${name}`),
+            safeQuery(query(collection(db, 'whiteboards'), where('studentId', '==', name.toLowerCase().replace(/\s+/g, '-')), limit(200)), `legacy-studentId-${name}`),
+          );
+        });
+        await Promise.all(compatibilityQueries);
+
+        // Final compatibility fallback: the original production dashboard
+        // listed all board manifests, so some historical boards have no stable
+        // owner or creator identity. Fetch a bounded page and include only
+        // documents that still use an old storage/ownership model.
+        try {
+          const legacySnapshot = await getDocs(query(collection(db, 'whiteboards'), limit(200)));
+          totalReadDocs += legacySnapshot.size;
+          legacySnapshot.forEach((docSnap) => {
+            const data: any = docSnap.data() || {};
+            const isLegacy = !data.ownerUid || !data.schemaVersion || data.schemaVersion < 2 || Array.isArray(data.chunkIds);
+            if (!isLegacy || data.status === 'initializing') return;
+            loadedMap.set(docSnap.id, {
+              id: docSnap.id,
+              name: data.name || 'Recovered Whiteboard',
+              description: data.description || '',
+              createdAt: Number(data.createdAt || data.updatedAt || 0),
+              createdBy: data.createdBy || 'Legacy board',
+              ...data,
+            } as Whiteboard);
+          });
+        } catch (error) {
+          console.warn('Legacy board discovery fallback failed:', error);
         }
+      }
 
-        const parseDoc = (docSnap: any) => {
-          const data: any = docSnap.data();
-          loadedMap.set(docSnap.id, { id: docSnap.id, ...data });
-        };
-
-        snapOwner.forEach(parseDoc);
-        snapEditors.forEach(parseDoc);
-        snapViewers.forEach(parseDoc);
-
-        nextCursors.owner = snapOwner.docs[snapOwner.docs.length - 1] || null;
-        nextCursors.editor = snapEditors.docs[snapEditors.docs.length - 1] || null;
-        nextCursors.viewer = snapViewers.docs[snapViewers.docs.length - 1] || null;
+      // Directly verify locally remembered board IDs. This protects a newly
+      // created board from disappearing if a query is temporarily unavailable.
+      for (const boardId of getRememberedBoardIds()) {
+        try {
+          const boardSnap = await getDoc(doc(db, 'whiteboards', boardId));
+          totalReadDocs += 1;
+          if (boardSnap.exists()) {
+            const data: any = boardSnap.data() || {};
+            if (data.status !== 'initializing') {
+              loadedMap.set(boardSnap.id, { id: boardSnap.id, ...data } as Whiteboard);
+            }
+          } else {
+            forgetBoardId(boardId);
+          }
+        } catch (error) {
+          console.warn(`Remembered board ${boardId} could not be loaded:`, error);
+        }
       }
 
       trackOperation('read', 'dashboard-boards-load', totalReadDocs);
-
-      const loadedBoards = Array.from(loadedMap.values());
-      loadedBoards.sort((a, b) => b.createdAt - a.createdAt);
-
-      setBoards(loadedBoards);
+      const loadedBoards = Array.from(loadedMap.values()).sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+      const startIndex = (page - 1) * PAGE_SIZE;
+      setBoards(loadedBoards.slice(startIndex, startIndex + PAGE_SIZE));
       setCurrentPage(page);
-      setHasMore(newHasMore);
-
-      cursorsHistoryRef.current[page] = nextCursors;
+      setHasMore(loadedBoards.length > startIndex + PAGE_SIZE);
     } catch (err) {
-      console.error("Error fetching whiteboards:", err);
+      console.error('Error fetching whiteboards:', err);
     }
   }, [currentUserProfile, adminClaim]);
 
@@ -675,6 +685,7 @@ export default function Dashboard({
       const docRef = await addDoc(collection(db, 'whiteboards'), newBoardData);
       trackOperation('write', 'dashboard-create-board', 1);
 
+      rememberBoardId(docRef.id);
       const createdBoardObj = { id: docRef.id, ...newBoardData };
       setBoards((prev) => [createdBoardObj as any, ...prev]);
       setNewBoardName('');
@@ -756,6 +767,7 @@ export default function Dashboard({
       const docRef = await addDoc(collection(db, 'whiteboards'), newBoardData);
       
       trackOperation('write', 'dashboard-create-board-student', 1);
+      rememberBoardId(docRef.id);
 
       const createdBoardObj = { id: docRef.id, ...newBoardData };
       setBoards((prev) => [createdBoardObj as any, ...prev]);
@@ -847,6 +859,7 @@ export default function Dashboard({
 
       // Delete board manifest
       await deleteDoc(doc(db, "whiteboards", targetId));
+      forgetBoardId(targetId);
       trackOperation('delete', 'board-manifest-delete', 1);
     } catch (err) {
       console.error("Error deleting board and subcollections:", err);
@@ -1053,6 +1066,28 @@ export default function Dashboard({
 
       {/* Main Container */}
       <main className="max-w-7xl w-full mx-auto p-6 md:p-8 flex-1 grid grid-cols-1 lg:grid-cols-12 gap-8">
+        {authError && !isSandboxEnvironment() && (
+          <div className="col-span-full bg-amber-50 border border-amber-200 rounded-xl p-5 flex flex-col md:flex-row items-start justify-between gap-4 shadow-sm animate-pulse">
+            <div className="flex-1 space-y-1">
+              <h3 className="text-sm font-bold text-amber-800 flex items-center gap-2">
+                <span>⚠️ Anonymous Authentication Provider is Disabled in Firebase Console</span>
+              </h3>
+              <p className="text-xs text-amber-700 leading-relaxed">
+                Guest/anonymous users cannot be authenticated because the <strong>Anonymous</strong> sign-in provider is disabled in your Firebase project. 
+                This causes whiteboard listings and creations to fail to satisfy your Firestore Security Rules.
+              </p>
+              <div className="text-xs text-amber-800 mt-2">
+                <strong>To fix this:</strong>
+                <ol className="list-decimal pl-5 mt-1 space-y-0.5 font-medium">
+                  <li>Open the <a href="https://console.firebase.google.com/" target="_blank" rel="noreferrer" className="underline font-bold text-blue-700">Firebase Console</a> and select your project.</li>
+                  <li>Navigate to <strong>Build</strong> &rarr; <strong>Authentication</strong> &rarr; <strong>Sign-in method</strong> tab.</li>
+                  <li>Click <strong>Add new provider</strong>, choose <strong>Anonymous</strong> under <em>Other providers</em>, and toggle it to <strong>Enable</strong>.</li>
+                </ol>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* User Settings Sidebar */}
         <div className="lg:col-span-4 space-y-6">
           <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-xs">

@@ -27,7 +27,8 @@ function safeIdbDel(key: string): Promise<void> {
 }
 
 import { signInAnonymously } from 'firebase/auth';
-import { db, auth } from '../firebase';
+import { db, auth, authPersistenceReady } from '../firebase';
+import { saveBoardAsset } from './storageService';
 import { BoardElement } from '../types';
 import { isSandboxEnvironment, getSandboxLocalElements, saveSandboxLocalElements } from '../utils/firebaseSandboxGuard';
 import { trackOperation } from '../utils/firestoreInstrumentation';
@@ -168,14 +169,212 @@ export function parseLegacyElement(rawEl: any, fallbackId: string): BoardElement
   return sanitizeForFirestore(clean) as BoardElement;
 }
 
+type CompatibilityElementVersion = {
+  element: BoardElement | null;
+  updatedAt: number;
+  updatedByClientId: string;
+  isDeleted: boolean;
+};
+
+function normalizeCompatibilityElement(raw: any, fallbackId: string): BoardElement | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const id = String(raw.id || raw.elementId || fallbackId);
+
+  // Preserve complete elements from stateChunks/stateShards. The old parser was
+  // intentionally conservative and dropped newer fields such as connectors,
+  // reactions, graph settings, and media metadata.
+  if (raw.type && (raw.x !== undefined || raw.points || raw.assetId || raw.src)) {
+    return sanitizeForFirestore({ id, ...raw }) as BoardElement;
+  }
+  return parseLegacyElement(raw, id);
+}
+
+function mergeCompatibilityElement(
+  target: Map<string, CompatibilityElementVersion>,
+  id: string,
+  raw: any,
+  forceDeleted = false
+): void {
+  const element = normalizeCompatibilityElement(raw, id);
+  const updatedAt = Number(raw?.updatedAt || raw?.timestamp || element?.updatedAt || 0);
+  const updatedByClientId = String(raw?.updatedByClientId || '');
+  const isDeleted = forceDeleted || Boolean(raw?.isDeleted);
+  const existing = target.get(id);
+  const incomingWins = !existing ||
+    updatedAt > existing.updatedAt ||
+    (updatedAt === existing.updatedAt && updatedByClientId > existing.updatedByClientId) ||
+    (updatedAt === existing.updatedAt && updatedByClientId === existing.updatedByClientId && isDeleted && !existing.isDeleted);
+
+  if (incomingWins) {
+    target.set(id, {
+      element: isDeleted ? null : element,
+      updatedAt,
+      updatedByClientId,
+      isDeleted,
+    });
+  }
+}
+
+function ingestCompatibilityContainer(
+  target: Map<string, CompatibilityElementVersion>,
+  data: any,
+  fallbackId: string
+): void {
+  if (!data || typeof data !== 'object') return;
+
+  const containers = [data.elements, data.drawings, data.data, data.items].filter(Boolean);
+  if (containers.length === 0) {
+    const parsed = normalizeCompatibilityElement(data, fallbackId);
+    if (parsed) mergeCompatibilityElement(target, parsed.id, data);
+  } else {
+    containers.forEach((container: any) => {
+      if (Array.isArray(container)) {
+        container.forEach((item, index) => {
+          const parsed = normalizeCompatibilityElement(item, `${fallbackId}_arr_${index}`);
+          if (parsed) mergeCompatibilityElement(target, parsed.id, item);
+        });
+      } else if (container && typeof container === 'object') {
+        Object.entries(container).forEach(([id, value]) => {
+          mergeCompatibilityElement(target, id, value);
+        });
+      }
+    });
+  }
+
+  if (data.tombstones && typeof data.tombstones === 'object') {
+    Object.entries(data.tombstones).forEach(([id, value]) => {
+      mergeCompatibilityElement(target, id, value, true);
+    });
+  }
+}
+
+async function readCompatibleBoardElements(boardId: string, boardData: any): Promise<BoardElement[]> {
+  const versions = new Map<string, CompatibilityElementVersion>();
+  ingestCompatibilityContainer(versions, boardData, `${boardId}_manifest`);
+
+  for (const collectionName of ['stateShardsV3', 'stateShards', 'stateChunks', 'elements']) {
+    try {
+      const snapshot = await getDocs(collection(db, 'whiteboards', boardId, collectionName));
+      trackOperation('read', `compatibility-${collectionName}`, snapshot.size);
+      snapshot.forEach((docSnap) => {
+        ingestCompatibilityContainer(versions, docSnap.data(), docSnap.id);
+      });
+    } catch (error) {
+      console.warn(`Compatibility read skipped for ${collectionName}:`, error);
+    }
+  }
+
+  return Array.from(versions.values())
+    .filter((entry) => !entry.isDeleted && entry.element)
+    .map((entry) => entry.element as BoardElement);
+}
+
+function dataUrlMimeType(value: string, fallback: string): string {
+  const match = /^data:([^;,]+)[;,]/i.exec(value);
+  return match?.[1] || fallback;
+}
+
+async function externalizeLegacyInlineAssets(
+  boardId: string,
+  elements: BoardElement[],
+  userId: string
+): Promise<BoardElement[]> {
+  const converted: BoardElement[] = [];
+  for (const original of elements) {
+    const element: any = { ...original };
+
+    if (!element.assetId && typeof element.src === 'string' && element.src.startsWith('data:')) {
+      const meta = await saveBoardAsset(
+        boardId,
+        undefined,
+        element.src,
+        dataUrlMimeType(element.src, element.mimeType || 'image/png'),
+        userId
+      );
+      element.assetId = meta.assetId;
+      element.mimeType = meta.mimeType;
+      delete element.src;
+    }
+
+    if (!element.assetId && typeof element.audioUrl === 'string' && element.audioUrl.startsWith('data:')) {
+      const meta = await saveBoardAsset(
+        boardId,
+        undefined,
+        element.audioUrl,
+        dataUrlMimeType(element.audioUrl, element.mimeType || 'audio/webm'),
+        userId
+      );
+      element.assetId = meta.assetId;
+      element.mimeType = meta.mimeType;
+      delete element.audioUrl;
+    }
+
+    if (!element.signatureAssetId && typeof element.signatureDataUrl === 'string' && element.signatureDataUrl.startsWith('data:')) {
+      const meta = await saveBoardAsset(
+        boardId,
+        undefined,
+        element.signatureDataUrl,
+        dataUrlMimeType(element.signatureDataUrl, 'image/png'),
+        userId
+      );
+      element.signatureAssetId = meta.assetId;
+      delete element.signatureDataUrl;
+    }
+
+    converted.push(element as BoardElement);
+  }
+  return converted;
+}
+
+/**
+ * Compatibility bridge for historical board formats. It reads legacy elements,
+ * stateChunks, 20-shard stateShards, and V3 shards, then safely copies the board
+ * into the current V3 layout without deleting the original data.
+ */
 export async function loadAndMigrateLegacyBoard(boardId: string): Promise<BoardElement[]> {
-  return [];
+  const boardRef = doc(db, 'whiteboards', boardId);
+  let boardData: any = {};
+  try {
+    const boardSnap = await getDoc(boardRef);
+    trackOperation('read', 'compatibility-board-manifest', 1);
+    if (boardSnap.exists()) boardData = boardSnap.data() || {};
+  } catch (error) {
+    console.warn('Unable to read compatibility board manifest:', error);
+  }
+
+  const elements = await readCompatibleBoardElements(boardId, boardData);
+  const user = await ensureAuthUser();
+  if (!user) return elements;
+
+  try {
+    const migrationElements = await externalizeLegacyInlineAssets(boardId, elements, user.uid);
+    const migratedBoardData = {
+      ...boardData,
+      ownerUid: boardData.ownerUid || user.uid,
+      accessMode: boardData.accessMode || 'private',
+      editorUids: Array.isArray(boardData.editorUids) ? boardData.editorUids : [],
+      viewerUids: Array.isArray(boardData.viewerUids) ? boardData.viewerUids : [],
+      studentsCanWrite: boardData.studentsCanWrite !== false,
+      status: 'ready',
+      migrationStatus: 'complete',
+      recoveredFromLegacy: true,
+      recoveredAt: Date.now(),
+    };
+    await initializeBoardWithElements(boardId, migrationElements, migratedBoardData);
+    return migrationElements;
+  } catch (error) {
+    // Never hide the user's data just because the one-time migration could not
+    // write. The board remains visible so it can be exported or recovered later.
+    console.error('Compatibility migration failed; showing recovered board read-only:', error);
+    return elements;
+  }
 }
 
 /**
  * Helper to ensure Firebase Auth user is ready prior to Firestore write operations
  */
 export async function ensureAuthUser() {
+  await authPersistenceReady;
   if (auth.currentUser) return auth.currentUser;
   if (isSandboxEnvironment()) return null;
   try {
@@ -186,8 +385,7 @@ export async function ensureAuthUser() {
     const cred = await signInAnonymously(auth);
     return cred.user;
   } catch (err) {
-    console.debug("Anonymous auth failed or disabled, falling back to mock anonymous user object", err);
-    return { uid: 'anonymous', isAnonymous: true } as any;
+    return null;
   }
 }
 
@@ -479,17 +677,22 @@ export async function loadBoardState(boardId: string): Promise<BoardState> {
   const schemaVersion = boardData.schemaVersion || 1;
   const migrationStatus = boardData.migrationStatus;
 
-  if (schemaVersion < 2 || migrationStatus === 'pending') {
+  const usesHistoricalStateChunks = Array.isArray(boardData.chunkIds) && boardData.chunkIds.length > 0;
+  if (schemaVersion < 2 || migrationStatus === 'pending' || migrationStatus === 'in-progress' || usesHistoricalStateChunks) {
+    const recoveredElements = await loadAndMigrateLegacyBoard(boardId);
+    const refreshedSnap = await getDoc(boardRef).catch(() => null as any);
+    const refreshedData = refreshedSnap?.exists?.() ? refreshedSnap.data() : boardData;
     return {
       boardId,
-      schemaVersion,
-      currentRevision: boardData.currentRevision !== undefined ? boardData.currentRevision : 0,
-      chunkIds: [],
-      totalElements: 0,
-      elements: [],
-      isLegacy: true,
-      migrationRequired: true,
-      updatedAt: boardData.updatedAt || Date.now(),
+      schemaVersion: refreshedData?.schemaVersion || 3,
+      currentRevision: refreshedData?.currentRevision !== undefined ? refreshedData.currentRevision : 1,
+      chunkIds: Array.isArray(refreshedData?.changedShardIds) ? refreshedData.changedShardIds : [],
+      totalElements: recoveredElements.length,
+      elements: recoveredElements,
+      isLegacy: false,
+      migrationRequired: false,
+      updatedAt: refreshedData?.updatedAt || Date.now(),
+      boardData: refreshedData,
       loadState: 'ready',
     };
   }
@@ -511,7 +714,14 @@ export async function loadBoardState(boardId: string): Promise<BoardState> {
     }
   });
 
-  const elements = Array.from(elementsMap.values());
+  let elements = Array.from(elementsMap.values());
+
+  // A schema-2 manifest from the previous implementation may still point to
+  // stateChunks rather than stateShards. Never publish an empty board when the
+  // manifest says data exists; recover all known historical layouts instead.
+  if (elements.length === 0 && Number(boardData.totalElements || 0) > 0) {
+    elements = await loadAndMigrateLegacyBoard(boardId);
+  }
 
   return {
     boardId,
@@ -523,6 +733,7 @@ export async function loadBoardState(boardId: string): Promise<BoardState> {
     isLegacy: false,
     migrationRequired: false,
     updatedAt: boardData.updatedAt || Date.now(),
+    boardData,
     loadState: 'ready',
   };
 }
@@ -799,23 +1010,57 @@ export function subscribeToBoardState(
         const schemaVersion = boardData.schemaVersion || 1;
         const migrationStatus = boardData.migrationStatus;
 
-        if (schemaVersion < 2 || migrationStatus === 'pending' || migrationStatus === 'in-progress') {
-          control.loadState = 'ready';
-          control.resolveHydration();
-          const state: BoardState = {
-            boardId,
-            schemaVersion,
-            currentRevision: boardData.currentRevision !== undefined ? boardData.currentRevision : 0,
-            chunkIds: [],
-            totalElements: 0,
-            elements: [],
-            isLegacy: true,
-            migrationRequired: true,
-            updatedAt: boardData.updatedAt || Date.now(),
-            boardData,
-            loadState: 'ready',
-          };
-          control.subscribers.forEach((cb) => cb(state));
+        const usesHistoricalStateChunks = Array.isArray(boardData.chunkIds) && boardData.chunkIds.length > 0;
+        if (schemaVersion < 2 || migrationStatus === 'pending' || migrationStatus === 'in-progress' || usesHistoricalStateChunks) {
+          control.loadState = 'loading-shards';
+          try {
+            const recoveredElements = await loadAndMigrateLegacyBoard(boardId);
+            const refreshedSnap = await getDoc(boardRef).catch(() => null as any);
+            const refreshedData = refreshedSnap?.exists?.() ? refreshedSnap.data() : {
+              ...boardData,
+              ownerUid: boardData.ownerUid || auth.currentUser?.uid,
+              accessMode: boardData.accessMode || 'private',
+              editorUids: Array.isArray(boardData.editorUids) ? boardData.editorUids : [],
+              viewerUids: Array.isArray(boardData.viewerUids) ? boardData.viewerUids : [],
+              studentsCanWrite: boardData.studentsCanWrite !== false,
+              status: 'ready',
+              schemaVersion: 3,
+              shardLayoutVersion: 2,
+              shardCount: 160,
+              migrationStatus: 'complete',
+            };
+
+            control.shardCount = getShardCountForBoard(refreshedData);
+            control.latestBoardData = refreshedData;
+            control.layoutReady = true;
+            control.loadedRevision = refreshedData.currentRevision !== undefined ? refreshedData.currentRevision : 1;
+            control.currentElementsMap = new Map(recoveredElements.map((el) => [el.id, el]));
+            control.shardsMap.clear();
+            const recoveredShards = partitionElementsIntoChunks(control.currentElementsMap, TARGET_CHUNK_SIZE_BYTES, control.shardCount);
+            recoveredShards.forEach((elementsObject, shardId) => {
+              control.shardsMap.set(shardId, new Map(Object.entries(elementsObject) as [string, BoardElement][]));
+            });
+            control.loadState = 'ready';
+            control.resolveHydration();
+            const state: BoardState = {
+              boardId,
+              schemaVersion: refreshedData.schemaVersion || 3,
+              currentRevision: control.loadedRevision,
+              chunkIds: Array.from(control.shardsMap.keys()),
+              totalElements: recoveredElements.length,
+              elements: recoveredElements,
+              isLegacy: false,
+              migrationRequired: false,
+              updatedAt: refreshedData.updatedAt || Date.now(),
+              boardData: refreshedData,
+              loadState: 'ready',
+            };
+            control.subscribers.forEach((cb) => cb(state));
+          } catch (error) {
+            console.error('Unable to recover historical whiteboard:', error);
+            control.loadState = 'error';
+            publishBoardState(boardId);
+          }
           return;
         }
 

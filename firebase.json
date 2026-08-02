@@ -1,8 +1,17 @@
 {
-  "firestore": {
-    "rules": "firestore.rules",
-    "indexes": "firestore.indexes.json"
-  },
+  "$schema": "https://raw.githubusercontent.com/firebase/firebase-tools/master/schema/firebase-config.json",
+  "firestore": [
+    {
+      "database": "(default)",
+      "rules": "firestore.rules",
+      "indexes": "firestore.indexes.json"
+    },
+    {
+      "database": "ai-studio-lucidsparkwhiteb-b0a1d487-a913-4112-b5dd-7cf4c33b5adf",
+      "rules": "firestore.rules",
+      "indexes": "firestore.indexes.json"
+    }
+  ],
   "emulators": {
     "auth": {
       "port": 9099

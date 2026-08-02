@@ -64,26 +64,31 @@ service cloud.firestore {
       return isAdmin() || isBoardOwner(boardData);
     }
 
+    function isRecoverableLegacyBoard(boardData) {
+      return boardData is map && (
+        !boardData.keys().hasAll(["ownerUid", "schemaVersion"]) ||
+        boardData.schemaVersion < 2 ||
+        boardData.keys().hasAny(["chunkIds"])
+      );
+    }
+
     function canReadBoardData(boardData) {
-      return isAdmin() || 
+      return isAdmin() || (isAuthenticated() && (
+        isRecoverableLegacyBoard(boardData) ||
+        boardData.ownerUid == request.auth.uid ||
+        (boardData.editorUids is list && request.auth.uid in boardData.editorUids) ||
+        (boardData.viewerUids is list && request.auth.uid in boardData.viewerUids) ||
         boardData.accessMode == 'link-view' ||
-        boardData.accessMode == 'link-edit' ||
-        boardData.ownerUid == 'anonymous' ||
-        (isAuthenticated() && (
-          boardData.ownerUid == request.auth.uid ||
-          (boardData.editorUids is list && request.auth.uid in boardData.editorUids) ||
-          (boardData.viewerUids is list && request.auth.uid in boardData.viewerUids)
-        ));
+        boardData.accessMode == 'link-edit'
+      ));
     }
 
     function canWriteBoardData(boardData) {
-      return isAdmin() || 
-        boardData.ownerUid == 'anonymous' ||
-        (boardData.accessMode == 'link-edit' && boardData.studentsCanWrite == true) ||
-        (isAuthenticated() && (
-          boardData.ownerUid == request.auth.uid ||
-          (boardData.editorUids is list && request.auth.uid in boardData.editorUids)
-        ));
+      return isAdmin() || (isAuthenticated() && (
+        boardData.ownerUid == request.auth.uid ||
+        (boardData.editorUids is list && request.auth.uid in boardData.editorUids) ||
+        (boardData.accessMode == 'link-edit' && boardData.studentsCanWrite == true)
+      ));
     }
 
     function getBoardData(boardId) {
@@ -102,6 +107,10 @@ service cloud.firestore {
       return isAdmin() || isBoardOwner(getBoardData(boardId));
     }
 
+    function canRecoverLegacyBoard(boardId) {
+      return isAuthenticated() && isRecoverableLegacyBoard(getBoardData(boardId));
+    }
+
     // Default deny catch-all
     match /{document=**} {
       allow read, write: if false;
@@ -109,35 +118,50 @@ service cloud.firestore {
 
     // Whiteboards collection rules
     match /whiteboards/{boardId} {
-      allow read: if canReadBoardData(resource.data);
-      allow create: if isValidId(boardId) && (
-        (isAuthenticated() && request.resource.data.ownerUid == request.auth.uid) ||
-        request.resource.data.ownerUid == 'anonymous'
-      );
-      allow update: if canWriteBoardData(resource.data)
+      allow get: if canReadBoardData(resource.data);
+      // Compatibility listing is temporarily retained so pre-ACL boards can be
+      // discovered and claimed. The old production app listed this collection
+      // globally, and those documents have no ownerUid to query securely.
+      allow list: if isAdmin() || (isAuthenticated() && request.query.limit <= 200);
+      allow create: if isAuthenticated() 
+        && isValidId(boardId) 
+        && request.resource.data.ownerUid == request.auth.uid;
+      allow update: if (
+        canWriteBoardData(resource.data)
         && request.resource.data.ownerUid == resource.data.ownerUid
         && (
           !changesProtectedManagementFields()
           || isBoardManager(resource.data)
-        );
+        )
+      ) || (
+        // One-time compatibility claim: an authenticated user opening a legacy
+        // board may copy it into the current schema without deleting old data.
+        isAuthenticated()
+        && isRecoverableLegacyBoard(resource.data)
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.schemaVersion == 3
+        && request.resource.data.shardLayoutVersion == 2
+        && request.resource.data.shardCount == 160
+        && request.resource.data.status == 'ready'
+      );
       allow delete: if canDeleteBoard(boardId);
 
       // Subcollection: stateShards (modern sharded board state)
       match /stateShards/{shardId} {
         allow read: if canReadBoard(boardId);
-        allow write: if canWriteBoard(boardId);
+        allow write: if canWriteBoard(boardId) || canRecoverLegacyBoard(boardId);
       }
 
       // Subcollection: stateShardsV3 (schema version 3 sharded board state)
       match /stateShardsV3/{shardId} {
         allow read: if canReadBoard(boardId);
-        allow write: if canWriteBoard(boardId);
+        allow write: if canWriteBoard(boardId) || canRecoverLegacyBoard(boardId);
       }
 
       // Subcollection: assets (base64 binary assets stored in Firestore)
       match /assets/{assetId} {
         allow read: if canReadBoard(boardId);
-        allow create: if canWriteBoard(boardId)
+        allow create: if (canWriteBoard(boardId) || canRecoverLegacyBoard(boardId))
           && request.resource.data.assetId == assetId
           && request.resource.data.encoding == "base64"
           && request.resource.data.data is string
@@ -147,12 +171,12 @@ service cloud.firestore {
           && request.resource.data.mimeType is string
           && request.resource.data.contentHash is string;
 
-        allow update: if canWriteBoard(boardId)
+        allow update: if (canWriteBoard(boardId) || canRecoverLegacyBoard(boardId))
           && request.resource.data.assetId == assetId
           && request.resource.data.data is string
           && request.resource.data.data.size() <= 750000;
 
-        allow delete: if canWriteBoard(boardId);
+        allow delete: if canWriteBoard(boardId) || canRecoverLegacyBoard(boardId);
       }
 
       // Subcollection: presence
@@ -161,9 +185,18 @@ service cloud.firestore {
         allow write: if isAuthenticated() && request.auth.uid == userId && canReadBoard(boardId);
       }
 
-      // Legacy subcollection: elements (Strictly administrative / admin only)
+      // Historical chunk model used by older deployed clients. Read access is
+      // retained only for authenticated compatibility recovery.
+      match /stateChunks/{chunkId} {
+        allow read: if canReadBoard(boardId);
+        allow write: if isAdmin();
+      }
+
+      // Legacy elements are readable during one-time recovery but remain
+      // immutable to normal clients, so original data cannot be destroyed.
       match /elements/{elementId} {
-        allow read, write: if isAdmin();
+        allow read: if isAdmin() || canRecoverLegacyBoard(boardId);
+        allow write: if isAdmin();
       }
 
       // Subcollection: live collaborator cursors (Deprecated)

@@ -1,6 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { initializeFirestore, persistentLocalCache, memoryLocalCache } from "firebase/firestore";
-import { getAuth, GoogleAuthProvider, signInAnonymously, onAuthStateChanged } from "firebase/auth";
+import { getAuth, GoogleAuthProvider, signInAnonymously, onAuthStateChanged, setPersistence, browserLocalPersistence } from "firebase/auth";
 import { isSandboxEnvironment } from "./utils/firebaseSandboxGuard";
 
 const firebaseConfig = {
@@ -35,8 +35,16 @@ try {
 const auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
 
+// Explicitly preserve the Firebase Auth UID across reloads. Without this, a board
+// created by an anonymous user can become invisible to its owner after refresh.
+const authPersistenceReady = isSandboxEnvironment()
+  ? Promise.resolve()
+  : setPersistence(auth, browserLocalPersistence).catch((err) => {
+      console.warn("Unable to enable local Firebase Auth persistence:", err);
+    });
+
 // Auto sign-in anonymously for guest users to satisfy security rules (request.auth != null) when not in sandbox
-onAuthStateChanged(auth, (user) => {
+authPersistenceReady.then(() => onAuthStateChanged(auth, (user) => {
   if (!user && !isSandboxEnvironment()) {
     signInAnonymously(auth).catch((err) => {
       // Silently handle auth/admin-restricted-operation when anonymous auth is disabled in Firebase Console
@@ -45,8 +53,8 @@ onAuthStateChanged(auth, (user) => {
       }
     });
   }
-});
+}));
 
-export { app, db, auth, googleProvider };
+export { app, db, auth, googleProvider, authPersistenceReady };
 
 
