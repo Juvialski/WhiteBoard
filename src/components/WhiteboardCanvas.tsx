@@ -12,7 +12,7 @@ import {
   deleteField,
 } from "firebase/firestore";
 import { db, auth } from "../firebase";
-import { isSandboxEnvironment, getSandboxLocalElements, saveSandboxLocalElements } from "../utils/firebaseSandboxGuard";
+import { isSandboxEnvironment, getSandboxLocalElements, saveSandboxLocalElements, getSandboxLocalBoards, saveSandboxLocalBoards } from "../utils/firebaseSandboxGuard";
 import { getBoardPermissions } from "../utils/boardPermissions";
 import {
   subscribeToBoardState,
@@ -3498,20 +3498,59 @@ export default function WhiteboardCanvas({
   // Toggle student writing permission on the board (Teacher/CanManage Only)
   const handleToggleStudentsCanWrite = async () => {
     if (!canManage) return;
+    const newStudentsCanWrite = !studentsCanWrite;
     try {
-      await setDoc(
-        doc(db, "whiteboards", boardId),
-        {
-          studentsCanWrite: !studentsCanWrite,
-        },
-        { merge: true },
+      if (!isSandboxEnvironment()) {
+        await setDoc(
+          doc(db, "whiteboards", boardId),
+          {
+            studentsCanWrite: newStudentsCanWrite,
+            accessMode: newStudentsCanWrite ? 'link-edit' : 'link-view',
+          },
+          { merge: true },
+        );
+      } else {
+        const localBoards = getSandboxLocalBoards();
+        const updated = localBoards.map((b: any) =>
+          b.id === boardId ? { ...b, studentsCanWrite: newStudentsCanWrite, accessMode: newStudentsCanWrite ? 'link-edit' : 'link-view' } : b
+        );
+        saveSandboxLocalBoards(updated);
+        setBoardData((prev: any) => prev ? { ...prev, studentsCanWrite: newStudentsCanWrite, accessMode: newStudentsCanWrite ? 'link-edit' : 'link-view' } : prev);
+      }
+      showSyncToast(
+        newStudentsCanWrite
+          ? "Board unlocked! Students can now write and edit."
+          : "Board locked! Students are now in view-only mode.",
+        newStudentsCanWrite ? "success" : "info"
       );
     } catch (err) {
       console.error("Error toggling student writing permissions:", err);
+      showSyncToast("Failed to update board permissions", "error");
     }
   };
 
-
+  // Proactively ensure boards opened by teachers/managers allow student editing by default when shared
+  useEffect(() => {
+    if (canManage && boardData && (boardData.accessMode === 'private' || boardData.studentsCanWrite === false)) {
+      if (!isSandboxEnvironment()) {
+        setDoc(
+          doc(db, "whiteboards", boardId),
+          {
+            accessMode: 'link-edit',
+            studentsCanWrite: true,
+          },
+          { merge: true }
+        ).catch((err) => console.error("Auto-enabling student write access failed:", err));
+      } else {
+        const localBoards = getSandboxLocalBoards();
+        const updated = localBoards.map((b: any) =>
+          b.id === boardId ? { ...b, accessMode: 'link-edit', studentsCanWrite: true } : b
+        );
+        saveSandboxLocalBoards(updated);
+        setBoardData((prev: any) => prev ? { ...prev, accessMode: 'link-edit', studentsCanWrite: true } : prev);
+      }
+    }
+  }, [canManage, boardData?.accessMode, boardData?.studentsCanWrite, boardId]);
 
   // Zoom handlers
   const handleZoomIn = () => {
@@ -3590,11 +3629,43 @@ export default function WhiteboardCanvas({
   };
 
   // Share Board link copying
-  const copyBoardLink = () => {
+  const copyBoardLink = async () => {
     const link = `${window.location.origin}/?board=${boardId}`;
-    navigator.clipboard.writeText(link);
+    try {
+      await navigator.clipboard.writeText(link);
+    } catch (e) {
+      console.error("Failed to copy link to clipboard", e);
+    }
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2500);
+
+    // If teacher/owner shares the link and student write is locked or private, automatically set accessMode to 'link-edit' and studentsCanWrite to true
+    if (canManage && (boardData?.accessMode !== 'link-edit' || boardData?.studentsCanWrite === false)) {
+      try {
+        if (!isSandboxEnvironment()) {
+          await setDoc(
+            doc(db, "whiteboards", boardId),
+            {
+              accessMode: 'link-edit',
+              studentsCanWrite: true,
+            },
+            { merge: true },
+          );
+        } else {
+          const localBoards = getSandboxLocalBoards();
+          const updated = localBoards.map((b: any) =>
+            b.id === boardId ? { ...b, accessMode: 'link-edit', studentsCanWrite: true } : b
+          );
+          saveSandboxLocalBoards(updated);
+          setBoardData((prev: any) => prev ? { ...prev, accessMode: 'link-edit', studentsCanWrite: true } : prev);
+        }
+        showSyncToast("Link copied! Board set so students can write.", "success");
+        return;
+      } catch (err) {
+        console.error("Error updating board to link-edit on share:", err);
+      }
+    }
+    showSyncToast("Link copied to clipboard!", "success");
   };
 
   return (

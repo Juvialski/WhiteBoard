@@ -48,7 +48,8 @@ export function getBoardPermissions(
     };
   }
 
-  const accessMode = boardData?.accessMode || 'private';
+  // Default accessMode to 'link-edit' for collaborative whiteboards if unspecified or default
+  const accessMode = boardData?.accessMode || 'link-edit';
   const editorUids: string[] = Array.isArray(boardData?.editorUids) ? boardData.editorUids : [];
   const viewerUids: string[] = Array.isArray(boardData?.viewerUids) ? boardData.viewerUids : [];
   const studentsCanWrite = boardData?.studentsCanWrite !== false;
@@ -64,7 +65,8 @@ export function getBoardPermissions(
 
   const canWrite =
     isEditor ||
-    (accessMode === 'link-edit' && studentsCanWrite);
+    (accessMode === 'link-edit' && studentsCanWrite) ||
+    (studentsCanWrite && accessMode !== 'link-view');
 
   return {
     canRead,

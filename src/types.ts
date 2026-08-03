@@ -266,7 +266,7 @@ export interface Whiteboard {
   createdAt: number;
   createdBy: string;
   ownerUid?: string;
-  accessMode?: "private" | "public" | "shared";
+  accessMode?: "private" | "public" | "shared" | "link-view" | "link-edit";
   editorUids?: string[];
   viewerUids?: string[];
   status?: "initializing" | "ready";
