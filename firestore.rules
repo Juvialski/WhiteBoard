@@ -126,42 +126,30 @@ service cloud.firestore {
       allow create: if isAuthenticated() 
         && isValidId(boardId) 
         && request.resource.data.ownerUid == request.auth.uid;
-      allow update: if (
-        canWriteBoardData(resource.data)
+      allow update: if canWriteBoardData(resource.data)
         && request.resource.data.ownerUid == resource.data.ownerUid
         && (
           !changesProtectedManagementFields()
           || isBoardManager(resource.data)
-        )
-      ) || (
-        // One-time compatibility claim: an authenticated user opening a legacy
-        // board may copy it into the current schema without deleting old data.
-        isAuthenticated()
-        && isRecoverableLegacyBoard(resource.data)
-        && request.resource.data.ownerUid == request.auth.uid
-        && request.resource.data.schemaVersion == 3
-        && request.resource.data.shardLayoutVersion == 2
-        && request.resource.data.shardCount == 160
-        && request.resource.data.status == 'ready'
-      );
+        );
       allow delete: if canDeleteBoard(boardId);
 
       // Subcollection: stateShards (modern sharded board state)
       match /stateShards/{shardId} {
         allow read: if canReadBoard(boardId);
-        allow write: if canWriteBoard(boardId) || canRecoverLegacyBoard(boardId);
+        allow write: if canWriteBoard(boardId);
       }
 
       // Subcollection: stateShardsV3 (schema version 3 sharded board state)
       match /stateShardsV3/{shardId} {
         allow read: if canReadBoard(boardId);
-        allow write: if canWriteBoard(boardId) || canRecoverLegacyBoard(boardId);
+        allow write: if canWriteBoard(boardId);
       }
 
       // Subcollection: assets (base64 binary assets stored in Firestore)
       match /assets/{assetId} {
         allow read: if canReadBoard(boardId);
-        allow create: if (canWriteBoard(boardId) || canRecoverLegacyBoard(boardId))
+        allow create: if canWriteBoard(boardId)
           && request.resource.data.assetId == assetId
           && request.resource.data.encoding == "base64"
           && request.resource.data.data is string
@@ -171,12 +159,12 @@ service cloud.firestore {
           && request.resource.data.mimeType is string
           && request.resource.data.contentHash is string;
 
-        allow update: if (canWriteBoard(boardId) || canRecoverLegacyBoard(boardId))
+        allow update: if canWriteBoard(boardId)
           && request.resource.data.assetId == assetId
           && request.resource.data.data is string
           && request.resource.data.data.size() <= 750000;
 
-        allow delete: if canWriteBoard(boardId) || canRecoverLegacyBoard(boardId);
+        allow delete: if canWriteBoard(boardId);
       }
 
       // Subcollection: presence

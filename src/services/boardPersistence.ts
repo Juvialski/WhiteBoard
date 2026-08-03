@@ -3,10 +3,8 @@ import {
   doc,
   getDoc,
   getDocs,
-  setDoc,
   onSnapshot,
   runTransaction,
-  writeBatch,
   query,
 } from 'firebase/firestore';
 import { get as idbGet, set as idbSet, del as idbDel } from 'idb-keyval';
@@ -28,7 +26,6 @@ function safeIdbDel(key: string): Promise<void> {
 
 import { signInAnonymously } from 'firebase/auth';
 import { db, auth, authPersistenceReady } from '../firebase';
-import { saveBoardAsset } from './storageService';
 import { BoardElement } from '../types';
 import { isSandboxEnvironment, getSandboxLocalElements, saveSandboxLocalElements } from '../utils/firebaseSandboxGuard';
 import { trackOperation } from '../utils/firestoreInstrumentation';
@@ -54,10 +51,12 @@ export const MAX_STATE_SHARD_DOCUMENT_BYTES = 700_000;
 export const TARGET_CHUNK_SIZE_BYTES = 250000;
 export const MAX_SINGLE_ELEMENT_BYTES = 250000;
 
-// Prevent loadBoardState() and the manifest listener from migrating the same
-// legacy board at the same time. Without this guard, one board open can start
-// multiple full shard/asset rewrites.
-const legacyMigrationInFlight = new Map<string, Promise<BoardElement[]>>();
+// Legacy boards are loaded read-only. Cache the in-flight/completed read for the
+// current browser session so loadBoardState() and the manifest listener cannot
+// repeat the same historical collection scans. No browser-side migration writes
+// are allowed.
+const legacyReadInFlight = new Map<string, Promise<BoardElement[]>>();
+const legacyReadCache = new Map<string, BoardElement[]>();
 
 export function getShardCountForBoard(boardData: any): number {
   if (!boardData) return 20;
@@ -68,6 +67,22 @@ export function getShardCountForBoard(boardData: any): number {
     return 160;
   }
   return 20;
+}
+
+function isLegacyBoardData(boardData: any): boolean {
+  const schemaVersion = Number(boardData?.schemaVersion ?? 1);
+  const migrationStatus = boardData?.migrationStatus;
+  const usesHistoricalStateChunks =
+    schemaVersion < 3 &&
+    Array.isArray(boardData?.chunkIds) &&
+    boardData.chunkIds.length > 0;
+
+  return (
+    schemaVersion < 2 ||
+    migrationStatus === 'pending' ||
+    migrationStatus === 'in-progress' ||
+    usesHistoricalStateChunks
+  );
 }
 
 /**
@@ -274,128 +289,54 @@ async function readCompatibleBoardElements(boardId: string, boardData: any): Pro
     .map((entry) => entry.element as BoardElement);
 }
 
-function dataUrlMimeType(value: string, fallback: string): string {
-  const match = /^data:([^;,]+)[;,]/i.exec(value);
-  return match?.[1] || fallback;
-}
-
-async function externalizeLegacyInlineAssets(
+/**
+ * Loads every known historical board layout without modifying Firestore.
+ * Old boards deliberately stay read-only until the administrator runs the
+ * separate Admin SDK migration script.
+ */
+export async function loadLegacyBoardReadOnly(
   boardId: string,
-  elements: BoardElement[],
-  userId: string
+  boardDataOverride?: any
 ): Promise<BoardElement[]> {
-  const converted: BoardElement[] = [];
-  for (const original of elements) {
-    const element: any = { ...original };
+  const cached = legacyReadCache.get(boardId);
+  if (cached) return cached;
 
-    if (!element.assetId && typeof element.src === 'string' && element.src.startsWith('data:')) {
-      const meta = await saveBoardAsset(
-        boardId,
-        undefined,
-        element.src,
-        dataUrlMimeType(element.src, element.mimeType || 'image/png'),
-        userId
-      );
-      element.assetId = meta.assetId;
-      element.mimeType = meta.mimeType;
-      delete element.src;
-    }
-
-    if (!element.assetId && typeof element.audioUrl === 'string' && element.audioUrl.startsWith('data:')) {
-      const meta = await saveBoardAsset(
-        boardId,
-        undefined,
-        element.audioUrl,
-        dataUrlMimeType(element.audioUrl, element.mimeType || 'audio/webm'),
-        userId
-      );
-      element.assetId = meta.assetId;
-      element.mimeType = meta.mimeType;
-      delete element.audioUrl;
-    }
-
-    if (!element.signatureAssetId && typeof element.signatureDataUrl === 'string' && element.signatureDataUrl.startsWith('data:')) {
-      const meta = await saveBoardAsset(
-        boardId,
-        undefined,
-        element.signatureDataUrl,
-        dataUrlMimeType(element.signatureDataUrl, 'image/png'),
-        userId
-      );
-      element.signatureAssetId = meta.assetId;
-      delete element.signatureDataUrl;
-    }
-
-    converted.push(element as BoardElement);
-  }
-  return converted;
-}
-
-/**
- * Compatibility bridge for historical board formats. It reads legacy elements,
- * stateChunks, 20-shard stateShards, and V3 shards, then safely copies the board
- * into the current V3 layout without deleting the original data.
- */
-async function performLegacyBoardMigration(boardId: string): Promise<BoardElement[]> {
-  const boardRef = doc(db, 'whiteboards', boardId);
-  let boardData: any = {};
-  try {
-    const boardSnap = await getDoc(boardRef);
-    trackOperation('read', 'compatibility-board-manifest', 1);
-    if (boardSnap.exists()) boardData = boardSnap.data() || {};
-  } catch (error) {
-    console.warn('Unable to read compatibility board manifest:', error);
-  }
-
-  const elements = await readCompatibleBoardElements(boardId, boardData);
-  const user = await ensureAuthUser();
-  if (!user) return elements;
-
-  try {
-    const migrationElements = await externalizeLegacyInlineAssets(boardId, elements, user.uid);
-    const migratedBoardData = {
-      ...boardData,
-      ownerUid: boardData.ownerUid || user.uid,
-      accessMode: boardData.accessMode || 'private',
-      editorUids: Array.isArray(boardData.editorUids) ? boardData.editorUids : [],
-      viewerUids: Array.isArray(boardData.viewerUids) ? boardData.viewerUids : [],
-      studentsCanWrite: boardData.studentsCanWrite !== false,
-      status: 'ready',
-      migrationStatus: 'complete',
-      // A non-empty legacy chunkIds field used to retrigger migration on every
-      // manifest snapshot. Clear it as part of the one-time conversion.
-      chunkIds: [],
-      recoveredFromLegacy: true,
-      recoveredAt: Date.now(),
-    };
-    await initializeBoardWithElements(boardId, migrationElements, migratedBoardData);
-    return migrationElements;
-  } catch (error) {
-    // Never hide the user's data just because the one-time migration could not
-    // write. The board remains visible so it can be exported or recovered later.
-    console.error('Compatibility migration failed; showing recovered board read-only:', error);
-    return elements;
-  }
-}
-
-/**
- * Runs at most one compatibility migration per board at a time. Both the initial
- * loader and the realtime manifest listener can discover the same legacy board;
- * they must share one migration promise instead of duplicating every write.
- */
-export async function loadAndMigrateLegacyBoard(boardId: string): Promise<BoardElement[]> {
-  const existing = legacyMigrationInFlight.get(boardId);
+  const existing = legacyReadInFlight.get(boardId);
   if (existing) return existing;
 
-  const migrationPromise = performLegacyBoardMigration(boardId);
-  legacyMigrationInFlight.set(boardId, migrationPromise);
+  const readPromise = (async () => {
+    let boardData = boardDataOverride || {};
+    if (!boardDataOverride) {
+      try {
+        const boardSnap = await getDoc(doc(db, 'whiteboards', boardId));
+        trackOperation('read', 'legacy-readonly-manifest', 1);
+        if (boardSnap.exists()) boardData = boardSnap.data() || {};
+      } catch (error) {
+        console.warn('Unable to read legacy board manifest:', error);
+      }
+    }
+
+    const elements = await readCompatibleBoardElements(boardId, boardData);
+    legacyReadCache.set(boardId, elements);
+    return elements;
+  })();
+
+  legacyReadInFlight.set(boardId, readPromise);
   try {
-    return await migrationPromise;
+    return await readPromise;
   } finally {
-    if (legacyMigrationInFlight.get(boardId) === migrationPromise) {
-      legacyMigrationInFlight.delete(boardId);
+    if (legacyReadInFlight.get(boardId) === readPromise) {
+      legacyReadInFlight.delete(boardId);
     }
   }
+}
+
+/**
+ * Backward-compatible export retained for older imports. Despite the historical
+ * name, this function performs reads only and never migrates from the browser.
+ */
+export async function loadAndMigrateLegacyBoard(boardId: string): Promise<BoardElement[]> {
+  return loadLegacyBoardReadOnly(boardId);
 }
 
 /**
@@ -466,6 +407,7 @@ interface BoardControl {
   disposed: boolean;
   latestBoardData: any;
   shardCount: number;
+  isLegacyReadOnly: boolean;
 }
 
 const activeControls = new Map<string, BoardControl>();
@@ -530,6 +472,7 @@ export function getOrCreateControl(boardId: string): BoardControl {
       disposed: false,
       latestBoardData: null,
       shardCount: 20,
+      isLegacyReadOnly: false,
     };
     control = newControl;
     activeControls.set(boardId, control);
@@ -567,7 +510,7 @@ export function getOrCreateControl(boardId: string): BoardControl {
 
     // Auto-flush when both restore and hydration are complete
     Promise.all([restorePromise, hydrationPromise]).then(() => {
-      if (newControl.pendingMutations.size > 0 && !newControl.disposed) {
+      if (newControl.pendingMutations.size > 0 && !newControl.disposed && !newControl.isLegacyReadOnly) {
         flushBoardCheckpoint(boardId, 'idb-hydration-restore');
       }
     });
@@ -703,24 +646,20 @@ export async function loadBoardState(boardId: string): Promise<BoardState> {
 
   const boardData = boardSnap.data();
   const schemaVersion = boardData.schemaVersion || 1;
-  const migrationStatus = boardData.migrationStatus;
 
-  const usesHistoricalStateChunks = schemaVersion < 3 && Array.isArray(boardData.chunkIds) && boardData.chunkIds.length > 0;
-  if (schemaVersion < 2 || migrationStatus === 'pending' || migrationStatus === 'in-progress' || usesHistoricalStateChunks) {
-    const recoveredElements = await loadAndMigrateLegacyBoard(boardId);
-    const refreshedSnap = await getDoc(boardRef).catch(() => null as any);
-    const refreshedData = refreshedSnap?.exists?.() ? refreshedSnap.data() : boardData;
+  if (isLegacyBoardData(boardData)) {
+    const recoveredElements = await loadLegacyBoardReadOnly(boardId, boardData);
     return {
       boardId,
-      schemaVersion: refreshedData?.schemaVersion || 3,
-      currentRevision: refreshedData?.currentRevision !== undefined ? refreshedData.currentRevision : 1,
-      chunkIds: Array.isArray(refreshedData?.changedShardIds) ? refreshedData.changedShardIds : [],
+      schemaVersion,
+      currentRevision: boardData.currentRevision !== undefined ? Number(boardData.currentRevision) : 0,
+      chunkIds: Array.isArray(boardData.chunkIds) ? boardData.chunkIds : [],
       totalElements: recoveredElements.length,
       elements: recoveredElements,
-      isLegacy: false,
-      migrationRequired: false,
-      updatedAt: refreshedData?.updatedAt || Date.now(),
-      boardData: refreshedData,
+      isLegacy: true,
+      migrationRequired: true,
+      updatedAt: boardData.updatedAt || Date.now(),
+      boardData,
       loadState: 'ready',
     };
   }
@@ -748,13 +687,26 @@ export async function loadBoardState(boardId: string): Promise<BoardState> {
   // stateChunks rather than stateShards. Never publish an empty board when the
   // manifest says data exists; recover all known historical layouts instead.
   if (elements.length === 0 && Number(boardData.totalElements || 0) > 0) {
-    elements = await loadAndMigrateLegacyBoard(boardId);
+    elements = await loadLegacyBoardReadOnly(boardId, boardData);
+    return {
+      boardId,
+      schemaVersion,
+      currentRevision: boardData.currentRevision !== undefined ? Number(boardData.currentRevision) : 0,
+      chunkIds: Array.isArray(boardData.chunkIds) ? boardData.chunkIds : [],
+      totalElements: elements.length,
+      elements,
+      isLegacy: true,
+      migrationRequired: true,
+      updatedAt: boardData.updatedAt || Date.now(),
+      boardData,
+      loadState: 'ready',
+    };
   }
 
   return {
     boardId,
     schemaVersion,
-    currentRevision: boardData.currentRevision !== undefined ? boardData.currentRevision : 1,
+    currentRevision: boardData.currentRevision !== undefined ? Number(boardData.currentRevision) : 0,
     chunkIds: shardsSnap.docs.map(d => d.id),
     totalElements: elements.length,
     elements,
@@ -783,7 +735,7 @@ export function publishBoardState(boardId: string) {
   control.shardsMap.forEach((shardElements) => {
     shardElements.forEach((el: any, id) => {
       if (el && el.isDeleted) return; // Skip tombstones
-      const pending = control.pendingMutations.get(id);
+      const pending = control.isLegacyReadOnly ? undefined : control.pendingMutations.get(id);
       if (pending) {
         if (pending.action === 'set' && pending.data) {
           flattened.set(id, pending.data);
@@ -794,14 +746,16 @@ export function publishBoardState(boardId: string) {
     });
   });
 
-  // Merge pending local-first actions not yet committed
-  control.pendingMutations.forEach((item, id) => {
-    if (item.action === 'set' && item.data) {
-      flattened.set(id, item.data);
-    } else if (item.action === 'delete') {
-      flattened.delete(id);
-    }
-  });
+  // Never merge or display pending cloud mutations on a legacy read-only board.
+  if (!control.isLegacyReadOnly) {
+    control.pendingMutations.forEach((item, id) => {
+      if (item.action === 'set' && item.data) {
+        flattened.set(id, item.data);
+      } else if (item.action === 'delete') {
+        flattened.delete(id);
+      }
+    });
+  }
 
   control.currentElementsMap = flattened;
   const elementsList = Array.from(flattened.values());
@@ -813,8 +767,8 @@ export function publishBoardState(boardId: string) {
     chunkIds: Array.from(control.shardsMap.keys()),
     totalElements: elementsList.length,
     elements: elementsList,
-    isLegacy: false,
-    migrationRequired: false,
+    isLegacy: control.isLegacyReadOnly,
+    migrationRequired: control.isLegacyReadOnly,
     updatedAt: boardData.updatedAt || Date.now(),
     boardData,
     loadState: control.loadState,
@@ -910,6 +864,29 @@ async function triggerFullRecovery(
         throw new Error("Shard layout mismatch or invalid elements found during full recovery.");
       }
 
+      if (nextShardsMap.size === 0 && Number(dataB.totalElements || 0) > 0) {
+        const legacyElements = await loadLegacyBoardReadOnly(boardId, dataB);
+        const legacyShard = new Map<string, BoardElement>(legacyElements.map((el) => [el.id, el]));
+        control.shardsMap = new Map([['legacy_readonly', legacyShard]]);
+        control.currentElementsMap = new Map(legacyShard);
+        if (control.pendingMutations.size > 0) {
+          void safeIdbSet(
+            `legacy_readonly_pending_backup_${boardId}`,
+            Array.from(control.pendingMutations.values())
+          );
+          control.pendingMutations.clear();
+          void safeIdbDel(`pending_mutations_${boardId}`);
+        }
+        control.loadedRevision = revB;
+        control.loadState = 'ready';
+        control.latestBoardData = dataB;
+        control.layoutReady = false;
+        control.isLegacyReadOnly = true;
+        control.resolveHydration();
+        publishBoardState(boardId);
+        return;
+      }
+
       // Atomic swap/assignment only after complete validation
       control.shardsMap = nextShardsMap;
       control.shardCount = shardCount;
@@ -917,6 +894,7 @@ async function triggerFullRecovery(
       control.loadState = 'ready';
       control.latestBoardData = dataB;
       control.layoutReady = true;
+      control.isLegacyReadOnly = false;
       control.resolveHydration();
 
       // Keep localCommittedRevisions bounded (max 10)
@@ -1024,6 +1002,7 @@ export function subscribeToBoardState(
             totalElements: 0,
           };
           control.layoutReady = true;
+          control.isLegacyReadOnly = false;
           control.resolveHydration();
           control.loadState = 'ready';
           publishBoardState(boardId);
@@ -1035,63 +1014,46 @@ export function subscribeToBoardState(
         control.latestBoardData = boardData;
         control.layoutReady = true;
 
-        const schemaVersion = boardData.schemaVersion || 1;
-        const migrationStatus = boardData.migrationStatus;
-
-        const usesHistoricalStateChunks = schemaVersion < 3 && Array.isArray(boardData.chunkIds) && boardData.chunkIds.length > 0;
-        if (schemaVersion < 2 || migrationStatus === 'pending' || migrationStatus === 'in-progress' || usesHistoricalStateChunks) {
+        if (isLegacyBoardData(boardData)) {
+          const legacyToken = ++control.fetchRevisionToken;
           control.loadState = 'loading-shards';
-          try {
-            const recoveredElements = await loadAndMigrateLegacyBoard(boardId);
-            const refreshedSnap = await getDoc(boardRef).catch(() => null as any);
-            const refreshedData = refreshedSnap?.exists?.() ? refreshedSnap.data() : {
-              ...boardData,
-              ownerUid: boardData.ownerUid || auth.currentUser?.uid,
-              accessMode: boardData.accessMode || 'private',
-              editorUids: Array.isArray(boardData.editorUids) ? boardData.editorUids : [],
-              viewerUids: Array.isArray(boardData.viewerUids) ? boardData.viewerUids : [],
-              studentsCanWrite: boardData.studentsCanWrite !== false,
-              status: 'ready',
-              schemaVersion: 3,
-              shardLayoutVersion: 2,
-              shardCount: 160,
-              migrationStatus: 'complete',
-            };
+          control.layoutReady = false;
+          control.isLegacyReadOnly = true;
 
-            control.shardCount = getShardCountForBoard(refreshedData);
-            control.latestBoardData = refreshedData;
-            control.layoutReady = true;
-            control.loadedRevision = refreshedData.currentRevision !== undefined ? refreshedData.currentRevision : 1;
-            control.currentElementsMap = new Map(recoveredElements.map((el) => [el.id, el]));
-            control.shardsMap.clear();
-            const recoveredShards = partitionElementsIntoChunks(control.currentElementsMap, TARGET_CHUNK_SIZE_BYTES, control.shardCount);
-            recoveredShards.forEach((elementsObject, shardId) => {
-              control.shardsMap.set(shardId, new Map(Object.entries(elementsObject) as [string, BoardElement][]));
-            });
+          try {
+            const recoveredElements = await loadLegacyBoardReadOnly(boardId, boardData);
+            if (legacyToken !== control.fetchRevisionToken || control.disposed) return;
+
+            const legacyShard = new Map<string, BoardElement>(
+              recoveredElements.map((element) => [element.id, element])
+            );
+            control.shardsMap = new Map([['legacy_readonly', legacyShard]]);
+            control.currentElementsMap = new Map(legacyShard);
+            control.latestBoardData = boardData;
+            if (control.pendingMutations.size > 0) {
+              void safeIdbSet(
+                `legacy_readonly_pending_backup_${boardId}`,
+                Array.from(control.pendingMutations.values())
+              );
+              control.pendingMutations.clear();
+              void safeIdbDel(`pending_mutations_${boardId}`);
+            }
+            control.loadedRevision = boardData.currentRevision !== undefined
+              ? Number(boardData.currentRevision)
+              : 0;
             control.loadState = 'ready';
             control.resolveHydration();
-            const state: BoardState = {
-              boardId,
-              schemaVersion: refreshedData.schemaVersion || 3,
-              currentRevision: control.loadedRevision,
-              chunkIds: Array.from(control.shardsMap.keys()),
-              totalElements: recoveredElements.length,
-              elements: recoveredElements,
-              isLegacy: false,
-              migrationRequired: false,
-              updatedAt: refreshedData.updatedAt || Date.now(),
-              boardData: refreshedData,
-              loadState: 'ready',
-            };
-            control.subscribers.forEach((cb) => cb(state));
+            publishBoardState(boardId);
           } catch (error) {
-            console.error('Unable to recover historical whiteboard:', error);
+            console.error('Unable to load historical whiteboard read-only:', error);
             control.loadState = 'error';
+            control.resolveHydration();
             publishBoardState(boardId);
           }
           return;
         }
 
+        control.isLegacyReadOnly = false;
         const R = boardData.currentRevision !== undefined ? boardData.currentRevision : 0;
 
         // Metadata update: if revision didn't change, publish metadata immediately without shard re-fetch
@@ -1210,10 +1172,12 @@ export function subscribeToBoardState(
           if (el && !(el as any).isDeleted) flattened.set(id, el);
         });
       });
-      control.pendingMutations.forEach((item, id) => {
-        if (item.action === 'set' && item.data) flattened.set(id, item.data);
-        else if (item.action === 'delete') flattened.delete(id);
-      });
+      if (!control.isLegacyReadOnly) {
+        control.pendingMutations.forEach((item, id) => {
+          if (item.action === 'set' && item.data) flattened.set(id, item.data);
+          else if (item.action === 'delete') flattened.delete(id);
+        });
+      }
       callback({
         boardId,
         schemaVersion: boardData.schemaVersion || 2,
@@ -1221,8 +1185,8 @@ export function subscribeToBoardState(
         chunkIds: Array.from(control.shardsMap.keys()),
         totalElements: flattened.size,
         elements: Array.from(flattened.values()),
-        isLegacy: false,
-        migrationRequired: false,
+        isLegacy: control.isLegacyReadOnly,
+        migrationRequired: control.isLegacyReadOnly,
         updatedAt: boardData.updatedAt || Date.now(),
         boardData,
         loadState: control.loadState,
@@ -1275,6 +1239,11 @@ export function queueElementMutation(
   updatedByClientId?: string
 ): void {
   const control = getOrCreateControl(boardId);
+
+  if (!isSandboxEnvironment() && control.isLegacyReadOnly) {
+    console.warn(`Ignored mutation for legacy read-only board ${boardId}. Run the Admin SDK migration before editing.`);
+    return;
+  }
 
   if (action === 'set' && data) {
     let sanitized = sanitizeElementForStorage(data);
@@ -1341,6 +1310,7 @@ export function queueElementMutation(
  */
 export function applyRemoteOperation(boardId: string, op: RemoteOperation): void {
   const control = getOrCreateControl(boardId);
+  if (!isSandboxEnvironment() && control.isLegacyReadOnly) return;
   if (control.appliedOperationIds.has(op.operationId)) {
     return;
   }
@@ -1378,6 +1348,11 @@ export async function flushBoardCheckpoint(boardId: string, reason: string = 'ma
     control.pendingMutations.clear();
     persistPendingMutationsToIdb(boardId, control.pendingMutations);
     control.committedGeneration = control.dirtyGeneration;
+    return;
+  }
+
+  if (control.isLegacyReadOnly) {
+    console.warn(`Skipped checkpoint for legacy read-only board ${boardId}.`);
     return;
   }
 

@@ -35,4 +35,5 @@ This file tracks the historical evolution of the AI Developer's patterns, rules,
   - Optimized Dashboard queries with `orderBy("createdAt", "desc")`, `limit(12)`, and `startAfter()` pagination, eliminating periodic 2-minute full collection polling.
   - Updated `/firestore.rules` to secure `/whiteboards/{boardId}/assets/{assetId}`.
   - Refactored `/scripts/migrate-board.ts` to lazy-initialize `firebase-admin`, ensuring safety during unit tests. Verified 100% test pass rate across all 16 test files (66 unit tests total) and clean production build compilation.
+- **[2026-08-02]** Codebase Organization & Legacy Board Read-Only Mode: Reorganized uploaded files into their proper target locations (`/src/services/boardPersistence.ts`, `/firestore.rules`, and `/src/components/WhiteboardCanvas.tsx`). Refactored legacy board loading to execute strictly read-only on the client side, suppressing unauthenticated client-side migration writes while maintaining full backward read compatibility with historical board schemas. Verified clean linter execution and production build compilation.
 

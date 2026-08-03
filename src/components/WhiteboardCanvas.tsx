@@ -4111,7 +4111,7 @@ export default function WhiteboardCanvas({
 
       {legacyMigrationRequired && (
         <div className="fixed top-16 left-1/2 -translate-x-1/2 bg-amber-600 text-white px-4 py-2 rounded-lg font-medium text-xs shadow-lg z-50 flex items-center space-x-2">
-          <span>⚠️ Board requires administrative migration to support new chunked storage. Board is currently read-only.</span>
+          <span>⚠️ Legacy board opened read-only. Run the manual admin migration before editing it.</span>
         </div>
       )}
 
