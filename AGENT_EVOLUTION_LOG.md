@@ -35,5 +35,13 @@ This file tracks the historical evolution of the AI Developer's patterns, rules,
   - Optimized Dashboard queries with `orderBy("createdAt", "desc")`, `limit(12)`, and `startAfter()` pagination, eliminating periodic 2-minute full collection polling.
   - Updated `/firestore.rules` to secure `/whiteboards/{boardId}/assets/{assetId}`.
   - Refactored `/scripts/migrate-board.ts` to lazy-initialize `firebase-admin`, ensuring safety during unit tests. Verified 100% test pass rate across all 16 test files (66 unit tests total) and clean production build compilation.
-- **[2026-08-02]** Codebase Organization & Legacy Board Read-Only Mode: Reorganized uploaded files into their proper target locations (`/src/services/boardPersistence.ts`, `/firestore.rules`, and `/src/components/WhiteboardCanvas.tsx`). Refactored legacy board loading to execute strictly read-only on the client side, suppressing unauthenticated client-side migration writes while maintaining full backward read compatibility with historical board schemas. Verified clean linter execution and production build compilation.
+- **[2026-08-04]** Board Permission Lock and Image Paste Duplicate Elimination:
+  - Fixed the board permission "lock" button resetting back to unlocked by removing the overly aggressive proactive auto-sharing `useEffect` from `WhiteboardCanvas.tsx`, and ensuring copying the board link preserves the teacher's explicit lock state.
+  - Implemented real-time board permission tracking inside the Sandbox environment using local board metadata listeners, bringing Sandbox-mode role behavior and permission enforcement on par with production.
+  - Resolved clipboard image paste duplicate copies by stopping multi-representation iteration of matching `image/*` items in `handleNativePaste` and taking only the first valid representation (e.g., standard high-quality PNG format), preventing stacked overlapping image duplicates on both teacher and student canvases.
+  - Verified 100% clean linter (`tsc --noEmit`) and successful production build compilation.
+- **[2026-08-04]** Camera Follow Active Screen Viewport Fix:
+  - Fixed screen follow feature jitter/movement during active pen strokes by modifying camera follow logic in `WhiteboardCanvas.tsx` to follow the target user's active screen viewport (`panX`, `panY`, `zoom`) directly instead of re-centering on the cursor point (`x`, `y`).
+  - Added throttled `useEffect` viewport state broadcast on `panX`, `panY`, and `zoom` changes over WebSocket to instantly sync camera movement across followers when the followed user pans or zooms.
+  - Verified clean linter execution (`tsc --noEmit`), 100% test pass rate across 73 tests, and successful production build compilation.
 

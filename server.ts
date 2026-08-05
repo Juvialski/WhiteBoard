@@ -5,7 +5,7 @@ import dotenv from "dotenv";
 import http from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import fsUtils from "fs";
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
 
 dotenv.config();
 
@@ -119,6 +119,7 @@ ${shapeConstraint}`;
       contents: prompt || "Educational praise and feedback stamps for students",
       config: {
         systemInstruction,
+        thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,

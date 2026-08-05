@@ -480,18 +480,10 @@ export default function WhiteboardCanvas({
             }
 
             // Smooth camera follow logic when actively following a target user
+            // Follows active screen viewport (panX, panY, zoom) only, not individual pen strokes or cursor movement
             if (followedUserIdRef.current === msg.userId) {
-              const targetZoom = msg.zoom !== undefined ? msg.zoom : 1;
-              const containerW = window.innerWidth;
-              const containerH = window.innerHeight;
-
-              if (msg.x !== undefined && msg.y !== undefined) {
-                const targetPanX = containerW / 2 - msg.x * targetZoom;
-                const targetPanY = containerH / 2 - msg.y * targetZoom;
-                setPanX((prev) => prev + (targetPanX - prev) * 0.35);
-                setPanY((prev) => prev + (targetPanY - prev) * 0.35);
-                setZoom((prev) => prev + (targetZoom - prev) * 0.35);
-              } else if (msg.panX !== undefined && msg.panY !== undefined) {
+              if (msg.panX !== undefined && msg.panY !== undefined) {
+                const targetZoom = msg.zoom !== undefined ? msg.zoom : 1;
                 setPanX((prev) => prev + (msg.panX - prev) * 0.35);
                 setPanY((prev) => prev + (msg.panY - prev) * 0.35);
                 setZoom((prev) => prev + (targetZoom - prev) * 0.35);
@@ -704,17 +696,9 @@ export default function WhiteboardCanvas({
         if (nextId) {
           const targetCollab = socketCollaboratorsRef.current[nextId];
           if (targetCollab) {
-            const targetZoom = targetCollab.zoom || 1;
-            const containerW = window.innerWidth;
-            const containerH = window.innerHeight;
-
-            let targetPanX = targetCollab.panX;
-            let targetPanY = targetCollab.panY;
-
-            if (targetCollab.x !== undefined && targetCollab.y !== undefined) {
-              targetPanX = containerW / 2 - targetCollab.x * targetZoom;
-              targetPanY = containerH / 2 - targetCollab.y * targetZoom;
-            }
+            const targetZoom = targetCollab.zoom !== undefined ? targetCollab.zoom : 1;
+            const targetPanX = targetCollab.panX;
+            const targetPanY = targetCollab.panY;
 
             if (targetPanX !== undefined && targetPanY !== undefined) {
               setZoom(targetZoom);
@@ -976,15 +960,17 @@ export default function WhiteboardCanvas({
   // Permission states using getBoardPermissions
   const permissions = getBoardPermissions(
     boardData,
-    auth.currentUser ? { uid: auth.currentUser.uid, admin: adminClaim } : null
+    auth.currentUser
+      ? { uid: auth.currentUser.uid, admin: adminClaim }
+      : (isSandboxEnvironment() && currentUser ? { uid: currentUser.id, admin: currentUser.role === "teacher" } : null)
   );
 
   const [showReadOnlyAlert, setShowReadOnlyAlert] = useState(false);
   const alertTimeoutRef = useRef<any>(null);
   const isTeacher = currentUser.role === "teacher";
   const studentsCanWrite = boardData?.studentsCanWrite !== false;
-  const canWrite = isSandboxEnvironment() || (permissions.canWrite && !legacyMigrationRequired);
-  const canManage = isSandboxEnvironment() || permissions.canManage;
+  const canWrite = permissions.canWrite && !legacyMigrationRequired;
+  const canManage = isTeacher || permissions.canManage;
 
   const isPdfBoard = boardName.startsWith("PDF: ");
   const [hasCentered, setHasCentered] = useState(false);
@@ -1386,8 +1372,22 @@ export default function WhiteboardCanvas({
     if (isSandboxEnvironment()) {
       const initial = getSandboxLocalElements(boardId);
       setElements(initial);
-      setIsHydrated(true);
-      isHydratedRef.current = true;
+      
+      const localBoards = getSandboxLocalBoards();
+      const currentBoard = localBoards.find((b: any) => b.id === boardId) || {
+        id: boardId,
+        name: boardName,
+        studentsCanWrite: true,
+      };
+      setBoardData(currentBoard);
+
+      const handleLocalBoardsUpdate = () => {
+        const boards = getSandboxLocalBoards();
+        const bData = boards.find((b: any) => b.id === boardId);
+        if (bData) {
+          setBoardData(bData);
+        }
+      };
 
       const handleLocalElementsUpdate = (e: CustomEvent) => {
         if (e.detail && e.detail.boardId === boardId) {
@@ -1396,8 +1396,13 @@ export default function WhiteboardCanvas({
         }
       };
 
+      window.addEventListener('lucid_spark_boards_updated', handleLocalBoardsUpdate);
       window.addEventListener('lucid_spark_elements_updated', handleLocalElementsUpdate as EventListener);
+      setIsHydrated(true);
+      isHydratedRef.current = true;
+
       return () => {
+        window.removeEventListener('lucid_spark_boards_updated', handleLocalBoardsUpdate);
         window.removeEventListener('lucid_spark_elements_updated', handleLocalElementsUpdate as EventListener);
       };
     }
@@ -1935,6 +1940,34 @@ export default function WhiteboardCanvas({
     }
   };
 
+  // Broadcast active screen viewport state over WebSocket whenever pan or zoom changes
+  const lastViewportBroadcast = useRef<number>(0);
+  useEffect(() => {
+    const isWsActive = wsRef.current && wsRef.current.readyState === WebSocket.OPEN;
+    if (!isWsActive) return;
+
+    const now = Date.now();
+    if (now - lastViewportBroadcast.current < 50) return;
+    lastViewportBroadcast.current = now;
+
+    wsRef.current!.send(
+      JSON.stringify({
+        type: "cursor",
+        boardId,
+        userId: currentUser.id,
+        name: currentUser.name,
+        color: currentUser.color,
+        role: currentUser.role,
+        x: lastSyncedCursorPos.current.x,
+        y: lastSyncedCursorPos.current.y,
+        panX,
+        panY,
+        zoom,
+        lastActive: now,
+      })
+    );
+  }, [panX, panY, zoom, boardId, currentUser]);
+
 
   const containerRectRef = useRef<DOMRect | null>(null);
 
@@ -2011,6 +2044,7 @@ export default function WhiteboardCanvas({
             const file = item.getAsFile();
             if (file) {
               imageFiles.push(file);
+              break; // ONLY TAKE THE FIRST IMAGE ITEM FROM THE CLIPBOARD ITEMS to prevent duplicates!
             }
           }
         }
@@ -3529,28 +3563,8 @@ export default function WhiteboardCanvas({
     }
   };
 
-  // Proactively ensure boards opened by teachers/managers allow student editing by default when shared
-  useEffect(() => {
-    if (canManage && boardData && (boardData.accessMode === 'private' || boardData.studentsCanWrite === false)) {
-      if (!isSandboxEnvironment()) {
-        setDoc(
-          doc(db, "whiteboards", boardId),
-          {
-            accessMode: 'link-edit',
-            studentsCanWrite: true,
-          },
-          { merge: true }
-        ).catch((err) => console.error("Auto-enabling student write access failed:", err));
-      } else {
-        const localBoards = getSandboxLocalBoards();
-        const updated = localBoards.map((b: any) =>
-          b.id === boardId ? { ...b, accessMode: 'link-edit', studentsCanWrite: true } : b
-        );
-        saveSandboxLocalBoards(updated);
-        setBoardData((prev: any) => prev ? { ...prev, accessMode: 'link-edit', studentsCanWrite: true } : prev);
-      }
-    }
-  }, [canManage, boardData?.accessMode, boardData?.studentsCanWrite, boardId]);
+  // Proactively ensure boards opened by teachers/managers are private-draft safe and not automatically unlocked.
+  // We respect the teacher's locked preference explicitly, so no automatic overrides run here.
 
   // Zoom handlers
   const handleZoomIn = () => {
@@ -3639,27 +3653,26 @@ export default function WhiteboardCanvas({
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2500);
 
-    // If teacher/owner shares the link and student write is locked or private, automatically set accessMode to 'link-edit' and studentsCanWrite to true
-    if (canManage && (boardData?.accessMode !== 'link-edit' || boardData?.studentsCanWrite === false)) {
+    // If teacher/owner shares the link and the board access mode is private, automatically set accessMode to 'link-edit' (preserving their explicit lock state)
+    if (canManage && boardData?.accessMode === 'private') {
       try {
         if (!isSandboxEnvironment()) {
           await setDoc(
             doc(db, "whiteboards", boardId),
             {
               accessMode: 'link-edit',
-              studentsCanWrite: true,
             },
             { merge: true },
           );
         } else {
           const localBoards = getSandboxLocalBoards();
           const updated = localBoards.map((b: any) =>
-            b.id === boardId ? { ...b, accessMode: 'link-edit', studentsCanWrite: true } : b
+            b.id === boardId ? { ...b, accessMode: 'link-edit' } : b
           );
           saveSandboxLocalBoards(updated);
-          setBoardData((prev: any) => prev ? { ...prev, accessMode: 'link-edit', studentsCanWrite: true } : prev);
+          setBoardData((prev: any) => prev ? { ...prev, accessMode: 'link-edit' } : prev);
         }
-        showSyncToast("Link copied! Board set so students can write.", "success");
+        showSyncToast("Link copied! Board shared with students.", "success");
         return;
       } catch (err) {
         console.error("Error updating board to link-edit on share:", err);
